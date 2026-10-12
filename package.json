@@ -1,0 +1,33 @@
+{
+  "name": "@atgeo/client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Client for the atgeo gazetteer",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:browser": "vitest run --config vitest.browser.config.ts",
+    "e2e": "tsx scripts/e2e.ts"
+  },
+  "devDependencies": {
+    "@vitest/browser": "^2.1.9",
+    "playwright": "^1.64.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

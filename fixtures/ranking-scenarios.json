@@ -1,0 +1,902 @@
+[
+  {
+    "name": "misspelling-starbux",
+    "description": "A one-letter-off brand query ranks the intended chain above near-miss names, even when those are more important.",
+    "region": {
+      "lat": 37.7598,
+      "lon": -122.4194,
+      "radius": 1000
+    },
+    "text": "Starbux",
+    "records": [
+      {
+        "rkey": "starbucks",
+        "name": "Starbucks",
+        "importance": 0.5,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.762498",
+            "longitude": "-122.417125"
+          }
+        ]
+      },
+      {
+        "rkey": "star-bakery",
+        "name": "Star Bakery",
+        "importance": 0.7,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.761149",
+            "longitude": "-122.420538"
+          }
+        ]
+      },
+      {
+        "rkey": "stardust-bar",
+        "name": "Stardust Bar",
+        "importance": 0.7,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.757552",
+            "longitude": "-122.415987"
+          }
+        ]
+      },
+      {
+        "rkey": "sterling-bank",
+        "name": "Sterling Bank",
+        "importance": 0.8,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.760699",
+            "longitude": "-122.414850"
+          }
+        ]
+      },
+      {
+        "rkey": "home-depot",
+        "name": "Home Depot",
+        "importance": 0.9,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.756203",
+            "longitude": "-122.421675"
+          }
+        ]
+      },
+      {
+        "rkey": "laundromat",
+        "name": "Mission Laundromat",
+        "importance": 0.3,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.760250",
+            "longitude": "-122.418831"
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "top": [
+        {
+          "k": 1,
+          "rkeys": [
+            "starbucks"
+          ]
+        }
+      ],
+      "absent": [
+        "home-depot"
+      ]
+    }
+  },
+  {
+    "name": "misspelling-chipolte",
+    "description": "A transposed-letter query ranks the intended restaurant above similar-sounding names.",
+    "region": {
+      "lat": 37.7598,
+      "lon": -122.4194,
+      "radius": 1000
+    },
+    "text": "Chipolte",
+    "records": [
+      {
+        "rkey": "chipotle",
+        "name": "Chipotle Mexican Grill",
+        "importance": 0.5,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.761599",
+            "longitude": "-122.422813"
+          }
+        ]
+      },
+      {
+        "rkey": "chopt",
+        "name": "Chopt",
+        "importance": 0.7,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.758901",
+            "longitude": "-122.418262"
+          }
+        ]
+      },
+      {
+        "rkey": "chilis",
+        "name": "Chili's",
+        "importance": 0.8,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.762498",
+            "longitude": "-122.415987"
+          }
+        ]
+      },
+      {
+        "rkey": "chippers",
+        "name": "Chipper's Fish & Chips",
+        "importance": 0.7,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.757102",
+            "longitude": "-122.422813"
+          }
+        ]
+      },
+      {
+        "rkey": "pharmacy",
+        "name": "Valencia Pharmacy",
+        "importance": 0.6,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.760340",
+            "longitude": "-122.420310"
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "top": [
+        {
+          "k": 1,
+          "rkeys": [
+            "chipotle"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "multi-word-golden-gate",
+    "description": "A multi-word landmark query ranks the exact landmark above partial-name matches that are nearer and more important.",
+    "region": {
+      "lat": 37.81,
+      "lon": -122.46,
+      "radius": 8000
+    },
+    "text": "Golden Gate Bridge",
+    "records": [
+      {
+        "rkey": "ggb",
+        "name": "Golden Gate Bridge",
+        "importance": 0.6,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.823490",
+            "longitude": "-122.488458"
+          }
+        ]
+      },
+      {
+        "rkey": "ggp",
+        "name": "Golden Gate Park",
+        "importance": 0.8,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.783020",
+            "longitude": "-122.471383"
+          }
+        ]
+      },
+      {
+        "rkey": "ggbakery",
+        "name": "Golden Gate Bakery",
+        "importance": 0.7,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.811799",
+            "longitude": "-122.456585"
+          }
+        ]
+      },
+      {
+        "rkey": "gb-cafe",
+        "name": "Golden Bridge Cafe",
+        "importance": 0.7,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.805503",
+            "longitude": "-122.454308"
+          }
+        ]
+      },
+      {
+        "rkey": "bay-bridge",
+        "name": "Bay Bridge",
+        "importance": 0.9,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.796510",
+            "longitude": "-122.403084"
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "top": [
+        {
+          "k": 1,
+          "rkeys": [
+            "ggb"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "coffee-near-neighborhood",
+    "description": "Single-word category query returns the coffee places inside the radius and drops those outside it.",
+    "region": {
+      "lat": 37.7598,
+      "lon": -122.4194,
+      "radius": 800
+    },
+    "text": "coffee",
+    "records": [
+      {
+        "rkey": "blue-bottle",
+        "name": "Blue Bottle Coffee",
+        "importance": 0.2,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.764297",
+            "longitude": "-122.418262"
+          }
+        ]
+      },
+      {
+        "rkey": "philz",
+        "name": "Philz Coffee",
+        "importance": 0.3,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.757102",
+            "longitude": "-122.417125"
+          }
+        ]
+      },
+      {
+        "rkey": "ritual",
+        "name": "Ritual Coffee Roasters",
+        "importance": 0.2,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.760699",
+            "longitude": "-122.426225"
+          }
+        ]
+      },
+      {
+        "rkey": "coffee-bar",
+        "name": "Coffee Bar",
+        "importance": 0.2,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.758001",
+            "longitude": "-122.423950"
+          }
+        ]
+      },
+      {
+        "rkey": "cheese",
+        "name": "Mission Cheese",
+        "importance": 0.9,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.762498",
+            "longitude": "-122.422813"
+          }
+        ]
+      },
+      {
+        "rkey": "bank",
+        "name": "Mission Credit Union",
+        "importance": 0.8,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.760250",
+            "longitude": "-122.418262"
+          }
+        ]
+      },
+      {
+        "rkey": "far-coffee-1",
+        "name": "Coffee Movement",
+        "importance": 0.9,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.769693",
+            "longitude": "-122.417125"
+          }
+        ]
+      },
+      {
+        "rkey": "far-coffee-2",
+        "name": "Four Barrel Coffee",
+        "importance": 0.9,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.748109",
+            "longitude": "-122.422813"
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "top": [
+        {
+          "k": 5,
+          "rkeys": [
+            "blue-bottle",
+            "philz",
+            "ritual",
+            "coffee-bar"
+          ]
+        }
+      ],
+      "absent": [
+        "far-coffee-1",
+        "far-coffee-2"
+      ]
+    }
+  },
+  {
+    "name": "accent-folding",
+    "description": "An unaccented query matches an accented name.",
+    "region": {
+      "lat": 48.854,
+      "lon": 2.3326,
+      "radius": 500
+    },
+    "text": "cafe",
+    "records": [
+      {
+        "rkey": "cafe-de-flore",
+        "name": "Café de Flore",
+        "importance": 0.3,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "48.854899",
+            "longitude": "2.333967"
+          }
+        ]
+      },
+      {
+        "rkey": "blue-bottle",
+        "name": "Blue Bottle Coffee",
+        "importance": 0.9,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "48.854450",
+            "longitude": "2.331917"
+          }
+        ]
+      },
+      {
+        "rkey": "boulangerie",
+        "name": "Boulangerie Poilâne",
+        "importance": 0.8,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "48.853101",
+            "longitude": "2.335334"
+          }
+        ]
+      },
+      {
+        "rkey": "librairie",
+        "name": "Librairie Galignani",
+        "importance": 0.7,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "48.855799",
+            "longitude": "2.329866"
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "top": [
+        {
+          "k": 1,
+          "rkeys": [
+            "cafe-de-flore"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "variant-match",
+    "description": "A query matching only an alternate name still finds the record.",
+    "region": {
+      "bbox": [
+        11.45,
+        48.05,
+        11.7,
+        48.22
+      ]
+    },
+    "text": "Munich",
+    "records": [
+      {
+        "rkey": "munchen",
+        "name": "München",
+        "importance": 0.9,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "48.137400",
+            "longitude": "11.575500"
+          }
+        ],
+        "variants": [
+          {
+            "name": "Munich"
+          }
+        ]
+      },
+      {
+        "rkey": "kindl",
+        "name": "Münchner Kindl",
+        "importance": 0.5,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "48.119414",
+            "longitude": "11.588976"
+          }
+        ]
+      },
+      {
+        "rkey": "minch",
+        "name": "Minch Auto Repair",
+        "importance": 0.5,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "48.146393",
+            "longitude": "11.562024"
+          }
+        ]
+      },
+      {
+        "rkey": "augsburg",
+        "name": "Augsburg",
+        "importance": 0.6,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "48.159883",
+            "longitude": "11.535072"
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "top": [
+        {
+          "k": 1,
+          "rkeys": [
+            "munchen"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "chain-nearest-branch",
+    "description": "Equal chain branches order by distance.",
+    "region": {
+      "lat": 37.7598,
+      "lon": -122.4194,
+      "radius": 3000
+    },
+    "text": "Safeway",
+    "records": [
+      {
+        "rkey": "safeway-mid",
+        "name": "Safeway",
+        "importance": 0.5,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.751706",
+            "longitude": "-122.419400"
+          }
+        ]
+      },
+      {
+        "rkey": "safeway-far",
+        "name": "Safeway",
+        "importance": 0.5,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.773290",
+            "longitude": "-122.410300"
+          }
+        ]
+      },
+      {
+        "rkey": "safeway-near",
+        "name": "Safeway",
+        "importance": 0.5,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.761599",
+            "longitude": "-122.417694"
+          }
+        ]
+      },
+      {
+        "rkey": "hardware",
+        "name": "Mission Hardware",
+        "importance": 0.5,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.760699",
+            "longitude": "-122.418262"
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "top": [
+        {
+          "k": 1,
+          "rkeys": [
+            "safeway-near"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "no-text-landmark",
+    "description": "With no text, the most important place outranks nearer obscure ones.",
+    "region": {
+      "lat": 37.7598,
+      "lon": -122.4194,
+      "radius": 2000
+    },
+    "records": [
+      {
+        "rkey": "dolores-park",
+        "name": "Mission Dolores Park",
+        "importance": 0.9,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.764297",
+            "longitude": "-122.408025"
+          }
+        ]
+      },
+      {
+        "rkey": "shop-a",
+        "name": "Valencia Laundromat",
+        "importance": 0.05,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.760250",
+            "longitude": "-122.418831"
+          }
+        ]
+      },
+      {
+        "rkey": "shop-b",
+        "name": "Guerrero Hardware",
+        "importance": 0.1,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.758901",
+            "longitude": "-122.418262"
+          }
+        ]
+      },
+      {
+        "rkey": "shop-c",
+        "name": "Capp Street Salon",
+        "importance": 0.05,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.761149",
+            "longitude": "-122.420538"
+          }
+        ]
+      },
+      {
+        "rkey": "shop-d",
+        "name": "Harrison Auto Repair",
+        "importance": 0.1,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.758001",
+            "longitude": "-122.421675"
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "top": [
+        {
+          "k": 3,
+          "rkeys": [
+            "dolores-park"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "distance-mode",
+    "description": "Distance sort puts the nearest text match first and drops nearer non-matches.",
+    "region": {
+      "lat": 37.7598,
+      "lon": -122.4194,
+      "radius": 1500
+    },
+    "text": "coffee",
+    "sort": "distance",
+    "records": [
+      {
+        "rkey": "coffee-near",
+        "name": "Coffee Bar",
+        "importance": 0.1,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.762498",
+            "longitude": "-122.419400"
+          }
+        ]
+      },
+      {
+        "rkey": "blue-bottle",
+        "name": "Blue Bottle Coffee",
+        "importance": 0.9,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.766995",
+            "longitude": "-122.417125"
+          }
+        ]
+      },
+      {
+        "rkey": "philz",
+        "name": "Philz Coffee",
+        "importance": 0.8,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.750807",
+            "longitude": "-122.418262"
+          }
+        ]
+      },
+      {
+        "rkey": "laundromat",
+        "name": "Mission Laundromat",
+        "importance": 0.9,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.760250",
+            "longitude": "-122.418831"
+          }
+        ]
+      },
+      {
+        "rkey": "pharmacy",
+        "name": "Valencia Pharmacy",
+        "importance": 0.9,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.758901",
+            "longitude": "-122.418262"
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "top": [
+        {
+          "k": 1,
+          "rkeys": [
+            "coffee-near"
+          ]
+        }
+      ],
+      "absent": [
+        "laundromat",
+        "pharmacy"
+      ]
+    }
+  },
+  {
+    "name": "similarity-mode",
+    "description": "Similarity sort puts the exact match first even though a worse match is nearer and more important.",
+    "region": {
+      "lat": 37.81,
+      "lon": -122.46,
+      "radius": 8000
+    },
+    "text": "Golden Gate Bridge",
+    "sort": "similarity",
+    "records": [
+      {
+        "rkey": "ggb",
+        "name": "Golden Gate Bridge",
+        "importance": 0.5,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.823490",
+            "longitude": "-122.488458"
+          }
+        ]
+      },
+      {
+        "rkey": "ggbakery",
+        "name": "Golden Gate Bakery",
+        "importance": 0.9,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.811799",
+            "longitude": "-122.456585"
+          }
+        ]
+      },
+      {
+        "rkey": "ggp",
+        "name": "Golden Gate Park",
+        "importance": 0.8,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.805503",
+            "longitude": "-122.454308"
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "top": [
+        {
+          "k": 1,
+          "rkeys": [
+            "ggb"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "no-match",
+    "description": "A query resembling nothing returns nothing.",
+    "region": {
+      "lat": 37.7598,
+      "lon": -122.4194,
+      "radius": 1000
+    },
+    "text": "Zxqvw",
+    "records": [
+      {
+        "rkey": "a",
+        "name": "Blue Bottle Coffee",
+        "importance": 0.8,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.760699",
+            "longitude": "-122.418262"
+          }
+        ]
+      },
+      {
+        "rkey": "b",
+        "name": "Safeway",
+        "importance": 0.8,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.758001",
+            "longitude": "-122.418262"
+          }
+        ]
+      },
+      {
+        "rkey": "c",
+        "name": "Mission Dolores Park",
+        "importance": 0.9,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.762498",
+            "longitude": "-122.422813"
+          }
+        ]
+      },
+      {
+        "rkey": "d",
+        "name": "Starbucks",
+        "importance": 0.7,
+        "locations": [
+          {
+            "$type": "community.lexicon.location.geo",
+            "latitude": "37.758901",
+            "longitude": "-122.423950"
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "top": [],
+      "absent": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ]
+    }
+  }
+]
