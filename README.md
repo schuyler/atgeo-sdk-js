@@ -153,4 +153,4 @@ There are more scripts in `package.json`, including a browser smoke test and an 
 
 ## Server requirements
 
-The SDK follows whatever URLs the server hands back, so a garganorn you run yourself should set `public_base` to the URL it's reachable at (e.g. `public_base: http://localhost:8000`), or `getCollectionInfo` gets links that don't resolve. Browser use against your own server needs a server-side fix listed in [docs/garganorn-prerequisites.md](docs/garganorn-prerequisites.md).
+The SDK follows whatever URLs the server hands back, so a garganorn you run yourself should set `public_base` to the URL it's reachable at (e.g. `public_base: http://localhost:8000`), or `getCollectionInfo` gets links that don't resolve. Browsers can call your server directly: garganorn sends `Access-Control-Allow-Origin: *` on every route.

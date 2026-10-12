@@ -21,7 +21,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:browser": "vitest run --config vitest.browser.config.ts",
-    "e2e": "tsx scripts/e2e.ts"
+    "e2e": "tsx scripts/e2e.ts",
+    "e2e:browser": "vitest run --config vitest.e2e.config.ts"
   },
   "devDependencies": {
     "@vitest/browser": "^2.1.9",
