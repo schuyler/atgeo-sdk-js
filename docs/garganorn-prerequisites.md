@@ -25,5 +25,5 @@ Only the tile route (`/tiles/<slug>/...`) sends
 `describeService`, `com.atproto.repo.getRecord`) and the record route
 (`/<collection>/<rkey>`) send none, so a browser on another origin can't
 call them. Production may add the header at the Caddy layer (not verified),
-but a server run directly, including the dev server the browser smoke test
-uses, needs it from garganorn.
+but a garganorn run without that proxy, such as a developer's own server,
+needs it from garganorn itself.
