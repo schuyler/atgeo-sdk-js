@@ -20,7 +20,7 @@ const MAX_TILES_IN_FLIGHT = 8;
 export class AtgeoClient {
   private readonly transport: Transport;
   private readonly tiles: TileCache;
-  private readonly coverage = new TtlCache<string[]>(3600_000);
+  private readonly coverage = new TtlCache<{ tiles: string[]; summary: boolean }>(3600_000);
   private readonly service = new TtlCache<ServiceDescription>(3600_000);
 
   constructor(options: ClientOptions = {}) {
@@ -43,15 +43,17 @@ export class AtgeoClient {
     const coverages = await Promise.all(
       queryBboxes(region).map(async (bbox) => {
         const key = `${collection}|${bbox}`;
-        let urls = this.coverage.get(key);
-        if (!urls) {
-          urls = (await this.transport.xrpc<{ tiles: string[] }>("org.atgeo.getCoverage", { collection, bbox }, signal)).tiles;
-          this.coverage.set(key, urls);
+        let coverage = this.coverage.get(key);
+        if (!coverage) {
+          const response = await this.transport.xrpc<{ tiles: string[]; summary?: boolean }>("org.atgeo.getCoverage", { collection, bbox }, signal);
+          coverage = { tiles: response.tiles, summary: response.summary ?? false };
+          this.coverage.set(key, coverage);
         }
-        return urls;
+        return coverage;
       }),
     );
-    const urls = [...new Set(coverages.flat())];
+    const urls = [...new Set(coverages.flatMap((c) => c.tiles))];
+    const summary = coverages.some((c) => c.summary);
 
     const loaded = new Map<string, TileRecord[]>();
     let failed = 0;
@@ -77,6 +79,7 @@ export class AtgeoClient {
     return {
       places: rank(records, region, query, sort),
       complete: failed === 0,
+      summary,
       tiles: { fetched: loaded.size, failed },
     };
   }

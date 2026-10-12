@@ -13,8 +13,9 @@ export interface CapturedRequest {
 export interface FakeCollection {
   tiles: { url: string; records: PlaceValue[] }[];
   // Tile URLs returned for a getCoverage bbox string; default: every tile.
-  // Returning an error object answers 400 with that body.
-  coverage?: (bbox: string) => string[] | { error: string; message: string };
+  // Returning an error object answers 400 with that body; { tiles, summary: true }
+  // marks the answer as a summary-band fallback.
+  coverage?: (bbox: string) => string[] | { tiles: string[]; summary?: boolean } | { error: string; message: string };
   // org.atgeo.collection record; absent means describeService lists no metadata link.
   metadata?: CollectionInfo;
 }
@@ -93,7 +94,9 @@ export function fakeServer(options: FakeServerOptions = {}): FakeServer {
       const c = collections[collection];
       if (!c) return xrpcError("CollectionNotFound", `Collection ${collection} not found`);
       const tiles = c.coverage ? c.coverage(url.searchParams.get("bbox") ?? "") : c.tiles.map((t) => t.url);
-      return Array.isArray(tiles) ? json({ tiles }) : xrpcError(tiles.error, tiles.message);
+      if (Array.isArray(tiles)) return json({ tiles });
+      if ("error" in tiles) return xrpcError(tiles.error, tiles.message);
+      return json(tiles.summary ? { tiles: tiles.tiles, summary: true } : { tiles: tiles.tiles });
     }
 
     if (xrpc === "com.atproto.repo.getRecord") {

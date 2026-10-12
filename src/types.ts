@@ -36,6 +36,7 @@ export interface SearchHit {
 export interface SearchResult {
   places: SearchHit[];
   complete: boolean;
+  summary: boolean;
   tiles: { fetched: number; failed: number };
 }
 

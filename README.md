@@ -21,7 +21,7 @@ for (const { uri, place, distance, score } of places) {
 }
 ```
 
-Misspellings are fine; matching is fuzzy. If `complete` is `false`, some tiles failed to load and the results are partial.
+Misspellings are fine; matching is fuzzy. If `complete` is `false`, some tiles failed to load and the results are partial. If `summary` is `true`, the region was too big to search in full and you got only its most important places; see [Summary answers](#summary-answers).
 
 ## Installation
 
@@ -75,6 +75,7 @@ The result:
 interface SearchResult {
   places: SearchHit[];
   complete: boolean;                          // false if any tile failed to load
+  summary: boolean;                           // true if the server answered with its coarse summary band; see below
   tiles: { fetched: number; failed: number };
 }
 
@@ -95,6 +96,14 @@ Sort modes:
 - `similarity` orders by text similarity, then nearest first. It throws without `text`.
 
 Similarity is compared to three decimal places, so scores that differ only beyond that count as ties. Remaining ties break on `uri`, so ordering is deterministic.
+
+#### Summary answers
+
+When a region is too large for the server's regular tile budget and the collection has a summary band, the server answers with that band instead: a coarse tileset holding only the most important places. The search still runs normally over those tiles, and `summary` is `true`. The list is not everything in the region.
+
+`summary` and `complete` are independent. `complete` says whether every tile the server named loaded; `summary` says whether the server named a thin set of tiles to begin with. A summary search whose tiles all loaded is `summary: true, complete: true`. If either half of an antimeridian-crossing search gets a summary answer, `summary` is `true`.
+
+If `summary` is `true`, don't treat the results as exhaustive. Show something like "zoom in for more" and search a smaller region to get the full set. Servers that predate the flag, and collections without a summary band, always give `summary: false`. The SDK reads the flag from the coverage response only; it doesn't guess from tile URLs.
 
 ### `getPlace({ collection, rkey }): Promise<PlaceRecord>`
 
