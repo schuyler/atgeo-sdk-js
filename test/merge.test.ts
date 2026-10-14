@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AtgeoClient } from "../src/index.js";
 import type { PlaceValue, Region } from "../src/index.js";
+import { haversine } from "../src/region.js";
 import { bboxLocation, fakeServer, overture, place, placeOrigin, point, record, type FakeTileset } from "./helpers/fakeServer.js";
 
 const url = (n: string) => `https://tiles.example/${n}.json`;
@@ -216,6 +217,18 @@ describe("region filtering: circle", () => {
       { lat: 0, lon: 0, radius: 55597 },
     );
     expect(kept).toEqual(["close-box", "surrounding"]);
+  });
+
+  it("keeps a high-latitude bbox-only record that clips the circle, with distance within the radius", async () => {
+    const lat = 85;
+    const radius = 370000;
+    // Measured to the box edge along the center's parallel: 379.9 km. The true nearest point is 357.1 km.
+    const box = place("clipping", "Clipping", [bboxLocation(89, 80, 50, 40)]);
+    expect(haversine(lat, 0, lat, 40)).toBeGreaterThan(radius);
+    const server = fakeServer({ tilesets: [overture([{ url: url("t"), records: [record(box)] }])] });
+    const { places } = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ region: { lat, lon: 0, radius } });
+    expect(places.map((h) => idOf(h.origin))).toEqual(["clipping"]);
+    expect(places[0].distance).toBeLessThanOrEqual(radius);
   });
 
   it("finds the nearest longitude around the antimeridian", async () => {

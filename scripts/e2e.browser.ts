@@ -25,10 +25,9 @@ test("client works cross-origin against a real garganorn", async () => {
   const nearby = await client.searchPlaces({ dataset, collection, region, sort: "distance" });
   expect(nearby.complete).toBe(true);
   expect(nearby.places.length).toBeGreaterThan(0);
-  // A place with no point location has a null distance and sorts last.
-  const distances = nearby.places.map((h) => h.distance ?? Infinity);
+  const distances = nearby.places.map((h) => h.distance);
   expect(
-    distances.every((d, i) => (d <= region.radius || d === Infinity) && (i === 0 || d >= distances[i - 1])),
+    distances.every((d, i) => typeof d === "number" && d <= region.radius && (i === 0 || d >= distances[i - 1])),
   ).toBe(true);
 
   const named = nearby.places.find((h) => h.origin && typeof h.place.name === "string" && h.place.name);

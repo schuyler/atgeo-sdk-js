@@ -58,7 +58,7 @@ export interface SearchHit {
   origin: string | null;
   place: PlaceValue;
   importance: number | null;
-  distance: number | null;
+  distance: number;
   score: number | null;
 }
 

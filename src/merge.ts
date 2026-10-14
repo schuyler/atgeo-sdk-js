@@ -59,6 +59,38 @@ function nearestLon(lon: number, segments: LonSegment[]): number {
   return ends.reduce((best, e) => (angularGap(e, lon) < angularGap(best, lon) ? e : best));
 }
 
+// ±180 are one meridian, and every meridian meets at a pole.
+function covers(south: number, north: number, segments: LonSegment[], lat: number, lon: number): boolean {
+  if (lat < south || lat > north) return false;
+  return (
+    Math.abs(lat) === 90 ||
+    lonInSegments(lon, segments) ||
+    (Math.abs(lon) === 180 && lonInSegments(-lon, segments))
+  );
+}
+
+// Meters from (lat, lon) to the nearest point of the place; null if it has no location.
+// Containment is tested explicitly so it yields exactly 0 rather than trig round-trip noise.
+export function distanceTo(locations: Locations, lat: number, lon: number): number | null {
+  const { point, bbox } = locations;
+  const contained = point
+    ? covers(point.lat, point.lat, [[point.lon, point.lon]], lat, lon)
+    : bbox && covers(bbox.south, bbox.north, bbox.segments, lat, lon);
+  if (contained) return 0;
+  if (point) return haversine(lat, lon, point.lat, point.lon);
+  if (!bbox) return null;
+  // Along the nearest meridian, cos(d) = R cos(phi - phiC); phiC is where that meridian comes closest.
+  const lonStar = nearestLon(lon, bbox.segments);
+  const phi0 = (lat * Math.PI) / 180;
+  const dLon = (angularGap(lonStar, lon) * Math.PI) / 180;
+  const phiC = (Math.atan2(Math.sin(phi0), Math.cos(phi0) * Math.cos(dLon)) * 180) / Math.PI;
+  return Math.min(
+    haversine(lat, lon, Math.min(Math.max(phiC, bbox.south), bbox.north), lonStar),
+    haversine(lat, lon, bbox.south, lonStar),
+    haversine(lat, lon, bbox.north, lonStar),
+  );
+}
+
 export function inRegion(locations: Locations, region: Region): boolean {
   const { point, bbox } = locations;
   if ("bbox" in region) {
@@ -69,8 +101,6 @@ export function inRegion(locations: Locations, region: Region): boolean {
     }
     return !!bbox && bbox.south <= maxLat && bbox.north >= minLat && lonSegmentsOverlap(bbox.segments, segments);
   }
-  if (point) return haversine(region.lat, region.lon, point.lat, point.lon) <= region.radius;
-  if (!bbox) return false;
-  const lat = Math.min(Math.max(region.lat, bbox.south), bbox.north);
-  return haversine(region.lat, region.lon, lat, nearestLon(region.lon, bbox.segments)) <= region.radius;
+  const d = distanceTo(locations, region.lat, region.lon);
+  return d !== null && d <= region.radius;
 }

@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { describe, expect, it } from "vitest";
 import { AtgeoClient, AtgeoError } from "../src/index.js";
+import type { PlaceValue } from "../src/index.js";
 import {
   DEFAULT_SERVER,
   bboxLocation,
@@ -163,9 +164,9 @@ describe("searchPlaces results", () => {
     expect(result.places.every((h) => h.score === null)).toBe(true);
   });
 
-  it("gives null distance to a record with no point", async () => {
+  it("gives distance 0 to a bbox containing the center", async () => {
     const result = await setup().searchPlaces({ region: circle });
-    expect(result.places.find((h) => h.origin === placeOrigin("division"))?.distance).toBeNull();
+    expect(result.places.find((h) => h.origin === placeOrigin("division"))?.distance).toBe(0);
   });
 
   it("returns a numeric score with text", async () => {
@@ -182,6 +183,54 @@ describe("searchPlaces results", () => {
     expect(blank.places.length).toBeGreaterThan(0);
     expect(blank).toEqual(none);
     expect(blank.places.every((h) => h.score === null)).toBe(true);
+  });
+});
+
+describe("ordering among places containing the center", () => {
+  const ids = async (values: { value: PlaceValue; importance?: number }[], search: Parameters<AtgeoClient["searchPlaces"]>[0]) => {
+    const server = fakeServer({
+      tilesets: [overture([{ url: url("a"), records: values.map((v) => record(v.value, v.importance)) }])],
+    });
+    const { places } = await new AtgeoClient({ fetch: server.fetch }).searchPlaces(search);
+    return places.map((h) => String(h.origin).slice(placeOrigin("").length));
+  };
+
+  it("puts the smaller box first when the center sits on the antimeridian seam", async () => {
+    // Center is exactly (45, 180). The small box reaches it as lon -180 / 180.
+    const small = place("small", "Small", [bboxLocation(50, 40, -170, -180)]);
+    const large = place("large", "Large", [bboxLocation(55, 35, -160, 160)]);
+    const order = await ids(
+      [
+        { value: small, importance: 1 },
+        { value: large, importance: 9 },
+      ],
+      { region: { bbox: [170, 40, -170, 50] }, sort: "distance" },
+    );
+    expect(order).toEqual(["small", "large"]);
+  });
+
+  it.each(["fused", "similarity"] as const)("leaves ties to the origin under %s sort, whatever the sizes", async (sort) => {
+    const large = place("a-large", "Same", [bboxLocation(50, 40, 15, 5)]);
+    const small = place("b-small", "Same", [bboxLocation(46, 44, 11, 9)]);
+    const order = await ids(
+      [
+        { value: small, importance: 5 },
+        { value: large, importance: 5 },
+      ],
+      { region: { lat: 45, lon: 10, radius: 1000 }, text: "Same", sort },
+    );
+    expect(order).toEqual(["a-large", "b-small"]);
+  });
+
+  it("puts a point at the center before a more important containing box", async () => {
+    const order = await ids(
+      [
+        { value: place("box", "Box", [bboxLocation(46, 44, 11, 9)]), importance: 9 },
+        { value: place("pin", "Pin", [point(45, 10)]), importance: 1 },
+      ],
+      { region: { lat: 45, lon: 10, radius: 1000 }, sort: "distance" },
+    );
+    expect(order).toEqual(["pin", "box"]);
   });
 });
 

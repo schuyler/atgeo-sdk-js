@@ -17,7 +17,7 @@ const { places, complete } = await atgeo.searchPlaces({
 });
 
 for (const { origin, place, distance, score } of places) {
-  console.log(place.name, Math.round(distance ?? NaN), score?.toFixed(2), origin);
+  console.log(place.name, Math.round(distance), score?.toFixed(2), origin);
 }
 ```
 
@@ -93,7 +93,7 @@ interface SearchHit {
   origin: string | null;               // the place's identity: place.origin, else the tile record's uri, else null
   place: { [key: string]: unknown };   // the record value, exactly as served
   importance: number | null;           // the record's importance, an integer relative to its tileset; null if it has none
-  distance: number | null;             // meters from the circle's center, or the bbox's center; null if the place has no point location
+  distance: number;                    // meters from the region's center (the circle's center, or the bbox's center) to the nearest point of the place; 0 if the place contains the center
   score: number | null;                // 0 to 1 text similarity; null if no text was given
 }
 ```
@@ -103,7 +103,7 @@ When `text` is given, places scoring below 0.6 are dropped.
 Sort modes:
 
 - `fused` orders by text similarity (best first), breaking near-ties by the hit's `importance`, then by distance. Without text, that means importance, then distance. This is the one you usually want.
-- `distance` orders nearest first, then by importance, then similarity. Text still filters out poor matches.
+- `distance` orders nearest first, then smaller place first (so the most specific of the places containing the center leads), then by importance, then similarity. Text still filters out poor matches.
 - `similarity` orders by text similarity, then nearest first. It throws without `text`.
 
 Similarity is compared to three decimal places, so scores that differ only beyond that count as ties. Remaining ties break on `origin` (a hit with no `origin` sorts last), so ordering is deterministic.

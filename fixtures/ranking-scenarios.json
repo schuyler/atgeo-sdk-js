@@ -1057,5 +1057,136 @@
         "urn:atgeo:overturemaps.org:place:d"
       ]
     }
+  },
+  {
+    "name": "distance-containing-divisions",
+    "description": "Distance sort puts the smallest division containing the center first, then the larger ones, then a nearby division that only clips the circle, even when that one is the most important.",
+    "region": {
+      "lat": 39.95,
+      "lon": -75.16,
+      "radius": 30000
+    },
+    "sort": "distance",
+    "records": [
+      {
+        "value": {
+          "$type": "org.atgeo.place",
+          "origin": "urn:atgeo:overturemaps.org:place:country",
+          "name": "United States",
+          "locations": [
+            {
+              "$type": "community.lexicon.location.bbox",
+              "south": "24.500000",
+              "north": "49.400000",
+              "west": "-124.800000",
+              "east": "-66.900000"
+            }
+          ]
+        },
+        "importance": 90
+      },
+      {
+        "value": {
+          "$type": "org.atgeo.place",
+          "origin": "urn:atgeo:overturemaps.org:place:state",
+          "name": "Pennsylvania",
+          "locations": [
+            {
+              "$type": "community.lexicon.location.bbox",
+              "south": "39.720000",
+              "north": "42.270000",
+              "west": "-80.520000",
+              "east": "-74.690000"
+            }
+          ]
+        },
+        "importance": 70
+      },
+      {
+        "value": {
+          "$type": "org.atgeo.place",
+          "origin": "urn:atgeo:overturemaps.org:place:county",
+          "name": "Philadelphia County",
+          "locations": [
+            {
+              "$type": "community.lexicon.location.bbox",
+              "south": "39.800000",
+              "north": "40.140000",
+              "west": "-75.420000",
+              "east": "-74.900000"
+            }
+          ]
+        },
+        "importance": 50
+      },
+      {
+        "value": {
+          "$type": "org.atgeo.place",
+          "origin": "urn:atgeo:overturemaps.org:place:city",
+          "name": "Philadelphia",
+          "locations": [
+            {
+              "$type": "community.lexicon.location.bbox",
+              "south": "39.870000",
+              "north": "40.140000",
+              "west": "-75.280000",
+              "east": "-74.960000"
+            }
+          ]
+        },
+        "importance": 30
+      },
+      {
+        "value": {
+          "$type": "org.atgeo.place",
+          "origin": "urn:atgeo:overturemaps.org:place:neighbour",
+          "name": "Camden",
+          "locations": [
+            {
+              "$type": "community.lexicon.location.bbox",
+              "south": "39.800000",
+              "north": "39.980000",
+              "west": "-74.900000",
+              "east": "-74.600000"
+            }
+          ]
+        },
+        "importance": 95
+      }
+    ],
+    "expect": {
+      "top": [
+        {
+          "k": 1,
+          "origins": [
+            "urn:atgeo:overturemaps.org:place:city"
+          ]
+        },
+        {
+          "k": 2,
+          "origins": [
+            "urn:atgeo:overturemaps.org:place:county"
+          ]
+        },
+        {
+          "k": 3,
+          "origins": [
+            "urn:atgeo:overturemaps.org:place:state"
+          ]
+        },
+        {
+          "k": 4,
+          "origins": [
+            "urn:atgeo:overturemaps.org:place:country"
+          ]
+        },
+        {
+          "k": 5,
+          "origins": [
+            "urn:atgeo:overturemaps.org:place:neighbour"
+          ]
+        }
+      ]
+    }
   }
 ]
