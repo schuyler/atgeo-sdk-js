@@ -25,14 +25,15 @@ Misspellings are fine; matching is fuzzy. If `complete` is `false`, some tiles f
 
 ## Installation
 
-This isn't on npm yet. The package is private until beta testing ends, so use it from a checkout:
+This isn't on npm yet; it stays unpublished until beta testing ends. Install it from GitHub instead, pinned to a commit:
 
 ```sh
-npm install
-npm run build
+npm install github:schuyler/atgeo-sdk-js#<commit-sha>
 ```
 
-That puts ESM and type declarations in `dist/`. Import from there, or `npm link` it into your project.
+npm runs the `prepare` script on a git install, which builds `dist/` for you. Pin a full commit SHA rather than a branch: the API is still changing, and breaking changes land on `main`.
+
+To work on it from a checkout, `npm install` builds it too (same `prepare` script), and `npm link` puts it in your project.
 
 ## Constructing a client
 
