@@ -20,11 +20,15 @@ const tileset = await client.describeTileset(served.slug);
 assert(tileset.collections.some((c) => c.dataset === dataset), "describeTileset does not list the dataset");
 log("describeTileset", `${tileset.slug}, ${tileset.collections.length} collection(s)`);
 
-const nearby = await client.searchPlaces({ dataset, collection, region });
+const nearby = await client.searchPlaces({ dataset, collection, region, sort: "distance" });
 assert(nearby.complete, `${nearby.tiles.failed} tile(s) failed`);
 assert(nearby.places.length > 0, "no places in region");
-const distances = nearby.places.map((h) => h.distance as number);
-assert(distances.every((d, i) => d <= region.radius && (i === 0 || d >= distances[i - 1])), "not distance-ordered within radius");
+// A place with no point location has a null distance and sorts last.
+const distances = nearby.places.map((h) => h.distance ?? Infinity);
+assert(
+  distances.every((d, i) => (d <= region.radius || d === Infinity) && (i === 0 || d >= distances[i - 1])),
+  "not distance-ordered within radius",
+);
 log("searchPlaces (no text)", `${nearby.places.length} places from ${nearby.tiles.fetched} tile(s)`);
 
 const named = nearby.places.find((h) => h.origin && typeof h.place.name === "string" && h.place.name);

@@ -22,11 +22,14 @@ test("client works cross-origin against a real garganorn", async () => {
   const tileset = await client.describeTileset(served!.slug);
   expect(tileset.collections.some((c) => c.dataset === dataset)).toBe(true);
 
-  const nearby = await client.searchPlaces({ dataset, collection, region });
+  const nearby = await client.searchPlaces({ dataset, collection, region, sort: "distance" });
   expect(nearby.complete).toBe(true);
   expect(nearby.places.length).toBeGreaterThan(0);
-  const distances = nearby.places.map((h) => h.distance as number);
-  expect(distances.every((d, i) => d <= region.radius && (i === 0 || d >= distances[i - 1]))).toBe(true);
+  // A place with no point location has a null distance and sorts last.
+  const distances = nearby.places.map((h) => h.distance ?? Infinity);
+  expect(
+    distances.every((d, i) => (d <= region.radius || d === Infinity) && (i === 0 || d >= distances[i - 1])),
+  ).toBe(true);
 
   const named = nearby.places.find((h) => h.origin && typeof h.place.name === "string" && h.place.name);
   expect(named).toBeDefined();
