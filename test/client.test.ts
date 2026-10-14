@@ -1,155 +1,176 @@
 /// <reference types="vite/client" />
 import { describe, expect, it } from "vitest";
 import { AtgeoClient, AtgeoError } from "../src/index.js";
-import { DEFAULT_SERVER, PLACES, bboxLocation, fakeServer, place, point } from "./helpers/fakeServer.js";
+import {
+  DEFAULT_SERVER,
+  bboxLocation,
+  fakeServer,
+  overture,
+  place,
+  placeOrigin,
+  point,
+  record,
+  type FakeTileset,
+} from "./helpers/fakeServer.js";
 
 const url = (n: string) => `https://tiles.example/${n}.json`;
 const region = { bbox: [-122.42, 37.77, -122.41, 37.78] as [number, number, number, number] };
-const METADATA = { collection: PLACES, source: "https://example.org/source", recordCount: 3 };
 
 describe("getPlace", () => {
   const value = place("r1", "Ferry Building", [point(37.7955, -122.3937)], {
-    importance: 0.8,
     attributes: { kind: "landmark" },
     futureKey: { nested: [1, 2] },
   });
+  const origin = placeOrigin("r1");
+  const noImportance = place("r2", "No Importance", [point(37.7955, -122.3937)]);
 
-  function setup(server = DEFAULT_SERVER) {
-    const fake = fakeServer({ server, collections: { [PLACES]: { tiles: [{ url: url("a"), records: [value] }] } } });
-    return { fake, client: new AtgeoClient({ server, fetch: fake.fetch }) };
+  function setup() {
+    const fake = fakeServer({
+      tilesets: [overture([{ url: url("a"), records: [record(value, 80), record(noImportance)] }])],
+    });
+    return { fake, client: new AtgeoClient({ fetch: fake.fetch }) };
   }
 
-  it("calls getRecord with the server's DID as repo, collection and rkey on a cache miss", async () => {
+  const nsid = (r: { url: string }) => new URL(r.url).pathname.split("/").pop();
+
+  it("sends one getPlace request with the origin as uri on a cold client, and no describeService", async () => {
     const { fake, client } = setup();
-    await client.getPlace({ collection: PLACES, rkey: "r1" });
-    const u = new URL(fake.requests[fake.requests.length - 1].url);
-    expect(u.origin + u.pathname).toBe(`${DEFAULT_SERVER}/xrpc/com.atproto.repo.getRecord`);
-    expect(u.searchParams.get("repo")).toBe("did:web:places.atgeo.org");
-    expect(u.searchParams.get("collection")).toBe(PLACES);
-    expect(u.searchParams.get("rkey")).toBe("r1");
+    await client.getPlace({ origin });
+    expect(fake.requests).toHaveLength(1);
+    const u = new URL(fake.requests[0].url);
+    expect(u.origin + u.pathname).toBe(`${DEFAULT_SERVER}/xrpc/org.atgeo.getPlace`);
+    expect(u.searchParams.get("uri")).toBe(origin);
+    expect(fake.requests.map(nsid)).not.toContain("org.atgeo.describeService");
   });
 
-  it("uses the DID a local server declares as repo, not its host and port", async () => {
-    const { fake, client } = setup("http://localhost:8000");
-    await client.getPlace({ collection: PLACES, rkey: "r1" });
-    const u = new URL(fake.requests[fake.requests.length - 1].url);
-    expect(u.searchParams.get("repo")).toBe("did:web:localhost");
+  it("returns the value unmodified with importance beside it", async () => {
+    const { client } = setup();
+    expect(await client.getPlace({ origin })).toEqual({ origin, place: value, importance: 80 });
   });
 
-  it("reuses the cached service description across getPlace misses", async () => {
+  it("returns a null importance when the server gives none", async () => {
+    const { client } = setup();
+    expect((await client.getPlace({ origin: placeOrigin("r2") })).importance).toBeNull();
+  });
+
+  it("returns the same answer from the cache and the network", async () => {
     const { fake, client } = setup();
-    await client.getPlace({ collection: PLACES, rkey: "r1" });
-    await client.getPlace({ collection: PLACES, rkey: "nope" }).catch(() => {});
-    const describes = fake.requests.filter((r) => r.url.includes("org.atgeo.describeService"));
-    expect(describes).toHaveLength(1);
+    const network = await client.getPlace({ origin });
+    const fresh = new AtgeoClient({ fetch: fake.fetch });
+    await fresh.searchPlaces({ region: { bbox: [-122.40, 37.79, -122.39, 37.80] } });
+    const before = fake.requests.length;
+    expect(await fresh.getPlace({ origin })).toEqual(network);
+    expect(fake.requests.length).toBe(before);
   });
 
-  it("returns a tile-shaped place with envelope importance reinserted", async () => {
-    const { client } = setup();
-    const record = await client.getPlace({ collection: PLACES, rkey: "r1" });
-    expect(record.uri).toBe(`${DEFAULT_SERVER}/${PLACES}/r1`);
-    expect(record.place).toEqual(value);
+  it("makes no request for the origin of a hit from an earlier search", async () => {
+    const { fake, client } = setup();
+    const { places } = await client.searchPlaces({ region: { bbox: [-122.40, 37.79, -122.39, 37.80] } });
+    const before = fake.requests.length;
+    await client.getPlace({ origin: places[0].origin as string });
+    expect(fake.requests.length).toBe(before);
   });
 
-  it("returns the same shape from the cache and the network", async () => {
-    const { client } = setup();
-    const network = await client.getPlace({ collection: PLACES, rkey: "r1" });
-    await client.searchPlaces({ region: { bbox: [-122.40, 37.79, -122.39, 37.80] } });
-    const cached = await client.getPlace({ collection: PLACES, rkey: "r1" });
-    expect(cached).toEqual(network);
+  it("resolves a hit identified by a record uri from the cache", async () => {
+    const uriOnly = place("u", "By uri", [point(37.775, -122.415)], { origin: undefined });
+    const fake = fakeServer({
+      tilesets: [overture([{ url: url("a"), records: [record(uriOnly, 4, "https://example.org/r/u")] }])],
+    });
+    const client = new AtgeoClient({ fetch: fake.fetch });
+    const { places } = await client.searchPlaces({ dataset: "overturemaps.org", region });
+    expect(places[0].origin).toBe("https://example.org/r/u");
+    fake.goOffline();
+    expect(await client.getPlace({ origin: places[0].origin as string })).toEqual({
+      origin: "https://example.org/r/u",
+      place: uriOnly,
+      importance: 4,
+    });
   });
 
-  it("rejects an unknown rkey with RecordNotFound", async () => {
+  it.each([placeOrigin("nope"), "https://example.org/not-an-origin"])("rejects %s with PlaceNotFound", async (unknown) => {
     const { client } = setup();
-    const p = client.getPlace({ collection: PLACES, rkey: "nope" });
+    const p = client.getPlace({ origin: unknown });
     await expect(p).rejects.toBeInstanceOf(AtgeoError);
-    await expect(p).rejects.toMatchObject({ code: "RecordNotFound" });
+    await expect(p).rejects.toMatchObject({ code: "PlaceNotFound" });
   });
 });
 
-describe("describeService and getCollectionInfo", () => {
-  const OLD = "org.atgeo.places.old";
-  function setup(wrap?: (fetch: typeof globalThis.fetch) => typeof globalThis.fetch) {
-    const fake = fakeServer({
-      collections: {
-        [PLACES]: { tiles: [], metadata: METADATA },
-        [OLD]: { tiles: [] },
-      },
+describe("describeService and describeTileset", () => {
+  const OSM: FakeTileset = {
+    slug: "osm",
+    collections: [{ dataset: "openstreetmap.org", collection: "way", recordCount: 3, categories: [{ value: "cafe", count: 2 }] }],
+    references: [{ dataset: "openstreetmap.org", collection: "node", licenses: ["https://opendatacommons.org/licenses/odbl/"] }],
+    tiles: [],
+  };
+  const fake = () => fakeServer({ tilesets: [overture([]), OSM] });
+
+  it("describeService returns the did and the configured tilesets", async () => {
+    const service = await new AtgeoClient({ fetch: fake().fetch }).describeService();
+    expect(service).toEqual({
+      did: "did:web:places.atgeo.org",
+      tilesets: [
+        { slug: "overture-place", collections: [{ dataset: "overturemaps.org", collection: "place" }] },
+        { slug: "osm", collections: [{ dataset: "openstreetmap.org", collection: "way" }] },
+      ],
     });
-    return { fake, client: new AtgeoClient({ fetch: wrap ? wrap(fake.fetch) : fake.fetch }) };
-  }
-
-  it("describeService returns did and collections", async () => {
-    const { client } = setup();
-    const service = await client.describeService();
-    expect(service.did).toBe("did:web:places.atgeo.org");
-    expect(service.collections).toHaveLength(2);
-    expect(service.collections.find((c) => c.collection === OLD)).toEqual({ collection: OLD });
-    const withMetadata = service.collections.find((c) => c.collection === PLACES);
-    expect(withMetadata?.metadata).toEqual(expect.any(String));
+    const slugs: string[] = service.tilesets.map((t) => t.slug);
+    expect(slugs).toEqual(["overture-place", "osm"]);
   });
 
-  it("getCollectionInfo fetches the metadata URL as served and returns the record", async () => {
-    const { fake, client } = setup();
-    const served = (await client.describeService()).collections.find((c) => c.collection === PLACES)?.metadata;
-    expect(await client.getCollectionInfo(PLACES)).toEqual(METADATA);
-    expect(fake.requests.map((r) => r.url)).toContain(served);
+  it("describeTileset returns the descriptor", async () => {
+    const tileset = await new AtgeoClient({ fetch: fake().fetch }).describeTileset("osm");
+    expect(tileset).toEqual({ slug: "osm", collections: OSM.collections, references: OSM.references });
+    const slug: string = tileset.slug;
+    expect(slug).toBe("osm");
   });
 
-  it("getCollectionInfo returns null when the collection has no metadata", async () => {
-    const { client } = setup();
-    expect(await client.getCollectionInfo(OLD)).toBeNull();
+  it("describeTileset asks the server each time", async () => {
+    const server = fake();
+    const client = new AtgeoClient({ fetch: server.fetch });
+    await client.describeTileset("osm");
+    await client.describeTileset("osm");
+    expect(server.requests).toHaveLength(2);
   });
 
-  it("getCollectionInfo throws CollectionNotFound for an unlisted collection", async () => {
-    const { client } = setup();
-    const p = client.getCollectionInfo("org.example.unlisted");
+  it("describeTileset rejects an unknown slug with TilesetNotFound", async () => {
+    const p = new AtgeoClient({ fetch: fake().fetch }).describeTileset("nope");
     await expect(p).rejects.toBeInstanceOf(AtgeoError);
-    await expect(p).rejects.toMatchObject({ code: "CollectionNotFound" });
-  });
-
-  it("getCollectionInfo raises RecordNotFound when the metadata URL answers 404", async () => {
-    const { client } = setup((inner) => async (input, init) =>
-      new Request(input).url.startsWith(`${DEFAULT_SERVER}/org.atgeo.collection/`)
-        ? new Response(JSON.stringify({ error: "RecordNotFound", message: "gone" }), { status: 404 })
-        : inner(input, init),
-    );
-    const p = client.getCollectionInfo(PLACES);
-    await expect(p).rejects.toBeInstanceOf(AtgeoError);
-    await expect(p).rejects.toMatchObject({ code: "RecordNotFound" });
+    await expect(p).rejects.toMatchObject({ code: "TilesetNotFound" });
   });
 });
 
 describe("searchPlaces results", () => {
   const records = [
-    place("cafe", "Zanzibar Cafe", [point(0.001, 0)], { importance: 2, futureKey: { a: 1 }, variants: [{ name: "ZC" }] }),
-    place("shop", "Corner Shop", [point(0.002, 0)], { importance: 9 }),
-    place("division", "Some Division", [bboxLocation(0.01, -0.01, 0.01, -0.01)], { importance: 1 }),
+    record(place("cafe", "Zanzibar Cafe", [point(0.001, 0)], { futureKey: { a: 1 }, variants: [{ name: "ZC" }] }), 2),
+    record(place("shop", "Corner Shop", [point(0.002, 0)]), 9),
+    record(place("division", "Some Division", [bboxLocation(0.01, -0.01, 0.01, -0.01)]), 1),
   ];
   const circle = { lat: 0, lon: 0, radius: 2000 };
 
   function setup() {
-    const fake = fakeServer({ collections: { [PLACES]: { tiles: [{ url: url("a"), records }] } } });
+    const fake = fakeServer({ tilesets: [overture([{ url: url("a"), records }])] });
     return new AtgeoClient({ fetch: fake.fetch });
   }
 
-  it("returns uri, wire place, meters distance and null score without text", async () => {
+  it("returns origin, the wire place, importance, meters distance and null score without text", async () => {
     const result = await setup().searchPlaces({ region: circle });
-    const cafe = result.places.find((h) => h.place.rkey === "cafe");
-    expect(cafe?.uri).toBe(`${DEFAULT_SERVER}/${PLACES}/cafe`);
-    expect(cafe?.place).toEqual(records[0]);
+    const cafe = result.places.find((h) => h.origin === placeOrigin("cafe"));
+    expect(cafe?.place).toEqual(records[0].value);
+    expect(cafe?.place).not.toHaveProperty("importance");
+    expect(cafe).not.toHaveProperty("uri");
+    expect(cafe?.importance).toBe(2);
     expect(cafe?.distance).toBeCloseTo(111.195, 1);
     expect(result.places.every((h) => h.score === null)).toBe(true);
   });
 
   it("gives null distance to a record with no point", async () => {
     const result = await setup().searchPlaces({ region: circle });
-    expect(result.places.find((h) => h.place.rkey === "division")?.distance).toBeNull();
+    expect(result.places.find((h) => h.origin === placeOrigin("division"))?.distance).toBeNull();
   });
 
   it("returns a numeric score with text", async () => {
     const result = await setup().searchPlaces({ region: circle, text: "Zanzibar Cafe" });
-    const cafe = result.places.find((h) => h.place.rkey === "cafe");
+    const cafe = result.places.find((h) => h.origin === placeOrigin("cafe"));
     expect(cafe?.score).toBeCloseTo(1, 2);
     expect(result.places.every((h) => typeof h.score === "number")).toBe(true);
   });
@@ -164,11 +185,109 @@ describe("searchPlaces results", () => {
   });
 });
 
+describe("datasets and collections", () => {
+  const osm = (kind: string, id: string, lat: number) =>
+    place(id, `${kind} ${id}`, [point(lat, -122.415)], { origin: `urn:atgeo:openstreetmap.org:${kind}:${id}` });
+  const OSM: FakeTileset = {
+    slug: "osm",
+    collections: ["node", "way", "relation"].map((collection) => ({ dataset: "openstreetmap.org", collection })),
+    tiles: [
+      {
+        url: url("osm"),
+        records: [
+          record(osm("node", "1", 37.771)),
+          record(osm("way", "2", 37.772)),
+          record(osm("relation", "3", 37.773)),
+          record(place("u", "By uri", [point(37.774, -122.415)], { origin: undefined }), undefined, "https://example.org/r/u"),
+        ],
+      },
+    ],
+  };
+  const setup = () => {
+    const fake = fakeServer({ tilesets: [overture([]), OSM] });
+    return { fake, client: new AtgeoClient({ fetch: fake.fetch }) };
+  };
+  const params = (fake: { requests: { url: string }[] }) => new URL(fake.requests[0].url).searchParams;
+  const tileListRequests = (fake: { requests: { url: string }[] }) =>
+    fake.requests.filter((r) => r.url.includes("org.atgeo.getTiles")).map((r) => new URL(r.url).searchParams);
+
+  it("keys the tile list on dataset and collection", async () => {
+    const { fake, client } = setup();
+    await client.searchPlaces({ dataset: "openstreetmap.org", collection: "way", region });
+    await client.searchPlaces({ dataset: "openstreetmap.org", region });
+    await client.searchPlaces({ dataset: "overturemaps.org", region });
+    expect(tileListRequests(fake).map((p) => `${p.get("dataset")}|${p.get("collection")}`)).toEqual([
+      "openstreetmap.org|way",
+      "openstreetmap.org|null",
+      "overturemaps.org|null",
+    ]);
+  });
+
+  it("matches the collection, not a collection sharing its prefix", async () => {
+    const fake = fakeServer({
+      tilesets: [
+        {
+          slug: "osm",
+          collections: ["way", "wayside"].map((collection) => ({ dataset: "openstreetmap.org", collection })),
+          tiles: [{ url: url("osm"), records: [record(osm("way", "2", 37.772)), record(osm("wayside", "9", 37.773))] }],
+        },
+      ],
+    });
+    const { places } = await new AtgeoClient({ fetch: fake.fetch }).searchPlaces({
+      dataset: "openstreetmap.org",
+      collection: "way",
+      region,
+    });
+    expect(places.map((h) => h.origin)).toEqual(["urn:atgeo:openstreetmap.org:way:2"]);
+  });
+
+  it("searches a whole dataset when only the dataset is named", async () => {
+    const { fake, client } = setup();
+    const { places } = await client.searchPlaces({ dataset: "openstreetmap.org", region });
+    expect(places.map((h) => h.origin).sort()).toEqual([
+      "https://example.org/r/u",
+      "urn:atgeo:openstreetmap.org:node:1",
+      "urn:atgeo:openstreetmap.org:relation:3",
+      "urn:atgeo:openstreetmap.org:way:2",
+    ]);
+    expect(params(fake).get("dataset")).toBe("openstreetmap.org");
+    expect(params(fake).has("collection")).toBe(false);
+  });
+
+  it("filters to one collection, dropping records with no origin", async () => {
+    const { fake, client } = setup();
+    const { places } = await client.searchPlaces({ dataset: "openstreetmap.org", collection: "way", region });
+    expect(places.map((h) => h.origin)).toEqual(["urn:atgeo:openstreetmap.org:way:2"]);
+    expect(params(fake).get("collection")).toBe("way");
+  });
+
+  it("defaults to overturemaps.org / place when nothing is named", async () => {
+    const { fake, client } = setup();
+    await client.searchPlaces({ region });
+    expect(params(fake).get("dataset")).toBe("overturemaps.org");
+    expect(params(fake).get("collection")).toBe("place");
+  });
+
+  it("takes overturemaps.org for a collection named alone", async () => {
+    const { fake, client } = setup();
+    await client.searchPlaces({ collection: "division", region }).catch(() => {});
+    expect(params(fake).get("dataset")).toBe("overturemaps.org");
+    expect(params(fake).get("collection")).toBe("division");
+  });
+});
+
+const sources = import.meta.glob("../src/**/*.ts", { query: "?raw", import: "default", eager: true }) as Record<
+  string,
+  string
+>;
+
+describe("retired wire names", () => {
+  it.each(Object.entries(sources))("%s mentions no retired collection, record or coverage names", (_file, text) => {
+    expect(text).not.toMatch(/org\.atgeo\.collection|getRecord|getCoverage|rkey/);
+  });
+});
+
 describe("universal runtime (R9)", () => {
-  const sources = import.meta.glob("../src/**/*.ts", { query: "?raw", import: "default", eager: true }) as Record<
-    string,
-    string
-  >;
   const NODE_MODULE =
     /(?:from|import|require)\s*\(?\s*["'](?:node:[^"']*|(?:assert|buffer|child_process|cluster|crypto|dns|events|fs|http|http2|https|net|os|path|perf_hooks|process|querystring|readline|stream|string_decoder|timers|tls|url|util|vm|worker_threads|zlib)(?:\/[^"']*)?)["']/;
 

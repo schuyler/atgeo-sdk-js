@@ -32,12 +32,18 @@ export function locate(value: PlaceValue): Locations {
   return result;
 }
 
-// Keeps the first copy of each rkey, in the order given.
+export function recordKey(r: TileRecord): string | null {
+  return typeof r.value.origin === "string" ? r.value.origin : (r.uri ?? null);
+}
+
+// Keeps the first copy of each key, in the order given. Records without a key can't be told apart, so all pass.
 export function dedupe(records: TileRecord[]): TileRecord[] {
-  const seen = new Set<unknown>();
+  const seen = new Set<string>();
   return records.filter((r) => {
-    if (seen.has(r.value.rkey)) return false;
-    seen.add(r.value.rkey);
+    const key = recordKey(r);
+    if (key === null) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }

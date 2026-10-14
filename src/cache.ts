@@ -1,12 +1,13 @@
+import { recordKey } from "./merge.js";
 import type { PlaceValue } from "./types.js";
 
 export interface TileRecord {
-  uri: string;
   value: PlaceValue;
+  uri?: string;
+  importance?: number;
 }
 
 interface TileEntry {
-  collection: string;
   records: TileRecord[];
   size: number;
 }
@@ -39,13 +40,14 @@ export class TileCache {
     }
   }
 
-  find(collection: string, rkey: string): TileRecord | undefined {
-    for (const entry of this.tiles.values()) {
-      if (entry.collection !== collection) continue;
-      const hit = entry.records.find((r) => r.value.rkey === rkey);
-      if (hit) return hit;
+  find(key: string): TileRecord | undefined {
+    let best: { url: string; record: TileRecord } | undefined;
+    for (const [url, entry] of this.tiles) {
+      if (best && url >= best.url) continue;
+      const record = entry.records.find((r) => recordKey(r) === key);
+      if (record) best = { url, record };
     }
-    return undefined;
+    return best?.record;
   }
 }
 

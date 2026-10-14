@@ -1,16 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { AtgeoClient } from "../src/index.js";
-import { PLACES, fakeServer, place, point } from "./helpers/fakeServer.js";
+import { fakeServer, overture, place, point, record } from "./helpers/fakeServer.js";
 
 const TILE = "https://tiles.example/t1.json";
 
 function setup() {
   const server = fakeServer({
-    collections: {
-      [PLACES]: {
-        tiles: [{ url: TILE, records: [place("r1", "Zanzibar Quokka Cafe", [point(37.775, -122.418)])] }],
-      },
-    },
+    tilesets: [overture([{ url: TILE, records: [record(place("r1", "Zanzibar Quokka Cafe", [point(37.775, -122.418)]))] }])],
   });
   return { server, client: new AtgeoClient({ fetch: server.fetch }) };
 }
@@ -46,16 +42,16 @@ describe("search text stays local", () => {
     }
   });
 
-  it("issues only getCoverage and tile requests", async () => {
+  it("issues only getTiles and tile requests", async () => {
     const { server, client } = setup();
     await client.searchPlaces({
       region: { lat: 37.7749295, lon: -122.4194155, radius: 500 },
       text: "Zanzibar Quokka",
     });
     const kinds = server.requests.map((r) =>
-      r.url.includes("/xrpc/org.atgeo.getCoverage?") ? "coverage" : r.url === TILE ? "tile" : r.url,
+      r.url.includes("/xrpc/org.atgeo.getTiles?") ? "tiles" : r.url === TILE ? "tile" : r.url,
     );
-    expect(kinds).toEqual(["coverage", "tile"]);
+    expect(kinds).toEqual(["tiles", "tile"]);
     for (const r of server.requests) expect(r.method).toBe("GET");
   });
 

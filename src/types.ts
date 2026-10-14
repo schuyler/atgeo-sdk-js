@@ -1,16 +1,43 @@
 export type PlaceValue = { [key: string]: unknown };
 
 export interface PlaceRecord {
-  uri: string;
+  origin: string;
   place: PlaceValue;
+  importance: number | null;
+}
+
+export interface CollectionRef {
+  dataset: string;
+  collection: string;
 }
 
 export interface ServiceDescription {
   did: string;
-  collections: { collection: string; metadata?: string }[];
+  tilesets: { slug: string; collections: CollectionRef[] }[];
 }
 
-export type CollectionInfo = { [key: string]: unknown };
+export interface CollectionAttribution extends CollectionRef {
+  release?: string;
+  source?: string;
+  licenses?: string[];
+  attribution?: string;
+}
+
+export interface CollectionInfo extends CollectionAttribution {
+  recordCount?: number;
+  locationFormats?: string[];
+  containmentTypes?: string[];
+  categories?: { value: string; count: number }[];
+  attributes?: string[];
+}
+
+export interface Tileset {
+  slug: string;
+  publishedAt?: string;
+  extent?: { north: string; south: string; east: string; west: string };
+  collections: CollectionInfo[];
+  references?: CollectionAttribution[];
+}
 
 export type Region =
   | { lat: number; lon: number; radius: number }
@@ -19,6 +46,7 @@ export type Region =
 export type SortMode = "fused" | "distance" | "similarity";
 
 export interface SearchOptions {
+  dataset?: string;
   collection?: string;
   region: Region;
   text?: string;
@@ -27,8 +55,9 @@ export interface SearchOptions {
 }
 
 export interface SearchHit {
-  uri: string;
+  origin: string | null;
   place: PlaceValue;
+  importance: number | null;
   distance: number | null;
   score: number | null;
 }
@@ -36,7 +65,7 @@ export interface SearchHit {
 export interface SearchResult {
   places: SearchHit[];
   complete: boolean;
-  summary: boolean;
+  overview: boolean;
   tiles: { fetched: number; failed: number };
 }
 

@@ -1,7 +1,31 @@
-import type { CollectionInfo, PlaceValue } from "../../src/index.js";
+import { Lexicons, type LexiconDoc } from "@atproto/lexicon";
+import type { PlaceValue } from "../../src/index.js";
+import address from "../lexicon/address.json" with { type: "json" };
+import bbox from "../lexicon/bbox.json" with { type: "json" };
+import defs from "../lexicon/defs.json" with { type: "json" };
+import describeService from "../lexicon/describeService.json" with { type: "json" };
+import describeTileset from "../lexicon/describeTileset.json" with { type: "json" };
+import geo from "../lexicon/geo.json" with { type: "json" };
+import getPlace from "../lexicon/getPlace.json" with { type: "json" };
+import getTiles from "../lexicon/getTiles.json" with { type: "json" };
+import placeLexicon from "../lexicon/place.json" with { type: "json" };
+import tilePayload from "../lexicon/tilePayload.json" with { type: "json" };
+
+const lexicons = new Lexicons([
+  address,
+  bbox,
+  defs,
+  describeService,
+  describeTileset,
+  geo,
+  getPlace,
+  getTiles,
+  placeLexicon,
+  tilePayload,
+] as unknown as LexiconDoc[]);
 
 export const DEFAULT_SERVER = "https://places.atgeo.org";
-export const PLACES = "org.atgeo.places.overture.place";
+const PUBLISHED_AT = "2026-01-01T00:00:00Z";
 
 export interface CapturedRequest {
   url: string;
@@ -10,19 +34,29 @@ export interface CapturedRequest {
   body: string | null;
 }
 
-export interface FakeCollection {
-  tiles: { url: string; records: PlaceValue[] }[];
-  // Tile URLs returned for a getCoverage bbox string; default: every tile.
-  // Returning an error object answers 400 with that body; { tiles, summary: true }
-  // marks the answer as a summary-band fallback.
-  coverage?: (bbox: string) => string[] | { tiles: string[]; summary?: boolean } | { error: string; message: string };
-  // org.atgeo.collection record; absent means describeService lists no metadata link.
-  metadata?: CollectionInfo;
+interface TileRecord {
+  value: PlaceValue;
+  uri?: string;
+  importance?: number;
 }
+
+type CollectionInfo = { dataset: string; collection: string } & Record<string, unknown>;
+
+export interface FakeTileset {
+  slug: string;
+  collections: CollectionInfo[];
+  references?: Record<string, unknown>[];
+  tiles: { url: string; records: TileRecord[] }[];
+}
+
+export type TilesFor = (bbox: string) => string[] | { tiles: string[]; overview?: boolean } | { error: string; message: string };
 
 export interface FakeServerOptions {
   server?: string;
-  collections?: Record<string, FakeCollection>;
+  // Default: one tileset, "overture-place", carrying overturemaps.org / place.
+  tilesets?: FakeTileset[];
+  // Replaces the whole getTiles answer after dataset and collection selection has passed.
+  tilesFor?: TilesFor;
   failTiles?: string[];
 }
 
@@ -37,6 +71,10 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 const xrpcError = (error: string, message: string, status = 400) => json({ error, message }, status);
+
+const wire = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+
+export const placeOrigin = (id: string) => `urn:atgeo:overturemaps.org:place:${id}`;
 
 export function point(lat: number, lon: number) {
   return {
@@ -56,87 +94,126 @@ export function bboxLocation(north: number, south: number, east: number, west: n
   };
 }
 
-export function place(
-  rkey: string,
-  name: string,
-  locations: unknown[],
-  extra: { importance?: number; variants?: { name: string }[] } & PlaceValue = {},
-): PlaceValue {
-  return { rkey, name, locations, ...extra };
+// `extra` may override `origin`, or set it to undefined to make a value with no origin.
+export function place(id: string, name: string, locations: unknown[], extra: PlaceValue = {}): PlaceValue {
+  return { $type: "org.atgeo.place", origin: placeOrigin(id), name, locations, ...extra };
 }
+
+export function record(value: PlaceValue, importance?: number, uri?: string): TileRecord {
+  return { value, ...(importance === undefined ? {} : { importance }), ...(uri === undefined ? {} : { uri }) };
+}
+
+export function overture(tiles: FakeTileset["tiles"]): FakeTileset {
+  return { slug: "overture-place", collections: [{ dataset: "overturemaps.org", collection: "place" }], tiles };
+}
+
+const attributionOf = ({ dataset, collection, release, source, licenses, attribution }: CollectionInfo) =>
+  wire({ dataset, collection, release, source, licenses, attribution });
+
+function tileBody(tileset: FakeTileset, records: TileRecord[]) {
+  return wire({
+    publishedAt: PUBLISHED_AT,
+    attribution: [...tileset.collections.map(attributionOf), ...(tileset.references ?? [])],
+    records,
+  });
+}
+
+const descriptorOf = ({ slug, collections, references }: FakeTileset) =>
+  wire({ slug, collections, ...(references ? { references } : {}) });
 
 export function fakeServer(options: FakeServerOptions = {}): FakeServer {
   const server = options.server ?? DEFAULT_SERVER;
-  const collections = options.collections ?? {};
+  const tilesets = options.tilesets ?? [overture([])];
   const failTiles = new Set(options.failTiles ?? []);
   const requests: CapturedRequest[] = [];
   let offline = false;
 
-  // garganorn declares did:web:{repo} and validates getRecord's repo as an at-identifier.
+  for (const tileset of tilesets) {
+    lexicons.assertValidXrpcOutput("org.atgeo.describeTileset", descriptorOf(tileset));
+    for (const tile of tileset.tiles) {
+      const result = lexicons.validate("org.atgeo.tilePayload", tileBody(tileset, tile.records));
+      if (!result.success) throw result.error;
+      for (const { value } of tile.records) lexicons.assertValidRecord("org.atgeo.place", wire(value));
+    }
+  }
+
   const did = `did:web:${new URL(server).hostname}`;
-  const recordUri = (collection: string, rkey: string) => `${server}/${collection}/${rkey}`;
-  const metadataUri = (collection: string) => recordUri("org.atgeo.collection", collection);
 
-  const handle = (url: URL): Response => {
-    const xrpc = url.href.startsWith(`${server}/xrpc/`) ? url.pathname.split("/").pop() : null;
+  const answer = (nsid: string, body: unknown): Response => {
+    lexicons.assertValidXrpcOutput(nsid, body);
+    return json(body);
+  };
 
-    if (xrpc === "org.atgeo.describeService") {
-      return json({
-        did,
-        collections: Object.entries(collections).map(([collection, c]) =>
-          c.metadata ? { collection, metadata: metadataUri(collection) } : { collection },
-        ),
-      });
-    }
+  const getTilesAnswer = (params: Record<string, string>): Response => {
+    const { dataset, collection, bbox } = params;
+    const withDataset = tilesets.filter((t) => t.collections.some((c) => c.dataset === dataset));
+    if (withDataset.length === 0) return xrpcError("DatasetNotFound", `Dataset ${dataset} not found`);
+    const selected = withDataset.filter((t) =>
+      t.collections.some((c) => c.dataset === dataset && (collection === undefined || c.collection === collection)),
+    );
+    if (selected.length === 0) return xrpcError("CollectionNotFound", `Collection ${collection} not found`);
+    const urls = selected.flatMap((t) => t.tiles.map((tile) => tile.url)).sort();
+    const tiles = options.tilesFor ? options.tilesFor(bbox) : urls;
+    if (Array.isArray(tiles)) return answer("org.atgeo.getTiles", { tiles });
+    if ("error" in tiles) return xrpcError(tiles.error, tiles.message);
+    return answer("org.atgeo.getTiles", tiles);
+  };
 
-    if (xrpc === "org.atgeo.getCoverage") {
-      const collection = url.searchParams.get("collection") ?? "";
-      const c = collections[collection];
-      if (!c) return xrpcError("CollectionNotFound", `Collection ${collection} not found`);
-      const tiles = c.coverage ? c.coverage(url.searchParams.get("bbox") ?? "") : c.tiles.map((t) => t.url);
-      if (Array.isArray(tiles)) return json({ tiles });
-      if ("error" in tiles) return xrpcError(tiles.error, tiles.message);
-      return json(tiles.summary ? { tiles: tiles.tiles, summary: true } : { tiles: tiles.tiles });
-    }
-
-    if (xrpc === "com.atproto.repo.getRecord") {
-      if (url.searchParams.get("repo") !== did) return xrpcError("InvalidRequest", "repo is invalid for format at-identifier");
-      const collection = url.searchParams.get("collection") ?? "";
-      const rkey = url.searchParams.get("rkey") ?? "";
-      const c = collections[collection];
-      if (!c) return xrpcError("CollectionNotFound", `Collection ${collection} not found`);
-      const value = c.tiles.flatMap((t) => t.records).find((r) => r.rkey === rkey);
-      if (!value) return xrpcError("RecordNotFound", `Record ${rkey} not found`);
-      // getRecord hoists importance out of the value into the envelope.
-      const { importance, ...rest } = value;
-      return json({
-        uri: recordUri(collection, rkey),
-        ...(importance === undefined ? {} : { importance }),
-        value: rest,
-      });
-    }
-
-    for (const [collection, c] of Object.entries(collections)) {
-      if (c.metadata && url.href === metadataUri(collection)) return json(c.metadata);
-      const tile = c.tiles.find((t) => t.url === url.href);
-      if (tile) {
-        if (failTiles.has(tile.url)) return new Response("upstream error", { status: 500 });
-        return json({
-          collection,
-          source: "https://example.org/source",
-          license: "https://example.org/license",
-          generated_at: "2026-01-01T00:00:00Z",
-          records: tile.records.map((value) => ({
-            uri: recordUri(collection, String(value.rkey)),
-            cid: null,
-            value,
-          })),
-        });
+  const getPlaceAnswer = (origin: string): Response => {
+    const [, , dataset, collection, ...rest] = origin.split(":");
+    const notFound = () => xrpcError("PlaceNotFound", `Place ${origin} not found`);
+    for (const tileset of tilesets) {
+      if (!tileset.collections.some((c) => c.dataset === dataset && c.collection === collection)) continue;
+      for (const tile of tileset.tiles) {
+        const found = tile.records.find((r) => r.value.origin === origin);
+        if (found) {
+          return answer("org.atgeo.getPlace", {
+            uri: `${server}/${dataset}/${collection}/${rest.join(":")}`,
+            ...(found.importance === undefined ? {} : { importance: found.importance }),
+            record: found.value,
+          });
+        }
       }
     }
+    return notFound();
+  };
 
-    if (url.href.startsWith(`${server}/org.atgeo.collection/`)) {
-      return xrpcError("RecordNotFound", "Record not found", 404);
+  const handle = (url: URL): Response => {
+    if (url.href.startsWith(`${server}/xrpc/`)) {
+      const nsid = url.pathname.split("/").pop() as string;
+      const handlers: Record<string, (params: Record<string, string>) => Response> = {
+        "org.atgeo.getTiles": getTilesAnswer,
+        "org.atgeo.getPlace": (params) => getPlaceAnswer(params.uri),
+        "org.atgeo.describeService": () =>
+          answer("org.atgeo.describeService", {
+            did,
+            tilesets: tilesets.map((t) => ({
+              slug: t.slug,
+              collections: t.collections.map(({ dataset, collection }) => ({ dataset, collection })),
+            })),
+          }),
+        "org.atgeo.describeTileset": ({ slug }) => {
+          const tileset = tilesets.find((t) => t.slug === slug);
+          return tileset ? answer("org.atgeo.describeTileset", descriptorOf(tileset)) : xrpcError("TilesetNotFound", `Tileset ${slug} not found`);
+        },
+      };
+      const handler = handlers[nsid];
+      if (!handler) return xrpcError("MethodNotImplemented", `Method ${nsid} not implemented`, 501);
+      const params = Object.fromEntries(url.searchParams);
+      try {
+        lexicons.assertValidXrpcParams(nsid, params);
+      } catch (error) {
+        return xrpcError("InvalidRequest", (error as Error).message);
+      }
+      return handler(params);
+    }
+
+    for (const tileset of tilesets) {
+      const tile = tileset.tiles.find((t) => t.url === url.href);
+      if (tile) {
+        if (failTiles.has(tile.url)) return new Response("upstream error", { status: 500 });
+        return json(tileBody(tileset, tile.records));
+      }
     }
     return new Response("Not found", { status: 404 });
   };

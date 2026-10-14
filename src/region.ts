@@ -84,7 +84,7 @@ function snapSpan(min: number, max: number, limit: number): [number, number] {
 
 const fixed = (units: number) => (units / 100).toFixed(2);
 
-// Snapped, serialized getCoverage bbox strings (one per antimeridian half), in call order.
+// Snapped, serialized getTiles bbox strings (one per antimeridian half), in call order.
 export function queryBboxes(region: Region): string[] {
   const [minLon, minLat, maxLon, maxLat] =
     "bbox" in region ? region.bbox : circleBox(region.lat, region.lon, region.radius);

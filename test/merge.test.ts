@@ -1,67 +1,118 @@
 import { describe, expect, it } from "vitest";
 import { AtgeoClient } from "../src/index.js";
 import type { PlaceValue, Region } from "../src/index.js";
-import { PLACES, bboxLocation, fakeServer, place, point } from "./helpers/fakeServer.js";
+import { bboxLocation, fakeServer, overture, place, placeOrigin, point, record, type FakeTileset } from "./helpers/fakeServer.js";
 
 const url = (n: string) => `https://tiles.example/${n}.json`;
+const idOf = (origin: string | null) => String(origin).slice(placeOrigin("").length);
 
 async function search(records: PlaceValue[], region: Region) {
-  const server = fakeServer({ collections: { [PLACES]: { tiles: [{ url: url("t"), records }] } } });
+  const server = fakeServer({ tilesets: [overture([{ url: url("t"), records: records.map((v) => record(v)) }])] });
   const client = new AtgeoClient({ fetch: server.fetch });
   const result = await client.searchPlaces({ region });
-  return result.places.map((h) => String(h.place.rkey)).sort();
+  return result.places.map((h) => idOf(h.origin)).sort();
 }
+
+const DIVISION = { dataset: "overturemaps.org", collection: "division" };
+const divisions = (tiles: FakeTileset["tiles"]): FakeTileset => ({ slug: "overture-division", collections: [DIVISION], tiles });
+const division = (id: string, name: string, lat = 37.775) =>
+  place(id, name, [point(lat, -122.415)], { origin: `urn:atgeo:overturemaps.org:division:${id}` });
 
 describe("deduplication", () => {
   const first = place("dup", "First copy", [point(37.775, -122.415)]);
   const second = place("dup", "Second copy", [point(37.775, -122.415)]);
   const region: Region = { bbox: [-122.42, 37.77, -122.41, 37.78] };
 
-  it("collapses a duplicate rkey across tiles to one result", async () => {
+  it("collapses a duplicate origin across tiles to one result", async () => {
     const server = fakeServer({
-      collections: {
-        [PLACES]: {
-          tiles: [
-            { url: url("a"), records: [first, place("a-only", "A", [point(37.772, -122.412)])] },
-            { url: url("b"), records: [second, place("b-only", "B", [point(37.773, -122.413)])] },
-          ],
-        },
-      },
+      tilesets: [
+        overture([
+          { url: url("a"), records: [record(first), record(place("a-only", "A", [point(37.772, -122.412)]))] },
+          { url: url("b"), records: [record(second), record(place("b-only", "B", [point(37.773, -122.413)]))] },
+        ]),
+      ],
     });
     const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ region });
-    expect(result.places.map((h) => h.place.rkey).sort()).toEqual(["a-only", "b-only", "dup"]);
-  });
-
-  it("keeps the copy from the first tile in coverage order", async () => {
-    const server = fakeServer({
-      collections: {
-        [PLACES]: {
-          tiles: [
-            { url: url("a"), records: [first] },
-            { url: url("b"), records: [second] },
-          ],
-          coverage: () => [url("b"), url("a")],
-        },
-      },
-    });
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ region });
-    expect(result.places).toHaveLength(1);
-    expect(result.places[0].place.name).toBe("Second copy");
+    expect(result.places.map((h) => idOf(h.origin)).sort()).toEqual(["a-only", "b-only", "dup"]);
   });
 
   it("keeps the first tile's copy in the default order too", async () => {
     const server = fakeServer({
-      collections: {
-        [PLACES]: {
-          tiles: [
-            { url: url("a"), records: [first] },
-            { url: url("b"), records: [second] },
-          ],
-        },
-      },
+      tilesets: [overture([{ url: url("a"), records: [record(first)] }, { url: url("b"), records: [record(second)] }])],
     });
     const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ region });
     expect(result.places.map((h) => h.place.name)).toEqual(["First copy"]);
+  });
+
+  it("merges a division record held by two tiles into one hit", async () => {
+    const server = fakeServer({
+      tilesets: [
+        divisions([
+          { url: url("a"), records: [record(division("d1", "Springfield"))] },
+          { url: url("b"), records: [record(division("d1", "Springfield"))] },
+        ]),
+      ],
+    });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({
+      dataset: "overturemaps.org",
+      collection: "division",
+      region,
+    });
+    expect(result.places).toHaveLength(1);
+    expect(result.places[0].origin).toBe("urn:atgeo:overturemaps.org:division:d1");
+  });
+
+  it.each([
+    ["lower", "a", "z", "East copy"],
+    ["higher", "z", "a", "West copy"],
+  ])("keeps the lowest-URL copy across an antimeridian split (east tile URL sorts %s)", async (_order, eastName, westName, winner) => {
+    const server = fakeServer({
+      tilesets: [
+        overture([
+          { url: url(eastName), records: [record(place("x", "East copy", [point(15, 175)]))] },
+          { url: url(westName), records: [record(place("x", "West copy", [point(15, -175)]))] },
+        ]),
+      ],
+      tilesFor: (bbox) => [bbox.startsWith("170") ? url(eastName) : url(westName)],
+    });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ region: { bbox: [170, 10, -170, 20] } });
+    expect(result.places.map((h) => h.place.name)).toEqual([winner]);
+  });
+
+  it("keeps two records that have neither origin nor uri", async () => {
+    const anonymous = (name: string) => place("x", name, [point(37.775, -122.415)], { origin: undefined });
+    const server = fakeServer({
+      tilesets: [overture([{ url: url("a"), records: [record(anonymous("One")), record(anonymous("Two"))] }])],
+    });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ dataset: "overturemaps.org", region });
+    expect(result.places.map((h) => h.place.name).sort()).toEqual(["One", "Two"]);
+    expect(result.places.every((h) => h.origin === null)).toBe(true);
+  });
+
+  it("identifies an origin-less record by its uri", async () => {
+    const value = place("x", "By uri", [point(37.775, -122.415)], { origin: undefined });
+    const server = fakeServer({
+      tilesets: [overture([{ url: url("a"), records: [record(value, undefined, "https://example.org/r/1")] }])],
+    });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ dataset: "overturemaps.org", region });
+    expect(result.places.map((h) => h.origin)).toEqual(["https://example.org/r/1"]);
+  });
+});
+
+describe("ordering ties", () => {
+  const region: Region = { bbox: [-122.42, 37.77, -122.41, 37.78] };
+
+  it("orders records equal on score, importance and distance by origin, null last", async () => {
+    const same = (id: string, extra: PlaceValue = {}) => record(place(id, "Same", [point(37.775, -122.415)], extra), 5);
+    const server = fakeServer({
+      tilesets: [
+        overture([
+          { url: url("a"), records: [same("x", { origin: undefined }), same("c"), same("a"), same("b")] },
+        ]),
+      ],
+    });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ dataset: "overturemaps.org", region });
+    expect(result.places.map((h) => h.origin)).toEqual([placeOrigin("a"), placeOrigin("b"), placeOrigin("c"), null]);
   });
 });
 
@@ -116,9 +167,9 @@ describe("region filtering: bbox", () => {
       [
         place("ok", "Ok", [point(37.777, -122.417)]),
         place("none", "None", []),
-        place("address", "Address", [{ $type: "community.lexicon.location.address", street: "1 Main St" }]),
+        place("address", "Address", [{ $type: "community.lexicon.location.address", country: "US", street: "1 Main St" }]),
         place("garbage", "Garbage", [{ ...point(0, 0), latitude: "north-ish" }]),
-        { rkey: "missing", name: "Missing" },
+        { $type: "org.atgeo.place", origin: placeOrigin("missing"), name: "Missing" },
       ],
       region,
     );
@@ -200,30 +251,30 @@ describe("determinism", () => {
     {
       url: url("a"),
       records: [
-        place("dup", "Copy A", [point(37.775, -122.415)], { importance: 5 }),
-        place("a1", "Alpha", [point(37.772, -122.412)], { importance: 5 }),
-        place("a2", "Alpha", [point(37.772, -122.412)], { importance: 5 }),
+        record(place("dup", "Copy A", [point(37.775, -122.415)]), 5),
+        record(place("a1", "Alpha", [point(37.772, -122.412)]), 5),
+        record(place("a2", "Alpha", [point(37.772, -122.412)]), 5),
       ],
     },
     {
       url: url("b"),
       records: [
-        place("dup", "Copy B", [point(37.775, -122.415)], { importance: 5 }),
-        place("b1", "Alpha", [point(37.772, -122.412)], { importance: 5 }),
+        record(place("dup", "Copy B", [point(37.775, -122.415)]), 5),
+        record(place("b1", "Alpha", [point(37.772, -122.412)]), 5),
       ],
     },
     {
       url: url("c"),
       records: [
-        place("dup", "Copy C", [point(37.775, -122.415)], { importance: 5 }),
-        place("c1", "Alpha", [point(37.772, -122.412)], { importance: 5 }),
+        record(place("dup", "Copy C", [point(37.775, -122.415)]), 5),
+        record(place("c1", "Alpha", [point(37.772, -122.412)]), 5),
       ],
     },
   ];
   const region: Region = { bbox: [-122.42, 37.77, -122.41, 37.78] };
 
   async function run(arrival: string[], text?: string) {
-    const server = fakeServer({ collections: { [PLACES]: { tiles } } });
+    const server = fakeServer({ tilesets: [overture(tiles)] });
     const delayed: typeof fetch = async (input, init) => {
       const href = new Request(input).url;
       const rank = arrival.findIndex((n) => href === url(n));
@@ -238,7 +289,7 @@ describe("determinism", () => {
     const outputs = await Promise.all(permutations(["a", "b", "c"]).map((order) => run(order, text)));
     expect(new Set(outputs).size).toBe(1);
     const parsed = JSON.parse(outputs[0]);
-    expect(parsed.places.map((h: { place: PlaceValue }) => h.place.rkey).sort()).toEqual(["a1", "a2", "b1", "c1", "dup"]);
-    expect(parsed.places.find((h: { place: PlaceValue }) => h.place.rkey === "dup").place.name).toBe("Copy A");
+    expect(parsed.places.map((h: { origin: string }) => idOf(h.origin)).sort()).toEqual(["a1", "a2", "b1", "c1", "dup"]);
+    expect(parsed.places.find((h: { origin: string }) => idOf(h.origin) === "dup").place.name).toBe("Copy A");
   });
 });

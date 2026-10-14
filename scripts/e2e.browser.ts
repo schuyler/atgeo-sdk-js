@@ -2,11 +2,13 @@ import { expect, test } from "vitest";
 import { AtgeoClient } from "../src/index.js";
 
 declare const ATGEO_SERVER: string;
-declare const ATGEO_COLLECTION: string;
+declare const ATGEO_DATASET: string;
+declare const ATGEO_COLLECTION: string | undefined;
 declare const ATGEO_REGION: string;
 
 const [lat, lon, radius] = ATGEO_REGION.split(",").map(Number);
 const region = { lat, lon, radius };
+const dataset = ATGEO_DATASET;
 const collection = ATGEO_COLLECTION;
 
 test("client works cross-origin against a real garganorn", async () => {
@@ -14,20 +16,24 @@ test("client works cross-origin against a real garganorn", async () => {
   const client = new AtgeoClient({ server: ATGEO_SERVER });
 
   const service = await client.describeService();
-  expect(service.collections.some((c) => c.collection === collection)).toBe(true);
+  const served = service.tilesets.find((t) => t.collections.some((c) => c.dataset === dataset));
+  expect(served).toBeDefined();
 
-  const info = await client.getCollectionInfo(collection);
-  expect(info?.collection).toBe(collection);
+  const tileset = await client.describeTileset(served!.slug);
+  expect(tileset.collections.some((c) => c.dataset === dataset)).toBe(true);
 
-  const nearby = await client.searchPlaces({ collection, region });
+  const nearby = await client.searchPlaces({ dataset, collection, region });
   expect(nearby.complete).toBe(true);
   expect(nearby.places.length).toBeGreaterThan(0);
+  const distances = nearby.places.map((h) => h.distance as number);
+  expect(distances.every((d, i) => d <= region.radius && (i === 0 || d >= distances[i - 1]))).toBe(true);
 
-  const named = nearby.places.find((h) => typeof h.place.name === "string" && h.place.name);
+  const named = nearby.places.find((h) => h.origin && typeof h.place.name === "string" && h.place.name);
   expect(named).toBeDefined();
-  const record = await new AtgeoClient({ server: ATGEO_SERVER }).getPlace({
-    collection,
-    rkey: named!.place.rkey as string,
-  });
-  expect(record.place.name).toBe(named!.place.name);
+  const name = named!.place.name as string;
+  const matched = await client.searchPlaces({ dataset, collection, region, text: name });
+  expect(matched.places.some((h) => h.origin === named!.origin && h.score !== null)).toBe(true);
+
+  const record = await new AtgeoClient({ server: ATGEO_SERVER }).getPlace({ origin: named!.origin as string });
+  expect(record.place.name).toBe(name);
 });

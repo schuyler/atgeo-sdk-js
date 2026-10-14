@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { AtgeoClient } from "../src/index.js";
 import type { Region } from "../src/index.js";
-import { PLACES, fakeServer, place, point } from "./helpers/fakeServer.js";
+import { fakeServer, overture, place, placeOrigin, point, record } from "./helpers/fakeServer.js";
 
 const COORD = /^-?\d{1,3}\.\d{2}$/;
 
 function setup() {
-  const server = fakeServer({ collections: { [PLACES]: { tiles: [] } } });
+  const server = fakeServer();
   return { server, client: new AtgeoClient({ fetch: server.fetch }) };
 }
 
@@ -14,7 +14,7 @@ async function emitted(region: Region): Promise<string[]> {
   const { server, client } = setup();
   await client.searchPlaces({ region });
   return server.requests
-    .filter((r) => r.url.includes("org.atgeo.getCoverage"))
+    .filter((r) => r.url.includes("org.atgeo.getTiles"))
     .map((r) => new URL(r.url).searchParams.get("bbox") ?? "");
 }
 
@@ -42,9 +42,9 @@ describe("coordinate serialization", () => {
   it.each(adversarial)("emits only two-decimal coordinates: %s", async (_name, region) => {
     const { server, client } = setup();
     await client.searchPlaces({ region });
-    const coverage = server.requests.filter((r) => r.url.includes("org.atgeo.getCoverage"));
-    expect(coverage.length).toBeGreaterThan(0);
-    for (const r of coverage) {
+    const tileLists = server.requests.filter((r) => r.url.includes("org.atgeo.getTiles"));
+    expect(tileLists.length).toBeGreaterThan(0);
+    for (const r of tileLists) {
       const bbox = new URL(r.url).searchParams.get("bbox") ?? "";
       const parts = bbox.split(",");
       expect(parts).toHaveLength(4);
@@ -181,7 +181,7 @@ describe("circle to bbox", () => {
 });
 
 describe("antimeridian", () => {
-  it("splits a crossing bbox into two coverage calls", async () => {
+  it("splits a crossing bbox into two getTiles calls", async () => {
     expect(await emitted({ bbox: [170, 10, -170, 20] })).toEqual([
       "170.00,10.00,180.00,20.00",
       "-180.00,10.00,-170.00,20.00",
@@ -217,19 +217,17 @@ describe("antimeridian", () => {
     const west = "https://tiles.example/west.json";
     const east = "https://tiles.example/east.json";
     const server = fakeServer({
-      collections: {
-        [PLACES]: {
-          tiles: [
-            { url: west, records: [place("w", "West", [point(15, 175)])] },
-            { url: east, records: [place("e", "East", [point(15, -175)])] },
-          ],
-          coverage: (bbox) => (bbox.startsWith("170") ? [west] : [east]),
-        },
-      },
+      tilesets: [
+        overture([
+          { url: west, records: [record(place("w", "West", [point(15, 175)]))] },
+          { url: east, records: [record(place("e", "East", [point(15, -175)]))] },
+        ]),
+      ],
+      tilesFor: (bbox) => (bbox.startsWith("170") ? [west] : [east]),
     });
     const client = new AtgeoClient({ fetch: server.fetch });
     const result = await client.searchPlaces({ region: { bbox: [170, 10, -170, 20] } });
-    expect(result.places.map((h) => h.place.rkey).sort()).toEqual(["e", "w"]);
+    expect(result.places.map((h) => h.origin).sort()).toEqual([placeOrigin("e"), placeOrigin("w")]);
     expect(result.complete).toBe(true);
   });
 });

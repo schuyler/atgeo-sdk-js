@@ -3,24 +3,25 @@ import { dedupe, inRegion, locate } from "./merge.js";
 import { normalize } from "./normalize.js";
 import { rank } from "./rank.js";
 import { queryBboxes, validateRegion } from "./region.js";
-import { AtgeoError, Transport, mapLimit } from "./transport.js";
+import { Transport, mapLimit } from "./transport.js";
 import type {
   ClientOptions,
-  CollectionInfo,
   PlaceRecord,
   PlaceValue,
   SearchOptions,
   SearchResult,
   ServiceDescription,
+  Tileset,
 } from "./types.js";
 
-const DEFAULT_COLLECTION = "org.atgeo.places.overture.place";
+const DEFAULT_DATASET = "overturemaps.org";
+const DEFAULT_COLLECTION = "place";
 const MAX_TILES_IN_FLIGHT = 8;
 
 export class AtgeoClient {
   private readonly transport: Transport;
   private readonly tiles: TileCache;
-  private readonly coverage = new TtlCache<{ tiles: string[]; summary: boolean }>(3600_000);
+  private readonly tileLists = new TtlCache<{ tiles: string[]; overview: boolean }>(3600_000);
   private readonly service = new TtlCache<ServiceDescription>(3600_000);
 
   constructor(options: ClientOptions = {}) {
@@ -38,22 +39,24 @@ export class AtgeoClient {
 
   private async search(options: SearchOptions, query: string, sort: NonNullable<SearchOptions["sort"]>): Promise<SearchResult> {
     const { region, signal } = options;
-    const collection = options.collection ?? DEFAULT_COLLECTION;
+    const dataset = options.dataset ?? DEFAULT_DATASET;
+    const collection = options.collection ?? (options.dataset === undefined ? DEFAULT_COLLECTION : undefined);
 
-    const coverages = await Promise.all(
+    const tileLists = await Promise.all(
       queryBboxes(region).map(async (bbox) => {
-        const key = `${collection}|${bbox}`;
-        let coverage = this.coverage.get(key);
-        if (!coverage) {
-          const response = await this.transport.xrpc<{ tiles: string[]; summary?: boolean }>("org.atgeo.getCoverage", { collection, bbox }, signal);
-          coverage = { tiles: response.tiles, summary: response.summary ?? false };
-          this.coverage.set(key, coverage);
+        const key = `${dataset}|${collection ?? ""}|${bbox}`;
+        let list = this.tileLists.get(key);
+        if (!list) {
+          const params: Record<string, string> = collection === undefined ? { dataset, bbox } : { dataset, collection, bbox };
+          const response = await this.transport.xrpc<{ tiles: string[]; overview?: boolean }>("org.atgeo.getTiles", params, signal);
+          list = { tiles: response.tiles, overview: response.overview ?? false };
+          this.tileLists.set(key, list);
         }
-        return coverage;
+        return list;
       }),
     );
-    const urls = [...new Set(coverages.flatMap((c) => c.tiles))];
-    const summary = coverages.some((c) => c.summary);
+    const urls = [...new Set(tileLists.flatMap((l) => l.tiles))].sort();
+    const overview = tileLists.some((l) => l.overview);
 
     const loaded = new Map<string, TileRecord[]>();
     let failed = 0;
@@ -65,9 +68,9 @@ export class AtgeoClient {
       }
       try {
         const text = await this.transport.get(url, signal);
-        const payload = JSON.parse(text) as { collection: string; records: TileRecord[] };
-        const records = payload.records.map(({ uri, value }) => ({ uri, value }));
-        this.tiles.set(url, { collection: payload.collection, records, size: text.length });
+        const payload = JSON.parse(text) as { records: TileRecord[] };
+        const records = payload.records.map(({ value, uri, importance }) => ({ value, uri, importance }));
+        this.tiles.set(url, { records, size: text.length });
         loaded.set(url, records);
       } catch (error) {
         if (signal?.aborted) throw error;
@@ -75,26 +78,28 @@ export class AtgeoClient {
       }
     });
 
-    const records = dedupe(urls.flatMap((url) => loaded.get(url) ?? [])).filter((r) => inRegion(locate(r.value), region));
+    const prefix = collection === undefined ? undefined : `urn:atgeo:${dataset}:${collection}:`;
+    const records = dedupe(urls.flatMap((url) => loaded.get(url) ?? []))
+      .filter((r) => prefix === undefined || (typeof r.value.origin === "string" && r.value.origin.startsWith(prefix)))
+      .filter((r) => inRegion(locate(r.value), region));
     return {
       places: rank(records, region, query, sort),
       complete: failed === 0,
-      summary,
+      overview,
       tiles: { fetched: loaded.size, failed },
     };
   }
 
-  async getPlace(options: { collection: string; rkey: string; signal?: AbortSignal }): Promise<PlaceRecord> {
-    const cached = this.tiles.find(options.collection, options.rkey);
-    if (cached) return { uri: cached.uri, place: cached.value };
-    const { did } = await this.describeService({ signal: options.signal });
-    const record = await this.transport.xrpc<{ uri: string; value: PlaceValue; importance?: number }>(
-      "com.atproto.repo.getRecord",
-      { repo: did, collection: options.collection, rkey: options.rkey },
+  async getPlace(options: { origin: string; signal?: AbortSignal }): Promise<PlaceRecord> {
+    const { origin } = options;
+    const cached = this.tiles.find(origin);
+    if (cached) return { origin, place: cached.value, importance: cached.importance ?? null };
+    const { record, importance } = await this.transport.xrpc<{ record: PlaceValue; importance?: number }>(
+      "org.atgeo.getPlace",
+      { uri: origin },
       options.signal,
     );
-    const place = record.importance === undefined ? record.value : { ...record.value, importance: record.importance };
-    return { uri: record.uri, place };
+    return { origin, place: record, importance: importance ?? null };
   }
 
   async describeService(options: { signal?: AbortSignal } = {}): Promise<ServiceDescription> {
@@ -106,10 +111,7 @@ export class AtgeoClient {
     return service;
   }
 
-  async getCollectionInfo(collection: string, options: { signal?: AbortSignal } = {}): Promise<CollectionInfo | null> {
-    const entry = (await this.describeService(options)).collections.find((c) => c.collection === collection);
-    if (!entry) throw new AtgeoError("CollectionNotFound", `Collection ${collection} not found`);
-    if (!entry.metadata) return null;
-    return JSON.parse(await this.transport.get(entry.metadata, options.signal)) as CollectionInfo;
+  describeTileset(slug: string, options: { signal?: AbortSignal } = {}): Promise<Tileset> {
+    return this.transport.xrpc<Tileset>("org.atgeo.describeTileset", { slug }, options.signal);
   }
 }

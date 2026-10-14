@@ -16,12 +16,12 @@ const { places, complete } = await atgeo.searchPlaces({
   text: "Starbux",
 });
 
-for (const { uri, place, distance, score } of places) {
-  console.log(place.name, Math.round(distance ?? NaN), score?.toFixed(2), uri);
+for (const { origin, place, distance, score } of places) {
+  console.log(place.name, Math.round(distance ?? NaN), score?.toFixed(2), origin);
 }
 ```
 
-Misspellings are fine; matching is fuzzy. If `complete` is `false`, some tiles failed to load and the results are partial. If `summary` is `true`, the region was too big to search in full and you got only its most important places; see [Summary answers](#summary-answers).
+Misspellings are fine; matching is fuzzy. If `complete` is `false`, some tiles failed to load and the results are partial. If `overview` is `true`, the region was too big to search in full and you got only its most important places; see [Overview answers](#overview-answers).
 
 ## Installation
 
@@ -56,7 +56,8 @@ Every method that touches the network takes an optional `signal` (`AbortSignal`)
 |---|---|
 | `region` | Required. A circle or bounding box (below). |
 | `text` | Optional search text. Matched fuzzily against each place's `name` and its `variants[].name`, after lowercasing and stripping accents and extra whitespace. Only the first 12 words count. |
-| `collection` | Defaults to `org.atgeo.places.overture.place`. |
+| `dataset` | Optional. The dataset to search, such as `openstreetmap.org`. Defaults to `overturemaps.org`. |
+| `collection` | Optional. Restricts the search to one collection of the dataset, such as `way`. See below for the defaults. |
 | `sort` | `"fused"` (default), `"distance"`, or `"similarity"`. |
 | `signal` | Aborts the search. |
 
@@ -67,6 +68,15 @@ Regions:
 { bbox: [minLon, minLat, maxLon, maxLat] }        // degrees
 ```
 
+Datasets and collections work like this:
+
+- With neither option, you search `overturemaps.org` / `place`.
+- With only `collection`, you search that collection of `overturemaps.org`.
+- With only `dataset`, you search the whole dataset, every collection together. `{ dataset: "openstreetmap.org" }` returns nodes, ways and relations in one list, and `{ dataset: "overturemaps.org" }` returns places and divisions together. Add `collection: "way"` to get only ways.
+- With both, you search that collection.
+
+A collection-filtered search, including the default `overturemaps.org` / `place`, keeps only records whose `origin` starts with `urn:atgeo:{dataset}:{collection}:`. A record with no `origin` matches no collection filter, so such a search never returns one. A dataset-only search has no filter and returns those records too.
+
 A bbox with `minLon > maxLon` crosses the antimeridian. A place with a point location is kept if the point falls inside the region; a place with only a bounding box is kept if that box touches the region.
 
 The result:
@@ -75,13 +85,14 @@ The result:
 interface SearchResult {
   places: SearchHit[];
   complete: boolean;                          // false if any tile failed to load
-  summary: boolean;                           // true if the server answered with its coarse summary band; see below
+  overview: boolean;                          // true if the server answered with its coarse overview; see below
   tiles: { fetched: number; failed: number };
 }
 
 interface SearchHit {
-  uri: string;
-  place: { [key: string]: unknown };   // the record value, as served
+  origin: string | null;               // the place's identity: place.origin, else the tile record's uri, else null
+  place: { [key: string]: unknown };   // the record value, exactly as served
+  importance: number | null;           // the record's importance, an integer relative to its tileset; null if it has none
   distance: number | null;             // meters from the circle's center, or the bbox's center; null if the place has no point location
   score: number | null;                // 0 to 1 text similarity; null if no text was given
 }
@@ -91,37 +102,49 @@ When `text` is given, places scoring below 0.6 are dropped.
 
 Sort modes:
 
-- `fused` orders by text similarity (best first), breaking near-ties by the place's `importance`, then by distance. Without text, that means importance, then distance. This is the one you usually want.
+- `fused` orders by text similarity (best first), breaking near-ties by the hit's `importance`, then by distance. Without text, that means importance, then distance. This is the one you usually want.
 - `distance` orders nearest first, then by importance, then similarity. Text still filters out poor matches.
 - `similarity` orders by text similarity, then nearest first. It throws without `text`.
 
-Similarity is compared to three decimal places, so scores that differ only beyond that count as ties. Remaining ties break on `uri`, so ordering is deterministic.
+Similarity is compared to three decimal places, so scores that differ only beyond that count as ties. Remaining ties break on `origin` (a hit with no `origin` sorts last), so ordering is deterministic.
 
-#### Summary answers
+`place` is the gazetteer's value untouched. Importance lives on `hit.importance` and identity on `hit.origin`.
 
-When a region is too large for the server's regular tile budget and the collection has a summary band, the server answers with that band instead: a coarse tileset holding only the most important places. The search still runs normally over those tiles, and `summary` is `true`. The list is not everything in the region.
+#### Overview answers
 
-`summary` and `complete` are independent. `complete` says whether every tile the server named loaded; `summary` says whether the server named a thin set of tiles to begin with. A summary search whose tiles all loaded is `summary: true, complete: true`. If either half of an antimeridian-crossing search gets a summary answer, `summary` is `true`.
+When a region is too large for the server's regular tile budget and the collection has an overview, the server answers with that instead: a coarse tileset holding only the most important places. The search still runs normally over those tiles, and `overview` is `true`. The list is not everything in the region.
 
-If `summary` is `true`, don't treat the results as exhaustive. Show something like "zoom in for more" and search a smaller region to get the full set. Servers that predate the flag, and collections without a summary band, always give `summary: false`. The SDK reads the flag from the coverage response only; it doesn't guess from tile URLs.
+`overview` and `complete` are independent. `complete` says whether every tile the server named loaded; `overview` says whether the server named a thin set of tiles to begin with. An overview search whose tiles all loaded is `overview: true, complete: true`. If either half of an antimeridian-crossing search gets an overview answer, `overview` is `true`.
 
-### `getPlace({ collection, rkey }): Promise<PlaceRecord>`
+If `overview` is `true`, don't treat the results as exhaustive. Show something like "zoom in for more" and search a smaller region to get the full set. Collections without an overview always give `overview: false`. The SDK reads the flag from the `getTiles` response only; it doesn't guess from tile URLs.
 
-Returns `{ uri, place }`. If the place is in a cached tile, no request is made. Otherwise it fetches the record from the server (`com.atproto.repo.getRecord`), and the server's `importance`, if any, is merged into `place`.
+#### Places that appear in more than one tile
+
+A place can be stored in several tiles. The SDK keeps one hit per origin (or per `uri`, for a record with no origin). Records with neither can't be told apart, so they're never merged.
+
+When the copies differ, which one you get is decided by tile URL: the copy from the lowest tile URL wins. Garganorn's copies of a multi-tile place are byte-identical, so this only matters for other producers' tilesets, such as an app's edited copies.
+
+The guarantee is that the result is deterministic for the server's answers and the cache's contents, and no stronger. Which copies are present depends on which tiles a search covered, so two searches over different regions can return different copies of the same place. The rule merges copies; it doesn't decide which is correct.
+
+### `getPlace({ origin }): Promise<PlaceRecord>`
+
+Returns `{ origin, place, importance }`, where `place` is the value as served and `importance` is a number or `null`. Pass the `origin` of a hit. If a cached tile holds the place, no request is made; otherwise the client asks the server (`org.atgeo.getPlace`) directly, with no discovery call first. A place with no origin is identified by its tile record's `uri`, which the cache can resolve; the server answers `PlaceNotFound` for a URI it doesn't serve, and `InvalidRequest` for a string that isn't a URI.
+
+A cache hit returns the copy from the cached tile with the lowest URL, the same rule search uses; a network answer is the server's own copy. They agree when the copies are identical, which for garganorn they are.
 
 ### `describeService(): Promise<ServiceDescription>`
 
-Returns `{ did, collections: [{ collection, metadata? }] }`. Cached for an hour.
+Returns `{ did, tilesets: [{ slug, collections: [{ dataset, collection }] }] }`. Cached for an hour.
 
-### `getCollectionInfo(collection): Promise<CollectionInfo | null>`
+### `describeTileset(slug): Promise<Tileset>`
 
-Fetches the collection's metadata document. Returns `null` if the collection has no metadata link, and throws `AtgeoError` with code `CollectionNotFound` if the server doesn't list the collection.
+Returns the tileset's descriptor: `slug`, `collections` (each a `{ dataset, collection }` with optional `release`, `source`, `licenses`, `attribution`, `recordCount`, `locationFormats`, `containmentTypes`, `categories` and `attributes`), and optional `publishedAt`, `extent` and `references`. Not cached.
 
 ### Errors
 
-- `AtgeoError` has a `code` string. A non-2xx response from the server becomes an `AtgeoError` whose `code` and message come from the server's JSON error body (`error`, `message`); if there isn't one, the code is `HttpError`. The SDK adds `CollectionNotFound`.
+- `AtgeoError` has a `code` string. A non-2xx response from the server becomes an `AtgeoError` whose `code` and message come from the server's JSON error body (`error`, `message`); if there isn't one, the code is `HttpError`. Apart from `HttpError`, every code comes from the server: for example `PlaceNotFound`, `TilesetNotFound`, `DatasetNotFound`, `CollectionNotFound`, `BboxTooLarge`, or `InvalidRequest` for a malformed parameter. The lexicons in `test/lexicon/` list the codes each method declares.
 - `searchPlaces` throws `TypeError` for an invalid region (non-finite or out-of-range coordinates, `minLat > maxLat`, negative radius) and for `sort: "similarity"` without text. It throws synchronously, before any request.
-- A failed coverage request rejects the whole search. A failed tile request does not: that tile is skipped, `tiles.failed` counts it, and `complete` is `false`.
+- A failed `getTiles` request rejects the whole search. A failed tile request does not: that tile is skipped, `tiles.failed` counts it, and `complete` is `false`.
 - Aborting rejects with whatever `fetch` throws. Network errors from `fetch` propagate as-is.
 
 ## Privacy
@@ -132,16 +155,16 @@ To search, the client asks the server which tiles cover an area, downloads those
 
 What does go on the wire:
 
-- `getCoverage` with the snapped bbox and the search's collection. A region that crosses the antimeridian sends two.
+- `getTiles` with the snapped bbox, the search's dataset, and its collection if it has one. A region that crosses the antimeridian sends two.
 - Requests for the tile URLs the server returned, exactly as served, minus any already in the cache. So the server can tell which of those tiles this client fetched before — that you searched near here recently — but nothing finer than the tiles themselves.
-- `describeService`, when `getCollectionInfo` or a `getPlace` cache miss needs it, and collection metadata if you call `getCollectionInfo`.
-- `getPlace` on a cache miss sends the collection and rkey of the place you asked for.
+- `describeService` and `describeTileset`, only if you call them.
+- `getPlace` on a cache miss sends the origin of the place you asked for.
 
 The server also sees your IP address and whatever headers your `fetch` adds, as with any HTTP request. Snapping hides where in a ~1 km cell you are; it doesn't hide the cell.
 
 ## Caching
 
-Coverage responses and the service description are cached for an hour. Tiles are cached in memory, least recently used out first, up to `cacheBudgetBytes` (measured as the tile's response length in characters). Searching a region again while its coverage and tiles are warm makes no requests at all. `getPlace` checks cached tiles before asking the server.
+`getTiles` responses and the service description are cached for an hour. Tiles are cached in memory, least recently used out first, up to `cacheBudgetBytes` (measured as the tile's response length in characters). Searching a region again while its tile list and tiles are warm makes no requests at all. `getPlace` checks cached tiles before asking the server.
 
 There is no persistence; a new client starts cold.
 
@@ -158,8 +181,10 @@ There are more scripts in `package.json`, including a browser smoke test and an 
 `fixtures/` holds language-neutral contract files, meant for future ports of this client to other languages:
 
 - `normalize.json` and `jaro-winkler.json` are input/output pairs that a port must match exactly.
-- `ranking-scenarios.json` describes regions, text, and records, and asserts which places land in the top K. It checks membership, not exact order, since the weights are likely to change.
+- `ranking-scenarios.json` describes regions, text, and records, and asserts which places land in the top K. It checks membership, not exact order, since the weights are likely to change. Each record is `{ value, importance }`: `value` is an `org.atgeo.place` with an `origin`, and `importance` is an integer, as on the wire. The expectations name places by `origin`.
+
+`test/lexicon/` holds copies of the wire contract's lexicon files, taken from garganorn at the commit named in `test/lexicon/SOURCE`. The test suite's fake server validates every request and response against them, so a test can't pass on a response the real server would never send.
 
 ## Server requirements
 
-The SDK follows whatever URLs the server hands back, so a garganorn you run yourself should set `public_base` to the URL it's reachable at (e.g. `public_base: http://localhost:8000`), or `getCollectionInfo` gets links that don't resolve. Browsers can call your server directly: garganorn sends `Access-Control-Allow-Origin: *` on every route.
+The SDK needs a garganorn that serves `org.atgeo.getTiles`, `getPlace`, `describeService` and `describeTileset`, and it follows the tile URLs `getTiles` returns as-is. Browsers can call your server directly: garganorn sends `Access-Control-Allow-Origin: *` on every route.
