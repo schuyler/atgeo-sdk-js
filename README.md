@@ -55,7 +55,7 @@ Every method that touches the network takes an optional `signal` (`AbortSignal`)
 | Option | Meaning |
 |---|---|
 | `region` | Required. A circle or bounding box (below). |
-| `text` | Optional search text. Matched fuzzily against each place's `name` and its `variants[].name`, after lowercasing and stripping accents and extra whitespace. Only the first 12 words count. |
+| `text` | Optional search text. Matched fuzzily against each place's `name` and its `variants[].name`, after lowercasing and stripping accents and extra whitespace. Each name is scored against the whole query and against the query's first 12 words one at a time; words past the 12th count only in the whole-query comparison. |
 | `dataset` | Optional. The dataset to search, such as `openstreetmap.org`. Defaults to `overturemaps.org`. |
 | `collection` | Optional. Restricts the search to one collection of the dataset, such as `way`. See below for the defaults. |
 | `sort` | `"fused"` (default), `"distance"`, or `"similarity"`. |
@@ -145,13 +145,13 @@ Returns the tileset's descriptor: `slug`, `collections` (each a `{ dataset, coll
 - `AtgeoError` has a `code` string. A non-2xx response from the server becomes an `AtgeoError` whose `code` and message come from the server's JSON error body (`error`, `message`); if there isn't one, the code is `HttpError`. Apart from `HttpError`, every code comes from the server: for example `PlaceNotFound`, `TilesetNotFound`, `DatasetNotFound`, `CollectionNotFound`, `BboxTooLarge`, or `InvalidRequest` for a malformed parameter. The lexicons in `test/lexicon/` list the codes each method declares.
 - `searchPlaces` throws `TypeError` for an invalid region (non-finite or out-of-range coordinates, `minLat > maxLat`, negative radius) and for `sort: "similarity"` without text. It throws synchronously, before any request.
 - A failed `getTiles` request rejects the whole search. A failed tile request does not: that tile is skipped, `tiles.failed` counts it, and `complete` is `false`.
-- Aborting rejects with whatever `fetch` throws. Network errors from `fetch` propagate as-is.
+- Aborting rejects with whatever `fetch` throws, so it only takes effect through a request. A call answered entirely from cache completes normally, even with an already-aborted signal. Network errors from `fetch` propagate as-is.
 
 ## Privacy
 
 Your search text never leaves the device. Neither does your precise location.
 
-To search, the client asks the server which tiles cover an area, downloads those tiles, and does the matching, filtering, and ranking locally. The only thing a search sends is a bounding box, and that box is snapped outward to a 0.01 degree grid (roughly 1 km of latitude) before it goes out. Your exact region is used only on the device, to filter and to compute distances.
+To search, the client asks the server which tiles cover an area, downloads those tiles, and does the matching, filtering, and ranking locally. The only location a search sends is a bounding box (two across the antimeridian), snapped outward to a 0.01 degree grid (roughly 1 km of latitude) before it goes out; alongside it go the search's dataset and, if it has one, its collection (including the default `place`). Your exact region is used only on the device, to filter and to compute distances.
 
 What does go on the wire:
 
