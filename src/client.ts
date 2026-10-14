@@ -79,6 +79,9 @@ export class AtgeoClient {
     });
 
     const prefix = collection === undefined ? undefined : `urn:atgeo:${dataset}:${collection}:`;
+    // dedupe picks a winner before the region filter runs. If copies sharing an
+    // origin differ in location (possible only in non-garganorn tilesets) and the
+    // winner lies outside the region, the place is dropped though another copy is inside.
     const records = dedupe(urls.flatMap((url) => loaded.get(url) ?? []))
       .filter((r) => prefix === undefined || (typeof r.value.origin === "string" && r.value.origin.startsWith(prefix)))
       .filter((r) => inRegion(locate(r.value), region));
