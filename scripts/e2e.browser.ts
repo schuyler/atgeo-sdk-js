@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { AtgeoClient } from "../src/index.js";
+import { AtgeoClient, type CollectionRef } from "../src/index.js";
 
 declare const ATGEO_SERVER: string;
 declare const ATGEO_DATASET: string;
@@ -10,17 +10,19 @@ const [lat, lon, radius] = ATGEO_REGION.split(",").map(Number);
 const region = { lat, lon, radius };
 const dataset = ATGEO_DATASET;
 const collection = ATGEO_COLLECTION;
+// With a collection set, the tileset must serve that collection, not just the dataset.
+const wanted = (c: CollectionRef) => c.dataset === dataset && (!collection || c.collection === collection);
 
 test("client works cross-origin against a real garganorn", async () => {
   expect(location.origin).not.toBe(new URL(ATGEO_SERVER).origin);
   const client = new AtgeoClient({ server: ATGEO_SERVER });
 
   const service = await client.describeService();
-  const served = service.tilesets.find((t) => t.collections.some((c) => c.dataset === dataset));
+  const served = service.tilesets.find((t) => t.collections.some(wanted));
   expect(served).toBeDefined();
 
   const tileset = await client.describeTileset(served!.slug);
-  expect(tileset.collections.some((c) => c.dataset === dataset)).toBe(true);
+  expect(tileset.collections.some(wanted)).toBe(true);
 
   const nearby = await client.searchPlaces({ dataset, collection, region, sort: "distance" });
   expect(nearby.complete).toBe(true);

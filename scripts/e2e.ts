@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { AtgeoClient } from "../src/index.js";
+import { AtgeoClient, type CollectionRef } from "../src/index.js";
 
 const server = process.env.ATGEO_SERVER ?? "http://localhost:8000";
 const dataset = process.env.ATGEO_DATASET ?? "openstreetmap.org";
 const collection = process.env.ATGEO_COLLECTION;
+// With a collection set, the tileset must serve that collection, not just the dataset.
+const wanted = (c: CollectionRef) => c.dataset === dataset && (!collection || c.collection === collection);
 // "lat,lon,radius" in meters; the default is Manchester, NH, inside the local OSM New Hampshire tileset.
 const [lat, lon, radius] = (process.env.ATGEO_REGION ?? "43.0,-71.45,3000").split(",").map(Number);
 const region = { lat, lon, radius };
@@ -12,12 +14,12 @@ const client = new AtgeoClient({ server });
 const log = (step: string, detail: string) => console.log(`ok  ${step}: ${detail}`);
 
 const service = await client.describeService();
-const served = service.tilesets.find((t) => t.collections.some((c) => c.dataset === dataset));
-assert(served, `${dataset} not served`);
+const served = service.tilesets.find((t) => t.collections.some(wanted));
+assert(served, `${dataset}${collection ? `/${collection}` : ""} not served`);
 log("describeService", `${service.did}, ${service.tilesets.length} tileset(s)`);
 
 const tileset = await client.describeTileset(served.slug);
-assert(tileset.collections.some((c) => c.dataset === dataset), "describeTileset does not list the dataset");
+assert(tileset.collections.some(wanted), "describeTileset does not list the dataset and collection");
 log("describeTileset", `${tileset.slug}, ${tileset.collections.length} collection(s)`);
 
 const nearby = await client.searchPlaces({ dataset, collection, region, sort: "distance" });
