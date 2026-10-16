@@ -57,8 +57,10 @@ function circleBox(lat: number, lon: number, radius: number): [number, number, n
   const half = radius / DEG_TO_M;
   const minLat = Math.max(lat - half, -90);
   const maxLat = Math.min(lat + half, 90);
-  const halfLon = half / Math.cos((lat * Math.PI) / 180);
-  if (minLat === -90 || maxLat === 90 || !(halfLon < 180)) return [-180, minLat, 180, maxLat];
+  // Half-width of a spherical cap: asin(sin r / cos lat). At or past 1 the cap holds a pole.
+  const sinHalfLon = Math.sin((half * Math.PI) / 180) / Math.cos((lat * Math.PI) / 180);
+  if (minLat === -90 || maxLat === 90 || !(sinHalfLon < 1)) return [-180, minLat, 180, maxLat];
+  const halfLon = (Math.asin(sinHalfLon) * 180) / Math.PI;
   const wrap = (x: number) => (x > 180 ? x - 360 : x < -180 ? x + 360 : x);
   return [wrap(lon - halfLon), minLat, wrap(lon + halfLon), maxLat];
 }
