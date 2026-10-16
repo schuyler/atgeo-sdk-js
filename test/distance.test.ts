@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { distanceTo, locate } from "../src/merge.js";
+import { distanceTo, inRegion, locate } from "../src/merge.js";
 import { haversine } from "../src/region.js";
 import { bboxLocation, place, point } from "./helpers/fakeServer.js";
 
@@ -78,5 +78,30 @@ describe("distanceTo: outside a box", () => {
 describe("distanceTo: no location", () => {
   it("is null", () => {
     expect(distanceTo(locate(place("n", "None", [])), 0, 0)).toBeNull();
+  });
+});
+
+describe("inRegion: bbox region seams", () => {
+  const region = (west: number, south: number, east: number, north: number) => ({
+    bbox: [west, south, east, north] as [number, number, number, number],
+  });
+
+  it.each([
+    ["a point at lon 180 in a region with west -180", pointAt(45, 180), region(-180, 40, -170, 50)],
+    ["a point at lon -180 in a region with east 180", pointAt(45, -180), region(170, 40, 180, 50)],
+    ["a box ending at 180 and a region starting at -180", boxAt(40, 50, 170, 180), region(-180, 40, -170, 50)],
+    ["a box starting at -180 and a region ending at 180", boxAt(40, 50, -180, -170), region(170, 40, 180, 50)],
+    ["a point at the pole whatever its longitude", pointAt(90, 0), region(10, 80, 20, 90)],
+    ["a box reaching the pole at other longitudes", boxAt(85, 90, 100, 110), region(10, 80, 20, 90)],
+  ])("keeps %s", (_name, locations, r) => {
+    expect(inRegion(locations, r)).toBe(true);
+  });
+
+  it.each([
+    ["a point just short of the seam", pointAt(45, 179.99), region(-180, 40, -170, 50)],
+    ["a box just short of the seam", boxAt(40, 50, 160, 179.99), region(-180, 40, -170, 50)],
+    ["a polar box when the region stops short of the pole", boxAt(85, 90, 100, 110), region(10, 80, 20, 89.99)],
+  ])("drops %s", (_name, locations, r) => {
+    expect(inRegion(locations, r)).toBe(false);
   });
 });

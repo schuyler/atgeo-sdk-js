@@ -69,6 +69,19 @@ function covers(south: number, north: number, segments: LonSegment[], lat: numbe
   );
 }
 
+// The box-to-box form of covers(): boxes touching ±180 meet at the seam, and boxes reaching a pole meet there.
+function meets(box: NonNullable<Locations["bbox"]>, south: number, north: number, segments: LonSegment[]): boolean {
+  const lo = Math.max(box.south, south);
+  const hi = Math.min(box.north, north);
+  if (lo > hi) return false;
+  const twins = box.segments.flatMap((s): LonSegment[] => [
+    s,
+    ...(s[1] === 180 ? [[-180, -180] as LonSegment] : []),
+    ...(s[0] === -180 ? [[180, 180] as LonSegment] : []),
+  ]);
+  return hi === 90 || lo === -90 || lonSegmentsOverlap(twins, segments);
+}
+
 // Meters from (lat, lon) to the nearest point of the place; null if it has no location.
 // Containment is tested explicitly so it yields exactly 0 rather than trig round-trip noise.
 export function distanceTo(locations: Locations, lat: number, lon: number): number | null {
@@ -96,10 +109,8 @@ export function inRegion(locations: Locations, region: Region): boolean {
   if ("bbox" in region) {
     const [minLon, minLat, maxLon, maxLat] = region.bbox;
     const segments = lonSegments(minLon, maxLon);
-    if (point) {
-      return point.lat >= minLat && point.lat <= maxLat && lonInSegments(point.lon, segments);
-    }
-    return !!bbox && bbox.south <= maxLat && bbox.north >= minLat && lonSegmentsOverlap(bbox.segments, segments);
+    if (point) return covers(minLat, maxLat, segments, point.lat, point.lon);
+    return !!bbox && meets(bbox, minLat, maxLat, segments);
   }
   const d = distanceTo(locations, region.lat, region.lon);
   return d !== null && d <= region.radius;

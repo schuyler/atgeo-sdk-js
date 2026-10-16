@@ -152,7 +152,7 @@ describe("circle to bbox", () => {
     expect(await emitted({ lat: 0, lon: 0, radius: 111194.927 })).toEqual(["-1.00,-1.00,1.00,1.00"]);
   });
 
-  it("widens longitude by 1/cos(lat)", async () => {
+  it("widens longitude to the spherical cap's half-width", async () => {
     const [bbox] = await emitted({ lat: 60, lon: 10, radius: 111194.927 });
     const [minLon, minLat, maxLon, maxLat] = parse(bbox);
     expect(minLat).toBeCloseTo(59, 1);
@@ -161,6 +161,11 @@ describe("circle to bbox", () => {
     expect(minLon).toBeGreaterThanOrEqual(7.99);
     expect(maxLon).toBeGreaterThanOrEqual(12);
     expect(maxLon).toBeLessThanOrEqual(12.01);
+  });
+
+  // asin(sin 20° / cos 60°) = 43.16°; the flat 20° / cos 60° is 40°.
+  it("reaches the cap's true east and west edges at high latitude", async () => {
+    expect(await emitted({ lat: 60, lon: 0, radius: 20 * 111194.927 })).toEqual(["-43.17,40.00,43.17,80.00"]);
   });
 
   it("covers all longitudes for a polar circle", async () => {
