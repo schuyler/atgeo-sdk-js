@@ -59,7 +59,7 @@ The JS repository at `9d83e6c` had no `LICENSE` file, no `license` field in `pac
 | `listOf(...).sorted()` on tile URLs | code-unit order (`https://A < https://a < https://a/10 < https://a/9`) |
 | `fun interface HttpTransport { suspend fun get(url: String) }` | SAM conversion from a lambda works |
 | `kotlinx.serialization` `JsonObject` decode | key order kept, unknown keys ignored, number lexeme `2.50` kept verbatim |
-| Gradle 8.14.3 + Kotlin 2.2.20 + coroutines 1.10.2 + serialization 1.9.0 + `kotlin.test` on JUnit 5 | resolves and `gradle test` passes through the container's proxy in 1m22s |
+| Gradle 8.14.3 + Kotlin 2.2.20 + coroutines 1.10.2 + serialization 1.9.0 + `kotlin.test` on JUnit 5 | resolves and `gradle test` passes in 1m22s |
 | Android SDK | not present in the environment used; `android-sample` was not built |
 
 Current stable versions on Maven Central (2026-10-22): Kotlin 2.4.21 (2.5.0 is in beta), kotlinx-coroutines 1.11.0, kotlinx-serialization 1.12.0, JUnit Jupiter 5.14.4 (6.x needs Java 17 at runtime and does not pair with `kotlin-test-junit5`), Gradle 9.8.2 (needs JDK 17 to run; the library still targets 11), AGP 9.x, animalsniffer Gradle plugin 2.0.1, `gummy-bears-api-24` 0.16.0.
