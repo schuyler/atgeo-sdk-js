@@ -36,7 +36,7 @@ For the two describe calls, every field is optional on the way in. A port's type
 
 `value` (a tile record) and `record` (getPlace) are `org.atgeo.place` values and must be surfaced to the caller unmodified: every key, nested value and unknown field as served. Nothing about the schema of a place is assumed beyond what sections 5 and 7 read.
 
-`importance` is a JSON integer on the wire, decoded through a double and range-checked into a signed 64-bit integer, so precision beyond 2^53 is lost exactly as in the reference; a port must not decode the literal exactly, or it would order huge values differently from the other SDKs. A compliant server never sends a non-integer; when one arrives, the reference keeps it as a float and a port whose importance type is integral truncates it toward zero. A number outside the signed 64-bit range is absent. Anything that is not a JSON number, including an array or a string holding one, is absent (section 16). None of this fails the tile.
+`importance` is a JSON integer on the wire, decoded through a double and range-checked into a signed 64-bit integer, so precision beyond 2^53 is lost exactly as in the reference; a port must not decode the literal exactly, or it would order huge values differently from the other SDKs. A compliant server never sends a non-integer; when one arrives, the reference keeps it as a float and a port whose importance type is integral truncates it toward zero. A number whose magnitude is 2^63 or more is absent (the check is symmetric, so exactly -2^63 is absent too, although a signed 64-bit integer could hold it). Anything that is not a JSON number, including an array or a string holding one, is absent (section 16). None of this fails the tile.
 
 ### Errors
 
@@ -171,7 +171,7 @@ Take the union of every list's `tiles`, remove duplicates, and sort ascending by
 
 For each URL in that order, with at most 8 fetches in flight:
 
-- A tile in the tile cache is used without a request, and is marked recently used.
+- A tile in the tile cache is used without a request, and is marked recently used. Whether a port consults the cache when a worker reaches the URL (the reference) or for every URL before fetching begins affects only the order in which recency is touched, which nothing here pins.
 - Otherwise fetch the URL exactly as given. On a 2xx with a body that decodes to a payload with a `records` array, keep `{ value, uri?, importance? }` per usable record (section 1: a record that is not an object, or has no object `value`, is skipped, and skipping never fails the tile), store the tile in the cache with its size (section 10), and use it. A tile whose every record was skipped is still a used tile with no records.
 - Any other outcome (non-2xx, network error, undecodable body, a payload that is not an object, `records` absent or not an array) marks the tile failed. It is skipped, not retried, and the search continues.
 - If the search was cancelled, a tile failure is not swallowed. The reference rethrows the tile's own error, so a search aborted while a tile with an unparsable body was in flight fails with the JSON error, not the cancellation error; a port may fail with its cancellation error instead (section 14).
@@ -396,7 +396,7 @@ It also reproduces the worked examples in sections 3 and 6, and ports the behavi
 - `overview.test.ts`: the overview flag.
 - `privacy.test.ts`: section 12.
 
-The fake server should validate every request and response it handles against the lexicons where a lexicon validator exists for the language. Where none does, it must at least check the request parameter names, that `bbox` matches `^-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d$`, and that its own responses carry the required fields. It must capture every request (URL, method, headers, body) for the privacy tests, and must be able to go offline (every request fails) and to fail named tiles.
+The fake server should validate every request and response it handles against the lexicons where a lexicon validator exists for the language. Where none does, it must at least check the request parameter names, that `bbox` matches `^-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d$`, and that its own responses carry the required fields. It must capture every request's URL for the privacy tests, and the method, headers and body where the port's transport seam carries them (a seam that carries only a URL fixes those by construction), and must be able to go offline (every request fails) and to fail named tiles.
 
 ## 14. Deliberate freedoms
 
