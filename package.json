@@ -2,6 +2,7 @@
   "name": "@atgeo/client",
   "version": "0.1.0",
   "private": true,
+  "license": "BSD-3-Clause",
   "description": "Client for the atgeo gazetteer",
   "type": "module",
   "engines": {
