@@ -100,45 +100,45 @@ data class SearchHit(
 
 data class PlaceRecord(val origin: String, val place: JsonObject, val importance: Long?)
 
-@Serializable data class CollectionRef(val dataset: String, val collection: String)
+@Serializable data class CollectionRef(val dataset: String? = null, val collection: String? = null)
 
-@Serializable data class ServiceDescription(val did: String, val tilesets: List<ServedTileset>) {
-    @Serializable data class ServedTileset(val slug: String, val collections: List<CollectionRef>)
+@Serializable data class ServiceDescription(val did: String? = null, val tilesets: List<ServedTileset> = emptyList()) {
+    @Serializable data class ServedTileset(val slug: String? = null, val collections: List<CollectionRef> = emptyList())
 }
 
 @Serializable data class CollectionAttribution(
-    val dataset: String, val collection: String,
+    val dataset: String? = null, val collection: String? = null,
     val release: String? = null, val source: String? = null,
     val licenses: List<String>? = null, val attribution: String? = null,
 )
 
 @Serializable data class CollectionInfo(
-    val dataset: String, val collection: String,
+    val dataset: String? = null, val collection: String? = null,
     val release: String? = null, val source: String? = null,
     val licenses: List<String>? = null, val attribution: String? = null,
     val recordCount: Long? = null, val locationFormats: List<String>? = null,
     val containmentTypes: List<String>? = null, val categories: List<CategoryCount>? = null,
     val attributes: List<String>? = null,
-) { @Serializable data class CategoryCount(val value: String, val count: Long) }
+) { @Serializable data class CategoryCount(val value: String? = null, val count: Long? = null) }
 
 @Serializable data class Tileset(
-    val slug: String,
+    val slug: String? = null,
     val publishedAt: String? = null,
     val extent: Extent? = null,
-    val collections: List<CollectionInfo>,
+    val collections: List<CollectionInfo> = emptyList(),
     val references: List<CollectionAttribution>? = null,
-) { @Serializable data class Extent(val north: String, val south: String, val east: String, val west: String) }
+) { @Serializable data class Extent(val north: String? = null, val south: String? = null, val east: String? = null, val west: String? = null) }
 ```
 
 `importance` is `Long`, not `Int`: the lexicon says integer without a range, and the JavaScript client carries 53 bits (contract §1). `publishedAt` and the extent's edges stay strings, as served.
 
-Every `@Serializable` type is decoded with a `Json { ignoreUnknownKeys = true }` instance, so that a server adding a field does not break the client. The same instance is used everywhere; it is internal.
+Every field of the describe types is nullable with a null default, and the three lists the lexicon requires (`tilesets`, and `collections` in both places) default to empty, so that a missing field never fails a call. `kotlinx.serialization` still throws on a field of the wrong type, and the contract wants that read as absent (§1), so the client does not decode a server response through these classes' generated serializers. It parses the body with `Json.parseToJsonElement` and maps the `JsonObject` by hand: a missing or wrong-typed field becomes null, a list the lexicon requires (`tilesets`, `collections`) that is missing or not an array becomes empty, an optional list becomes null, and a list element that does not map is dropped. Reach a primitive with `as? JsonPrimitive`, never `.jsonPrimitive`, which throws on an object or array (the reference does receive `uri: {}`), then check its kind before reading it: `JsonPrimitive.longOrNull` is `content.toLongOrNull()`, which reads the string primitive `"5"` as 5, so a string field is `takeIf { it.isString }?.content` and a number field is `takeUnless { it.isString }?.doubleOrNull`. `@Serializable` stays on the classes for apps that want to persist them.
 
 ### Place values
 
 A place is arbitrary JSON and must be surfaced untouched (contract §1). `kotlinx.serialization.json.JsonObject` is exactly that: immutable, structurally equal, and preserving every key and nested value as served, including key order. `SearchHit.place["name"]?.jsonPrimitive?.contentOrNull` is how an app reads a name. A typed `Place` class is a reasonable later addition on top of `JsonObject`, not a replacement for it.
 
-Tile records are decoded into an internal `TileRecord(value: JsonObject, uri: String?, importance: Long?)`; the rest of the payload is dropped. A record whose `value` is not a JSON object is a malformed tile, and the tile counts as failed.
+Tile records are read from the parsed `JsonObject` into an internal `TileRecord(value: JsonObject, uri: String?, importance: Long?)`; the rest of the payload is dropped. A record that is not an object, or whose `value` is not one, is skipped and the tile stays used (contract §4.4); a `uri` that is not a string and an `importance` that is a string primitive or not a number read as null, and a non-integer importance truncates toward zero: read it as `takeUnless { it.isString }?.doubleOrNull?.takeIf { it.isFinite() && abs(it) < 9.223372036854775807E18 }?.toLong()`, since `longOrNull` returns null for `1.9` and reads `"7"` as 7, and `Double.toLong()` saturates where the contract wants absent (§1). A `getTiles` body with no `tiles` array has no usable tile list and raises `SerializationException` (§1); entries of `tiles` that are not strings are skipped.
 
 ### Errors
 
@@ -149,7 +149,7 @@ class AtgeoException(val code: String, message: String) : RuntimeException(messa
 
 Bad arguments (contract §3) throw `IllegalArgumentException` from `require()`, before the first suspension point, so a caller sees them at the call site. This matches the JS client's `TypeError` in spirit: a programming error, kept out of `AtgeoException`'s code namespace.
 
-Network failures throw `IOException` (or whatever the injected transport throws) unwrapped. A 2xx body that does not decode throws `SerializationException` unwrapped, except for tiles, where it counts as a failed tile. Cancellation throws `CancellationException` and must be rethrown, never swallowed, anywhere the client catches `Throwable` (the tile-fetch loop is the one such place).
+Network failures throw `IOException` (or whatever the injected transport throws) unwrapped. A 2xx body that is not JSON, or has no usable body in the contract's narrow sense (§1: no `tiles` array, no `record` object, a describe body that is not an object), throws `SerializationException` unwrapped; nothing else about a body's shape throws. For tiles, either counts as a failed tile. The search's own cancellation must propagate anywhere the client catches `Throwable` (the tile-fetch loop is the one such place); section 5 gives the exact rule, which is not "rethrow every `CancellationException`".
 
 ## 4. Transport
 
@@ -169,16 +169,18 @@ class HttpUrlConnectionTransport(
 
 The default transport uses `java.net.HttpURLConnection` because it is on every JVM and every Android version with no dependency, which is the cost-conscious default. It runs the blocking call under `withContext(Dispatchers.IO)` inside `suspendCancellableCoroutine`-style handling so that cancelling the coroutine calls `disconnect()` and the thread comes back; sets `useCaches = false`; sends `Accept: application/json`; reads the whole body before looking at the status (contract §1); and reads error bodies from `errorStream` so that a 4xx with a JSON error body becomes an `AtgeoException` with the server's code.
 
+The timeouts are a freedom the contract grants (§14): the reference relies on its platform's `fetch` defaults (undici's in Node, the browser's in a browser), so a tile that times out is a failed tile here where it might hang there.
+
 `HttpURLConnection` on Android has no HTTP/2 and a dated TLS stack on old devices. Apps that already ship OkHttp should pass a ten-line `OkHttpTransport`, which the `android-sample/` module provides as copy-paste code rather than as a dependency of the library. Any transport an app supplies must disable its own response cache or accept that the contract's no-persistence default (§10, §14) no longer holds.
 
-XRPC URLs are built by percent-encoding each query value with `java.net.URLEncoder.encode(value, UTF_8)` and then replacing `+` with `%20`. That is form encoding (`,` → `%2C`, `:` → `%3A`) with spaces as `%20`; the contract allows either (§1). Never build query strings by string template without encoding.
+XRPC URLs are built by percent-encoding each query value with `java.net.URLEncoder.encode(value, "UTF-8")` (the `Charset` overload is Java 10 and Android API 33, above `minSdk`) and then replacing `+` with `%20`. That is form encoding (`,` → `%2C`, `:` → `%3A`) with spaces as `%20`; the contract allows either (§1). Never build query strings by string template without encoding.
 
 The tile cache measures a tile as `body.size` bytes (§10).
 
 ## 5. Concurrency and cancellation
 
 - `searchPlaces` runs inside `coroutineScope`. The two `getTiles` calls for an antimeridian-crossing region are `async` siblings; if one throws, structured concurrency cancels the other and the search fails with the first error (allowed, §14).
-- Tiles are fetched as `async` children sharing a `Semaphore(8)`, launched in URL order. Each child catches everything but `CancellationException`, returns `null` for a failed tile, and never throws otherwise. Results are collected with `awaitAll()` and assembled in URL order, so completion order never affects results (§4.3).
+- Tiles are fetched as `async` children sharing a `Semaphore(8)`, launched in URL order. Each child catches `Throwable`, calls `coroutineContext.ensureActive()` inside the catch so that its own cancellation propagates, and otherwise returns `null` for the failed tile. Catching everything but `CancellationException` is not the same rule: a transport that uses `withTimeout` throws `TimeoutCancellationException`, which is a `CancellationException`, and the search would fail instead of counting one failed tile. The reference's check is `signal.aborted`, the search's own cancellation and nothing else. Results are collected with `awaitAll()` and assembled in URL order, so completion order never affects results (§4.3).
 - The tile cache is checked under the mutex before launching a child, so a cached tile never becomes a request. Writes happen under the mutex as children complete. The mutex is never held across a transport call.
 - Nothing blocks a dispatcher thread except inside the default transport's `Dispatchers.IO` block. Normalizing and scoring run on whatever dispatcher called `searchPlaces`; for tens of thousands of records this is milliseconds, and a caller who cares wraps the call in `withContext(Dispatchers.Default)`.
 
@@ -209,7 +211,7 @@ fun normalize(s: String): String {
 }
 ```
 
-`String.lowercase()` is `toLowerCase(Locale.ROOT)`: locale-independent full case mapping, including final sigma and `İ`. Never `toLowerCase()` with the default locale, which on a Turkish device turns `I` into dotless `ı`. The whitespace set is spelled out because Java's `\s` is ASCII-only by default and `UNICODE_CHARACTER_CLASS` matches a different set (it includes U+0085 and excludes U+FEFF). `trim()` with no predicate trims `<= ' '`, which is wrong on both sides: write the predicate over the same set.
+`String.lowercase()` is `toLowerCase(Locale.ROOT)`: locale-independent full case mapping, including final sigma and `İ`. Never `toLowerCase()` with the default locale, which on a Turkish device turns `I` into dotless `ı`. The whitespace set is spelled out because Java's `\s` is ASCII-only by default and `UNICODE_CHARACTER_CLASS` matches a different set (it includes U+0085 and excludes U+FEFF). Kotlin's `trim()` with no predicate uses `Char.isWhitespace`, which trims U+001C to U+001F and keeps U+FEFF, so it is wrong on both sides: write the predicate over the same set.
 
 `java.text.Normalizer` is in Android since API 9. Unicode version skew between the JDK, Android's ICU and V8 is possible at the margins; the fixture is the arbiter, and a case that fails only on one runtime is recorded as known skew rather than worked around in the algorithm.
 
@@ -219,7 +221,7 @@ Verified against all 33 fixture cases on a JVM. Kotlin strings are UTF-16, so `s
 
 ### Numbers and trigonometry (contract §3, §6)
 
-- Coordinates arrive as `JsonPrimitive`. Accept a string primitive via `toDoubleOrNull()` and a numeric primitive via `doubleOrNull`; anything else is no location. `toDoubleOrNull()` accepts a few things `parseFloat` would not (hex floats, `1.5f`) and rejects trailing text; both are within the contract's freedom (§5). Check `isFinite()` after parsing.
+- Coordinates arrive as `JsonPrimitive`. Accept a string primitive via `toDoubleOrNull()` and a numeric primitive via `doubleOrNull`; anything else, a `JsonArray` included, is no location (contract §16). `toDoubleOrNull()` accepts a few things `parseFloat` would not (hex floats, `1.5f`, surrounding ASCII whitespace) and rejects trailing text; both are within the contract's freedom (§5). Check `isFinite()` after parsing.
 - `round3`: `Math.round(x * 1000) / 1000.0`. `Math.round(Double)` rounds half up, the same as `Math.round` in JavaScript, and returns `Long`.
 - Snapping: `Math.round(x * 100)` for the epsilon test, `floor` and `ceil` from `kotlin.math`. Format with `"%.2f".format(Locale.ROOT, units / 100.0)` after mapping `-0.0` to `0.0`; the locale matters (a German default locale would print `37,77`) and `%.2f` prints `-0.00` for negative zero.
 - `kotlin.math.sin`, `cos`, `asin`, `atan2`, `sqrt` map to `java.lang.Math`, which may differ from V8's implementations in the last bit. Compare the worked distance tables to 1e-6 relative, containment exactly.
@@ -227,13 +229,13 @@ Verified against all 33 fixture cases on a JVM. Kotlin strings are UTF-16, so `s
 
 ### Ranking (contract §8)
 
-`sortedWith` is stable (it is `java.util.Arrays.sort` on objects, a TimSort), but add the input index as a final `thenBy` anyway so the guarantee is in the code and not in a library contract. Build the comparator chain with `Comparator` and `thenComparing`/`thenBy` in exactly the order of the contract's table, and keep `byScore` on `round3` of the score; the usual porting mistake is to compare raw scores and lose the ties the reference has.
+`sortedWith` is stable (it is `java.util.Arrays.sort` on objects, a TimSort), but add the input index as a final `thenBy` anyway so the guarantee is in the code and not in a library contract. Build the comparator chain with `Comparator` and `thenComparing`/`thenBy` in exactly the order of the contract's table, and keep `byScore` on `round3` of the score; the usual porting mistake is to compare raw scores and lose the ties the reference has. Compare with `compareByDescending`/`compareValues`, not by subtraction: `(b.importance ?: 0) - (a.importance ?: 0)` overflows `Long` at the extremes, and the contract's comparator table describes an order, not arithmetic. One trap: `compareValues` and `thenBy { it.origin }` order nulls first, while the contract's `byOrigin` puts a null origin after every string (§8). Use `nullsLast(naturalOrder())` for that comparator; no fixture pins the null-against-string case, so the mistake would survive the suite.
 
 ### Caches (contract §10)
 
 `TileCache` is a `LinkedHashMap<String, Entry>(16, 0.75f, true)` (access order) plus a running total, with eviction done by iterating from the eldest after each insert; `removeEldestEntry` is tempting but cannot evict more than one entry per insert, and a large tile must be able to evict several. `TtlCache` takes a `clock: () -> Long` (epoch millis); the public constructor of `AtgeoClient` passes `System::currentTimeMillis`, an `internal` constructor lets tests inject one.
 
-`find(key)` for `getPlace` scans every cached tile and keeps the match from the lowest URL.
+`find(key)` for `getPlace` scans every cached tile and keeps the match from the lowest URL. Iterate the map's entries for this: iterating an access-ordered `LinkedHashMap` does not count as access, which is what §10 wants (`find` must not touch recency), and `get` would both reorder and throw `ConcurrentModificationException` mid-iteration.
 
 ## 7. Testing
 
@@ -243,10 +245,12 @@ The fake server is an `HttpTransport` that:
 
 - is configured with tilesets (slug, collections, tiles with records), a `tilesFor` override, a `failTiles` list, a `server` base, and `goOffline()`;
 - routes `/xrpc/org.atgeo.*` and tile URLs the way `test/helpers/fakeServer.ts` does, including the dataset and collection selection errors;
-- records every request (URL, method, headers, body) for the privacy tests (§12);
+- records every request URL for the privacy tests (§12). The `HttpTransport` seam carries a URL and nothing else: the method is always GET and there is never a body, so those are fixed by construction rather than recorded. Headers belong to the real transport and are outside the fake's view; the privacy requirement on them is met by the default transport adding only fixed headers of its own, which the transport test (below) checks against a loopback server;
 - validates its own traffic. There is no JVM lexicon validator; implement the contract's minimum (§13): parameter names, the `bbox` regular expression, required response fields. Keep the lexicon JSON vendored regardless, with `SOURCE` naming the garganorn commit, so that a validator can be added later.
 
 Test files map one to one onto the reference's `test/*.test.ts`, with the same `describe`/`it` names turned into nested classes and `@Test` names, so that a reviewer can diff coverage by eye. The fixture tests are `@TestFactory` dynamic tests, one per case, so a failure names the case.
+
+The default transport gets one small test of its own against a loopback HTTP server, since the fake replaces it everywhere else: a 4xx with a JSON error body, a 4xx with an empty body (`errorStream` is null then and must read as empty), a redirect, cancellation mid-request calling `disconnect()`, and the exact request headers it sends.
 
 An end-to-end main against a local garganorn (`ATGEO_SERVER`, `ATGEO_DATASET`, `ATGEO_COLLECTION`, `ATGEO_REGION`, the same variables as `scripts/e2e.ts`) lives under `src/e2e/` as a separate source set and is not part of `gradle test`.
 
