@@ -12,7 +12,7 @@ import { AtgeoClient } from "@atgeo/client";
 const atgeo = new AtgeoClient();
 
 const { places, complete } = await atgeo.searchPlaces({
-  region: { lat: 37.7598, lon: -122.4194, radius: 1000 }, // meters
+  region: { lat: 39.9526, lon: -75.1652, radius: 1000 }, // meters
   text: "Starbux",
 });
 
@@ -21,7 +21,7 @@ for (const { origin, place, distance, score } of places) {
 }
 ```
 
-Misspellings are fine; matching is fuzzy. If `complete` is `false`, some tiles failed to load and the results are partial. If `overview` is `true`, the region was too big to search in full and you got only its most important places; see [Overview answers](#overview-answers).
+Misspellings are fine; matching is fuzzy, and that finds the Starbucks around Philadelphia's City Hall. The public server at places.atgeo.org has a limited dataset for now, mostly the east coast, so a search elsewhere may come back empty. If `complete` is `false`, some tiles failed to load and the results are partial. If `overview` is `true`, the region was too big to search in full and you got only its most important places; see [Overview answers](#overview-answers).
 
 ## Installation
 
@@ -65,7 +65,7 @@ Every method that touches the network takes an optional `signal` (`AbortSignal`)
 Regions:
 
 ```ts
-{ lat: 37.7598, lon: -122.4194, radius: 1000 }   // circle; radius in meters
+{ lat: 39.9526, lon: -75.1652, radius: 1000 }    // circle; radius in meters
 { bbox: [minLon, minLat, maxLon, maxLat] }        // degrees
 ```
 
