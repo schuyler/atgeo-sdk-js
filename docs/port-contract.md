@@ -259,10 +259,11 @@ A port is not expected to be bit-identical in trigonometry across runtimes; agre
 
 1. Lowercase with Unicode default (locale-independent) full case mapping. `İ` (U+0130) becomes `i` + U+0307; `ΟΔΟΣ` becomes `οδος` with a final sigma (U+03C2); `ẞ` becomes `ß`.
 2. NFKD. Ligatures and full-width forms decompose: `ﬁsh` → `fish`, `ＡＢＣ` → `abc`, `①` → `1`, `½` → `1⁄2`.
-3. Remove every scalar whose general category is Mn (nonspacing mark). This strips the accents NFKD split off: `café` → `cafe`, and the dot from `İ`, giving `istanbul`. Mc and Me marks stay (`a` + U+20DD is unchanged).
-4. Replace every run of one or more whitespace scalars with a single U+0020, then strip leading and trailing whitespace. The whitespace set is exactly JavaScript's `\s`: U+0009, U+000A, U+000B, U+000C, U+000D, U+0020, U+00A0, U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF. U+200B (zero-width space) and U+0085 are not in it. Ideographic space counts, so `　東京　` → `東京`.
+3. Lowercase again, with the same mapping. Some compatibility characters are capitals with no lowercase mapping of their own, so step 1 leaves them and step 2 turns them into ordinary capitals: `ℌ` (U+210C) and the mathematical letters such as `𝐇` (U+1D407) become `H`. Without this step `ℌello` would normalize to `Hello` and never match the query `hello`. On text that step 2 left lowercase it changes nothing, so it only affects such characters. Final_Sigma applies here as in step 1: `𝚺𝚨𝚺` → `σας`.
+4. Remove every scalar whose general category is Mn (nonspacing mark). This strips the accents NFKD split off: `café` → `cafe`, and the dot from `İ`, giving `istanbul`. Mc and Me marks stay (`a` + U+20DD is unchanged).
+5. Replace every run of one or more whitespace scalars with a single U+0020, then strip leading and trailing whitespace. The whitespace set is exactly JavaScript's `\s`: U+0009, U+000A, U+000B, U+000C, U+000D, U+0020, U+00A0, U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF. U+200B (zero-width space) and U+0085 are not in it. Ideographic space counts, so `　東京　` → `東京`.
 
-`fixtures/normalize.json` must pass exactly. Runtimes disagree on Unicode versions at the margins; the fixture is the arbiter. It covers the final sigma, `İ` and `ẞ` cases above, and two abbreviations (`Α.Σ.` → `α.ς.`, `ΑΣ.Α` → `ασ.α`) that pin Final_Sigma's skipping of case-ignorable punctuation on both sides of the sigma. Swift's standard library does not apply Final_Sigma; the Swift spec says how that port does.
+`fixtures/normalize.json` must pass exactly. Runtimes disagree on Unicode versions at the margins; the fixture is the arbiter. It covers the final sigma, `İ` and `ẞ` cases above, and two abbreviations (`Α.Σ.` → `α.ς.`, `ΑΣ.Α` → `ασ.α`) that pin Final_Sigma's skipping of case-ignorable punctuation on both sides of the sigma, and the step 3 cases. Swift's standard library does not apply Final_Sigma; the Swift spec says how that port does.
 
 The search text and every candidate name are normalized with this function. Empty text after normalization means no text: no scoring, no filtering, and `sort = similarity` is an error.
 
@@ -381,7 +382,7 @@ These are what the client is for, and must be covered by tests against a request
 
 A port vendors, at a pinned atgeo-sdk-js commit recorded in a `SOURCE` file:
 
-- `fixtures/normalize.json` (36 cases, exact match),
+- `fixtures/normalize.json` (41 cases, exact match),
 - `fixtures/jaro-winkler.json` (33 cases, within 5e-7),
 - `fixtures/ranking-scenarios.json` (12 scenarios, membership),
 - `test/lexicon/*.json`, for a fake server that validates its own traffic.
