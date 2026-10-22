@@ -1,10 +1,14 @@
 export class AtgeoError extends Error {
   readonly code: string;
+  // The HTTP status, so that a caller can tell a refused request (4xx) from a server failure (5xx)
+  // without matching on code, which is an open list.
+  readonly status: number;
 
-  constructor(code: string, message: string) {
+  constructor(code: string, message: string, status: number) {
     super(message);
     this.name = "AtgeoError";
     this.code = code;
+    this.status = status;
   }
 }
 
@@ -32,7 +36,7 @@ export class Transport {
       try {
         body = JSON.parse(text);
       } catch {}
-      throw new AtgeoError(body.error ?? "HttpError", body.message ?? `HTTP ${response.status}`);
+      throw new AtgeoError(body.error ?? "HttpError", body.message ?? `HTTP ${response.status}`, response.status);
     }
     return text;
   }

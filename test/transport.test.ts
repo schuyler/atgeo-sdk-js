@@ -61,7 +61,19 @@ describe("typed server errors", () => {
     const server = fakeServer({ tilesFor: () => ({ error: "BboxTooLarge", message: "bbox too large" }) });
     const p = new AtgeoClient({ fetch: server.fetch }).searchPlaces({ region });
     await expect(p).rejects.toBeInstanceOf(AtgeoError);
-    await expect(p).rejects.toMatchObject({ code: "BboxTooLarge" });
+    await expect(p).rejects.toMatchObject({ code: "BboxTooLarge", status: 400 });
+  });
+
+  it("carries the HTTP status, whatever the body says", async () => {
+    for (const [status, body] of [
+      [404, `{"error":"PlaceNotFound"}`],
+      [429, ""],
+      [503, `{"error":"InvalidRequest","message":"a 5xx with a 4xx-sounding code"}`],
+    ] as const) {
+      const fetch = (async () => new Response(body, { status })) as typeof globalThis.fetch;
+      const p = new AtgeoClient({ fetch }).getPlace({ origin: "urn:atgeo:overturemaps.org:place:x" });
+      await expect(p).rejects.toMatchObject({ status });
+    }
   });
 
   it("surfaces CollectionNotFound from getTiles", async () => {

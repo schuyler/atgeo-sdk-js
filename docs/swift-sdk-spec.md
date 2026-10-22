@@ -184,6 +184,7 @@ Tile records are read from `JSONValue`, not through `Codable`: a record that is 
 public struct AtgeoError: Error, Sendable, Equatable {
     public let code: String
     public let message: String
+    public let status: Int            // the HTTP status (contract §1)
 }
 
 /// A bad argument, raised before any request (contract §3).
