@@ -229,7 +229,7 @@ Verified against all 33 fixture cases on a JVM. Kotlin strings are UTF-16, so `s
 
 ### Ranking (contract §8)
 
-`sortedWith` is stable (it is `java.util.Arrays.sort` on objects, a TimSort), but add the input index as a final `thenBy` anyway so the guarantee is in the code and not in a library contract. Build the comparator chain with `Comparator` and `thenComparing`/`thenBy` in exactly the order of the contract's table, and keep `byScore` on `round3` of the score; the usual porting mistake is to compare raw scores and lose the ties the reference has. Compare with `compareByDescending`/`compareValues`, not by subtraction: `(b.importance ?: 0) - (a.importance ?: 0)` overflows `Long` at the extremes, and the contract's comparator table describes an order, not arithmetic.
+`sortedWith` is stable (it is `java.util.Arrays.sort` on objects, a TimSort), but add the input index as a final `thenBy` anyway so the guarantee is in the code and not in a library contract. Build the comparator chain with `Comparator` and `thenComparing`/`thenBy` in exactly the order of the contract's table, and keep `byScore` on `round3` of the score; the usual porting mistake is to compare raw scores and lose the ties the reference has. Compare with `compareByDescending`/`compareValues`, not by subtraction: `(b.importance ?: 0) - (a.importance ?: 0)` overflows `Long` at the extremes, and the contract's comparator table describes an order, not arithmetic. One trap: `compareValues` and `thenBy { it.origin }` order nulls first, while the contract's `byOrigin` puts a null origin after every string (§8). Use `nullsLast(naturalOrder())` for that comparator; no fixture pins the null-against-string case, so the mistake would survive the suite.
 
 ### Caches (contract §10)
 
@@ -245,10 +245,12 @@ The fake server is an `HttpTransport` that:
 
 - is configured with tilesets (slug, collections, tiles with records), a `tilesFor` override, a `failTiles` list, a `server` base, and `goOffline()`;
 - routes `/xrpc/org.atgeo.*` and tile URLs the way `test/helpers/fakeServer.ts` does, including the dataset and collection selection errors;
-- records every request (URL, method, headers, body) for the privacy tests (§12);
+- records every request URL for the privacy tests (§12). The `HttpTransport` seam carries a URL and nothing else: the method is always GET and there is never a body, so those are fixed by construction rather than recorded. Headers belong to the real transport and are outside the fake's view; the privacy requirement on them is met by the default transport adding only fixed headers of its own, which the transport test (below) checks against a loopback server;
 - validates its own traffic. There is no JVM lexicon validator; implement the contract's minimum (§13): parameter names, the `bbox` regular expression, required response fields. Keep the lexicon JSON vendored regardless, with `SOURCE` naming the garganorn commit, so that a validator can be added later.
 
 Test files map one to one onto the reference's `test/*.test.ts`, with the same `describe`/`it` names turned into nested classes and `@Test` names, so that a reviewer can diff coverage by eye. The fixture tests are `@TestFactory` dynamic tests, one per case, so a failure names the case.
+
+The default transport gets one small test of its own against a loopback HTTP server, since the fake replaces it everywhere else: a 4xx with a JSON error body, a 4xx with an empty body (`errorStream` is null then and must read as empty), a redirect, cancellation mid-request calling `disconnect()`, and the exact request headers it sends.
 
 An end-to-end main against a local garganorn (`ATGEO_SERVER`, `ATGEO_DATASET`, `ATGEO_COLLECTION`, `ATGEO_REGION`, the same variables as `scripts/e2e.ts`) lives under `src/e2e/` as a separate source set and is not part of `gradle test`.
 

@@ -303,10 +303,12 @@ The fake server is an `HTTPTransport` that:
 
 - is configured with tilesets (slug, collections, tiles with records), a `tilesFor` override, a `failTiles` list, a `server` base, and `goOffline()`;
 - routes `/xrpc/org.atgeo.*` and tile URLs the way `test/helpers/fakeServer.ts` does, including the dataset and collection selection errors;
-- records every request (`URL`, method, headers, body) for the privacy tests (§12);
+- records every request URL for the privacy tests (§12). The `HTTPTransport` seam carries a URL and nothing else: the method is always GET and there is never a body, so those are fixed by construction rather than recorded. Headers belong to the real transport and are outside the fake's view; the privacy requirement on them is met by the default transport adding only fixed headers of its own, which the transport test (below) checks against a loopback server;
 - validates its own traffic. There is no Swift lexicon validator; implement the contract's minimum (§13): parameter names, the `bbox` regular expression, required response fields. Keep the lexicon JSON vendored regardless so that a validator can be added later and so that `SOURCE` says which garganorn commit the fake is modelled on.
 
 Test files map one to one onto the reference's `test/*.test.ts`, with the same `describe`/`it` names turned into suites and test names, so that a reviewer can diff coverage by eye. The fixture tests (`normalize.json`, `jaro-winkler.json`, `ranking-scenarios.json`) are table-driven with `@Test(arguments:)`.
+
+The default transport gets one small test of its own against a loopback HTTP server, since the fake replaces it everywhere else: a 4xx with a JSON error body, a 4xx with an empty body, a redirect, cancellation mid-request, and the exact request headers it sends.
 
 An end-to-end script against a local garganorn (`ATGEO_SERVER`, `ATGEO_DATASET`, `ATGEO_COLLECTION`, `ATGEO_REGION`, same variables as `scripts/e2e.ts`) lives in `Scripts/e2e.swift` and is not part of `swift test`.
 

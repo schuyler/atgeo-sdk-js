@@ -36,7 +36,7 @@ For the two describe calls, every field is optional on the way in. A port's type
 
 `value` (a tile record) and `record` (getPlace) are `org.atgeo.place` values and must be surfaced to the caller unmodified: every key, nested value and unknown field as served. Nothing about the schema of a place is assumed beyond what sections 5 and 7 read.
 
-`importance` is a JSON integer on the wire, decoded as a signed 64-bit integer. A compliant server never sends a non-integer; when one arrives, the reference keeps it as a float and a port whose importance type is integral truncates it toward zero. A number outside the signed 64-bit range is absent. Anything that is not a JSON number, including an array or a string holding one, is absent (section 16). None of this fails the tile.
+`importance` is a JSON integer on the wire, decoded through a double and range-checked into a signed 64-bit integer, so precision beyond 2^53 is lost exactly as in the reference; a port must not decode the literal exactly, or it would order huge values differently from the other SDKs. A compliant server never sends a non-integer; when one arrives, the reference keeps it as a float and a port whose importance type is integral truncates it toward zero. A number outside the signed 64-bit range is absent. Anything that is not a JSON number, including an array or a string holding one, is absent (section 16). None of this fails the tile.
 
 ### Errors
 
@@ -66,7 +66,7 @@ A region is a circle `{ lat, lon, radius }` (radius in metres) or a bounding box
 
 ### Validation
 
-`searchPlaces` must reject, before any network activity and with the port's argument-error type (not `AtgeoError`):
+`searchPlaces` must reject, before any network activity and with the port's argument-error type (not `AtgeoError`), checking in this order so that the error for a call with two faults is the same everywhere:
 
 - a bbox where any longitude is non-finite or `|lon| > 180`, any latitude is non-finite or `|lat| > 90`, or `minLat > maxLat`;
 - a circle where `lat` or `lon` fails the same checks, or `radius` is non-finite or negative;
@@ -211,7 +211,7 @@ Warm searches: a repeat of the same region within the hour, with every tile stil
 
 Both may be present. Elements with other `$type`s, and elements whose numbers don't parse, are skipped (a non-parsing geo element does not stop a later geo element from being the point). An element that is not a JSON object is skipped too (section 16 for `null`). Coordinates are not range-checked: a latitude of 95 or a longitude of 200 is kept as parsed and the geometry of section 6 is applied to it as is.
 
-Parsing: the lexicon types these as strings; the reference converts whatever is there to a string and applies JavaScript `parseFloat`, so a JSON number works too. A port must accept a JSON string holding a decimal number (optional sign, optional fraction, optional exponent) and a JSON number. It may reject what `parseFloat` would partially accept (leading whitespace, trailing garbage such as `"1.5abc"`); garganorn emits neither. `Infinity`, `NaN` and the like are non-finite and are skipped.
+Parsing: the lexicon types these as strings; the reference converts whatever is there to a string and applies JavaScript `parseFloat`, so a JSON number works too. A port must accept a JSON string holding a decimal number (optional sign, optional fraction, optional exponent) and a JSON number. It may reject what `parseFloat` would partially accept (leading whitespace, trailing garbage such as `"1.5abc"`), and a port's own number parser may accept forms `parseFloat` does not (hex floats, a trailing `f`). These margins are a known, documented divergence between the SDKs rather than something to make exact, because garganorn emits none of them; a port lists the forms its parser treats differently in its `CONFORMANCE.md`. `Infinity`, `NaN` and the like are non-finite and are skipped.
 
 A longitude bbox element may be given with `west > east`, and `±180` are the same meridian.
 
@@ -275,7 +275,7 @@ jaro(a, b):
   if a == b: 1
   if either is empty: 0
   reach = max(0, floor(max(|a|, |b|) / 2) - 1)
-  for i in 0..<|a|: for j in max(0, i - reach)...min(|b| - 1, i + reach):
+  for i in 0..<|a|: for j from max(0, i - reach) to min(|b| - 1, i + reach) inclusive, skipping the loop when the start exceeds the end:
     if b[j] unmatched and a[i] == b[j]: mark both matched, matches++, break
   if matches == 0: 0
   transpositions: walk matched positions of a and b in order, count i where a[i] != b[j]
@@ -287,6 +287,8 @@ jaroWinkler(a, b):
 ```
 
 Every division is in floating point. `transpositions` can be odd (`abcvwxyz` against `cabvwxyz` has three), so an integer `transpositions / 2` fails the fixture.
+
+The inner loop's start exceeds its end whenever `|a| > |b| + reach` (`starbux` against `bar`), and the loop must then run zero times. The Jaro-Winkler fixture never triggers this, so a port that traps on an empty range (Swift's closed-range operator does) passes 33/33 and then crashes in the ranking fixture's `Starbux` scenario. Write it as a guarded `while`.
 
 `fixtures/jaro-winkler.json` gives scores to six decimals; a port must match to within 5e-7. That is exactly the rounding budget, with no headroom: the algorithm is rational arithmetic in doubles, so a straight transcription lands within 1e-15 of the reference before rounding, and the JVM transcription's worst distance from the fixture is 4.8e-7.
 
