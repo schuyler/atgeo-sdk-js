@@ -111,35 +111,37 @@ public struct PlaceRecord: Sendable, Equatable {
     public var importance: Int64?
 }
 
-public struct CollectionRef: Sendable, Equatable, Codable { public var dataset: String; public var collection: String }
+public struct CollectionRef: Sendable, Equatable, Codable { public var dataset: String?; public var collection: String? }
 
 public struct ServiceDescription: Sendable, Equatable, Codable {
-    public var did: String
-    public var tilesets: [ServedTileset]
-    public struct ServedTileset: Sendable, Equatable, Codable { public var slug: String; public var collections: [CollectionRef] }
+    public var did: String?
+    public var tilesets: [ServedTileset]        // empty when missing
+    public struct ServedTileset: Sendable, Equatable, Codable { public var slug: String?; public var collections: [CollectionRef] }
 }
 
 public struct CollectionAttribution: Sendable, Equatable, Codable {
-    public var dataset: String, collection: String
+    public var dataset: String?, collection: String?
     public var release: String?, source: String?, licenses: [String]?, attribution: String?
 }
 
 public struct CollectionInfo: Sendable, Equatable, Codable {
     // the CollectionAttribution fields, plus:
-    public var recordCount: Int?, locationFormats: [String]?, containmentTypes: [String]?
+    public var recordCount: Int64?, locationFormats: [String]?, containmentTypes: [String]?
     public var categories: [CategoryCount]?, attributes: [String]?
-    public struct CategoryCount: Sendable, Equatable, Codable { public var value: String; public var count: Int }
+    public struct CategoryCount: Sendable, Equatable, Codable { public var value: String?; public var count: Int64? }
 }
 
 public struct Tileset: Sendable, Equatable, Codable {
-    public var slug: String
+    public var slug: String?
     public var publishedAt: String?
     public var extent: Extent?
-    public var collections: [CollectionInfo]
+    public var collections: [CollectionInfo]    // empty when missing
     public var references: [CollectionAttribution]?
-    public struct Extent: Sendable, Equatable, Codable { public var north, south, east, west: String }
+    public struct Extent: Sendable, Equatable, Codable { public var north: String?, south: String?, east: String?, west: String? }
 }
 ```
+
+Every field of the describe types is optional, and the client's decoding of them is written by hand rather than synthesized: each field is read with `try?` from a keyed container, so a missing field or one of the wrong type is `nil`; the two arrays the structure hangs on default to empty; and an array element that fails to decode is dropped rather than failing the array (decode `[JSONValue]` and map). Unknown keys are ignored, which keyed containers do by default. This is the contract's robustness rule (§1): the server may add, drop or retype a field the app does not read without the call failing. The `Codable` conformance stays for apps that persist what they fetched; the lenient path is the one the client uses on a response.
 
 `importance` is `Int64`, not `Int`: `Int` is 32 bits on arm64_32, which is what watchOS runs on, and the contract wants a signed 64-bit integer (§1). `publishedAt` and the extent's edges stay strings, as served; parsing dates and coordinates is the app's business, and the extent is a lexicon bbox whose values are strings.
 
@@ -173,6 +175,8 @@ Numbers decode as `Double`, which loses integers beyond 2^53 exactly as the Java
 
 `SearchHit.place["name"]?.stringValue` is how an app reads a name. A typed `Place` struct is a reasonable later addition on top of `JSONObject`, not a replacement for it.
 
+Tile records are read from `JSONValue`, not through `Codable`: a record that is not an object, or whose `value` is not an object, is skipped and the tile stays used (contract §4.4); a `uri` that is not a string and an `importance` that is not a number read as `nil`, and a non-integer importance truncates toward zero (§1). A `getTiles` body with no `tiles` array has no usable tile list and throws `DecodingError` (§1); entries of `tiles` that are not strings are skipped.
+
 ### Errors
 
 ```swift
@@ -191,7 +195,7 @@ public enum AtgeoArgumentError: Error, Sendable, Equatable {
 
 `AtgeoArgumentError` is a separate type rather than more `AtgeoError` codes so that the `code` namespace stays the server's. The JS client throws `TypeError` for the same reason.
 
-Network failures throw `URLError` (or whatever the injected transport throws) unwrapped. A 2xx body that doesn't decode throws `DecodingError` unwrapped, except for tiles, where it counts as a failed tile. Cancellation throws `CancellationError` or `URLError(.cancelled)`, whichever reached the call first; callers should test `Task.isCancelled` rather than match the error.
+Network failures throw `URLError` (or whatever the injected transport throws) unwrapped. A 2xx body that is not JSON, or has no usable body in the contract's narrow sense (§1: no `tiles` array, no `record` object, a describe body that is not an object), throws `DecodingError` unwrapped; nothing else about a body's shape throws. For tiles, either counts as a failed tile. Cancellation throws `CancellationError` or `URLError(.cancelled)`, whichever reached the call first; callers should test `Task.isCancelled` rather than match the error.
 
 ## 4. Transport
 

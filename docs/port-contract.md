@@ -6,6 +6,8 @@ The reference is the TypeScript source in `src/` at the commit this document was
 
 "Must" marks behaviour a port has to reproduce. "Should" marks the reference behaviour where a port may do better, as long as the observable results stay the same. "May" marks a deliberate freedom.
 
+The client is tolerant by design. It reads only the fields it needs, ignores everything else, treats a missing or wrong-typed value as absent, and never fails a search because of one record or one tile. It fails only when it cannot do the job at all: a `getTiles` call that errors or yields no usable tile list, or a `getPlace` or describe call that errors or has no usable body. Where this document says a value "is" some type, that is what a compliant server sends; the rule next to it says what a port does when it isn't. A port must not be stricter than this document about what a response may contain, so that a server change that keeps the wire functional does not break the apps built on a port.
+
 ## 1. Wire protocol
 
 Everything goes over HTTP GET with no request body. There are four XRPC queries and plain tile fetches.
@@ -24,25 +26,27 @@ Query values must be percent-encoded so the server decodes them to the exact str
 
 Responses are JSON. The schemas are the lexicons in `test/lexicon/`; the ones a port reads are:
 
-- `getTiles` → `{ tiles: string[], overview?: boolean }`. `tiles` is in ascending string order on the wire, but the client sorts anyway (section 4).
-- tile payload (`org.atgeo.tilePayload`) → `{ records: [{ value, uri?, importance? }], ... }`. Only `value`, `uri` and `importance` are kept per record; `publishedAt` and `attribution` are ignored.
-- `getPlace` → `{ uri, record, importance? }`.
+- `getTiles` → `{ tiles: string[], overview?: boolean }`. `tiles` is in ascending string order on the wire, but the client sorts anyway (section 4). Entries that are not strings are skipped. `overview` is true only when it is literally `true`. A body with no `tiles` array has no usable tile list (Errors, below).
+- tile payload (`org.atgeo.tilePayload`) → `{ records: [{ value, uri?, importance? }], ... }`. Only `value`, `uri` and `importance` are kept per record; `publishedAt` and `attribution` are ignored. A record that is not an object, or whose `value` is not an object, is skipped and the tile is still used. A `uri` that is not a string, and an `importance` that is not a number, are absent.
+- `getPlace` → `{ uri, record, importance? }`. `record` must be an object, or the response has no usable body; `importance` as for a tile record; `uri` is not read.
 - `describeService` → `{ did, tilesets: [{ slug, collections: [{ dataset, collection }] }] }`.
 - `describeTileset` → `org.atgeo.defs#tileset`.
 
+For the two describe calls, every field is optional on the way in. A port's typed representation treats a missing field, or one of the wrong type, as absent; an array that is not an array as empty; an array element that cannot be read as dropped; and unknown fields as ignored. The lexicons say what a compliant server sends; the client must not fail because the server sends more, less, or a different type in a field the app may not even read.
+
 `value` (a tile record) and `record` (getPlace) are `org.atgeo.place` values and must be surfaced to the caller unmodified: every key, nested value and unknown field as served. Nothing about the schema of a place is assumed beyond what sections 5 and 7 read.
 
-`importance` is a JSON integer. A port decodes it as a signed 64-bit integer. A record carrying a non-integer importance is malformed; the reference accepts it as a float, a port may treat the tile as failed. A compliant server never sends one.
+`importance` is a JSON integer on the wire, decoded as a signed 64-bit integer. A compliant server never sends a non-integer; when one arrives, the reference keeps it as a float and a port whose importance type is integral truncates it toward zero. Anything that is not a JSON number is absent. Neither case fails the tile.
 
 ### Errors
 
 A non-2xx response raises the port's `AtgeoError` type with a `code` string and a `message`. If the body is JSON with `error` and/or `message` string fields, those are the code and message. Otherwise the code is `HttpError` and the message is `HTTP {status}`. The body is read before the status is checked, so a server that sends an error body with a non-2xx status is always reported with its own code.
 
-Every code other than `HttpError` comes from the server. The lexicons declare which codes each query can return: `BboxTooLarge`, `BboxTooPrecise`, `DatasetNotFound`, `CollectionNotFound`, `InvalidBbox` for getTiles; `PlaceNotFound` for getPlace; `TilesetNotFound` for describeTileset; `InvalidRequest` for any malformed parameter.
+Every code other than `HttpError` comes from the server. The lexicons declare which codes each query can return: `BboxTooLarge`, `BboxTooPrecise`, `DatasetNotFound`, `CollectionNotFound`, `InvalidBbox` for getTiles; `PlaceNotFound` for getPlace; `TilesetNotFound` for describeTileset; `InvalidRequest` for any malformed parameter. The list is informative, not closed: a port passes any code through unchanged and never decides what to do by matching on it, so that a code the server adds later is reported, not mishandled.
 
-A 2xx response whose body is not valid JSON raises the port's JSON decoding error, not `AtgeoError`, except inside a tile fetch (section 4), where it counts as a failed tile. The reference does not check the shape of a decoded body and misbehaves when a required field is missing (section 16); a port may check, and then raises the same decoding error.
+A 2xx response whose body is not valid JSON, or decodes but has no usable body, raises the port's JSON decoding error, not `AtgeoError`, except inside a tile fetch (section 4), where it counts as a failed tile. "No usable body" is the narrow list above: a `getTiles` body with no `tiles` array, a `getPlace` body with no `record` object, a describe body that is not an object. Nothing else about a body's shape is an error. The reference does not check even this much and misbehaves when `tiles` is missing (section 16).
 
-Network failures propagate as the port's HTTP layer's own error type, unwrapped.
+Network failures propagate as the port's HTTP layer's own error type, unwrapped. The transport follows redirects, and the response's content type is not checked.
 
 ## 2. Client construction
 
@@ -153,7 +157,7 @@ The `collection` query parameter is sent only when the search has a collection.
 
 ### 4.2 Tile lists
 
-For each bbox string from section 3, in order, look up the tile-list cache under the key `"{dataset}|{collection or empty}|{bbox}"`. On a miss, call `getTiles` and cache `{ tiles, overview: response.overview ?? false }` for one hour (section 10). The calls for the two halves of a crossing region run concurrently.
+For each bbox string from section 3, in order, look up the tile-list cache under the key `"{dataset}|{collection or empty}|{bbox}"`. On a miss, call `getTiles` and cache `{ tiles: the string entries of response.tiles, overview: response.overview === true }` for one hour (section 10). The calls for the two halves of a crossing region run concurrently.
 
 If any `getTiles` call fails (server error or network), the whole search fails with that error. The search does not subdivide after `BboxTooLarge`.
 
@@ -168,8 +172,8 @@ Take the union of every list's `tiles`, remove duplicates, and sort ascending by
 For each URL in that order, with at most 8 fetches in flight:
 
 - A tile in the tile cache is used without a request, and is marked recently used.
-- Otherwise fetch the URL exactly as given. On a 2xx with a body that decodes to a payload with a `records` array, keep `{ value, uri?, importance? }` per record, store the tile in the cache with its size (section 10), and use it.
-- Any other outcome (non-2xx, network error, undecodable body, missing `records`) marks the tile failed. It is skipped, not retried, and the search continues. A record that is not an object, or whose `value` is not an object, makes the tile malformed and it counts as failed too (section 16).
+- Otherwise fetch the URL exactly as given. On a 2xx with a body that decodes to a payload with a `records` array, keep `{ value, uri?, importance? }` per usable record (section 1: a record that is not an object, or has no object `value`, is skipped, and skipping never fails the tile), store the tile in the cache with its size (section 10), and use it. A tile whose every record was skipped is still a used tile with no records.
+- Any other outcome (non-2xx, network error, undecodable body, missing `records`) marks the tile failed. It is skipped, not retried, and the search continues.
 - If the search was cancelled, a tile failure is not swallowed: the search fails with the cancellation error.
 
 The result's `tiles.fetched` is the number of tiles used, from cache or network. `tiles.failed` is the number that failed. `complete` is `failed == 0`.
@@ -205,7 +209,7 @@ Warm searches: a repeat of the same region within the hour, with every tile stil
 - `point` is the first element with `$type == "community.lexicon.location.geo"` whose `latitude` and `longitude` parse to finite numbers.
 - `bbox` is the first element with `$type == "community.lexicon.location.bbox"` whose `south`, `north`, `east`, `west` all parse to finite numbers; it is stored as `{ south, north, segments: lonSegments(west, east) }`, so a box with `west > east` crosses the antimeridian.
 
-Both may be present. Elements with other `$type`s, and elements whose numbers don't parse, are skipped (a non-parsing geo element does not stop a later geo element from being the point). An element that is not a JSON object is skipped too (section 16).
+Both may be present. Elements with other `$type`s, and elements whose numbers don't parse, are skipped (a non-parsing geo element does not stop a later geo element from being the point). An element that is not a JSON object is skipped too (section 16). Coordinates are not range-checked: a latitude of 95 or a longitude of 200 is kept as parsed and the geometry of section 6 is applied to it as is.
 
 Parsing: the lexicon types these as strings; the reference converts whatever is there to a string and applies JavaScript `parseFloat`, so a JSON number works too. A port must accept a JSON string holding a decimal number (optional sign, optional fraction, optional exponent) and a JSON number. It may reject what `parseFloat` would partially accept (leading whitespace, trailing garbage such as `"1.5abc"`); garganorn emits neither. `Infinity`, `NaN` and the like are non-finite and are skipped.
 
@@ -300,7 +304,7 @@ textScore(query, value):
   max(0, max over names of scoreName(query, tokens, name))
 ```
 
-Words past the twelfth count only in the whole-query comparison. `variants` must be an array for its names to count; a variant whose `name` is not a string is skipped.
+Words past the twelfth count only in the whole-query comparison. `variants` must be an array for its names to count; a variant that is not an object, or whose `name` is not a string, is skipped.
 
 A record whose score is below `0.6` is dropped (exactly 0.6 is kept). Without text, the score is null and nothing is dropped.
 
@@ -344,9 +348,9 @@ The sort must be stable: hits that tie on every comparator (only possible when b
 
 `getPlace(origin)`: search the tile cache for a record whose key (4.6) equals `origin`; if several cached tiles hold one, take the record from the lowest tile URL. The scan does not mark any tile recently used (section 10). On a hit return `{ origin, place: value, importance ?? null }` with no request. On a miss call `getPlace` with `uri = origin` (no `describeService` first) and return `{ origin, place: record, importance ?? null }`. The returned `origin` is the caller's string, not the response's `uri`.
 
-`describeService()`: cached for one hour; otherwise one request. Returned as decoded.
+`describeService()`: cached for one hour; otherwise one request. Returned as decoded, leniently (section 1).
 
-`describeTileset(slug)`: never cached; one request per call.
+`describeTileset(slug)`: never cached; one request per call. Returned as decoded, leniently (section 1).
 
 ## 10. Caching
 
@@ -403,10 +407,11 @@ A port may:
 - coalesce concurrent identical requests, as long as results are unchanged;
 - throw a cancellation error from a fully cached call (section 11);
 - time out a request in its transport: a timeout is a network failure, and inside a tile fetch a failed tile;
-- check the shape of a decoded XRPC body and raise its JSON decoding error when a required field is missing (section 1).
+- truncate a non-integer importance toward zero (section 1).
 
 A port must not:
 
+- be stricter than section 1 about what a response may contain: fail a call over an unknown field, a missing optional field, a wrong-typed field it can treat as absent, or a record it can skip;
 - retry a failed tile within a search;
 - subdivide a region after `BboxTooLarge`;
 - send the collection parameter for a dataset-only search;
@@ -429,4 +434,4 @@ Reference behaviour at `8654ea7` that a port must not reproduce. Each is a crash
 
 - A `getTiles` body that decodes but has no `tiles` array (`{}`, `[]`, `{ "tiles": "x" }`) is reported as one failed tile and no places, because the undefined list is treated as a tile URL. A `null` body throws a bare `TypeError`. A port raises its decoding error (section 1).
 - A `null` or other non-object element in a place's `locations` throws a bare `TypeError` from the region filter and fails the whole search. A port skips the element (section 5).
-- A tile record that is not an object, or whose `value` is `null`, throws a bare `TypeError` after the tile was counted as fetched; a `value` that is a non-object scalar passes through as a place with no name and no location. A port counts the tile as failed (section 4.4).
+- A tile record that is not an object, or whose `value` is `null`, throws a bare `TypeError` after the tile was counted as fetched; a `value` that is a non-object scalar passes through as a place with no name and no location. A port skips the record and keeps the tile (section 4.4).

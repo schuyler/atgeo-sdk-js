@@ -100,45 +100,45 @@ data class SearchHit(
 
 data class PlaceRecord(val origin: String, val place: JsonObject, val importance: Long?)
 
-@Serializable data class CollectionRef(val dataset: String, val collection: String)
+@Serializable data class CollectionRef(val dataset: String? = null, val collection: String? = null)
 
-@Serializable data class ServiceDescription(val did: String, val tilesets: List<ServedTileset>) {
-    @Serializable data class ServedTileset(val slug: String, val collections: List<CollectionRef>)
+@Serializable data class ServiceDescription(val did: String? = null, val tilesets: List<ServedTileset> = emptyList()) {
+    @Serializable data class ServedTileset(val slug: String? = null, val collections: List<CollectionRef> = emptyList())
 }
 
 @Serializable data class CollectionAttribution(
-    val dataset: String, val collection: String,
+    val dataset: String? = null, val collection: String? = null,
     val release: String? = null, val source: String? = null,
     val licenses: List<String>? = null, val attribution: String? = null,
 )
 
 @Serializable data class CollectionInfo(
-    val dataset: String, val collection: String,
+    val dataset: String? = null, val collection: String? = null,
     val release: String? = null, val source: String? = null,
     val licenses: List<String>? = null, val attribution: String? = null,
     val recordCount: Long? = null, val locationFormats: List<String>? = null,
     val containmentTypes: List<String>? = null, val categories: List<CategoryCount>? = null,
     val attributes: List<String>? = null,
-) { @Serializable data class CategoryCount(val value: String, val count: Long) }
+) { @Serializable data class CategoryCount(val value: String? = null, val count: Long? = null) }
 
 @Serializable data class Tileset(
-    val slug: String,
+    val slug: String? = null,
     val publishedAt: String? = null,
     val extent: Extent? = null,
-    val collections: List<CollectionInfo>,
+    val collections: List<CollectionInfo> = emptyList(),
     val references: List<CollectionAttribution>? = null,
-) { @Serializable data class Extent(val north: String, val south: String, val east: String, val west: String) }
+) { @Serializable data class Extent(val north: String? = null, val south: String? = null, val east: String? = null, val west: String? = null) }
 ```
 
 `importance` is `Long`, not `Int`: the lexicon says integer without a range, and the JavaScript client carries 53 bits (contract §1). `publishedAt` and the extent's edges stay strings, as served.
 
-Every `@Serializable` type is decoded with a `Json { ignoreUnknownKeys = true }` instance, so that a server adding a field does not break the client. The same instance is used everywhere; it is internal.
+Every field of the describe types is nullable with a null default, and the two lists the structure hangs on default to empty, so that a missing field never fails a call. `kotlinx.serialization` still throws on a field of the wrong type, and the contract wants that read as absent (§1), so the client does not decode a server response through these classes' generated serializers. It parses the body to a `JsonObject` with one internal `Json { ignoreUnknownKeys = true }` instance and maps it by hand with `contentOrNull`, `longOrNull` and friends: a missing or wrong-typed field becomes null, a field that should be a list but isn't becomes empty, and a list element that does not map is dropped. `@Serializable` stays on the classes for apps that want to persist them.
 
 ### Place values
 
 A place is arbitrary JSON and must be surfaced untouched (contract §1). `kotlinx.serialization.json.JsonObject` is exactly that: immutable, structurally equal, and preserving every key and nested value as served, including key order. `SearchHit.place["name"]?.jsonPrimitive?.contentOrNull` is how an app reads a name. A typed `Place` class is a reasonable later addition on top of `JsonObject`, not a replacement for it.
 
-Tile records are decoded into an internal `TileRecord(value: JsonObject, uri: String?, importance: Long?)`; the rest of the payload is dropped. A record that is not an object, or whose `value` is not one, makes the tile malformed and it counts as failed (contract §4.4 and §16). Decoding `getTiles` into a class with a required `tiles` field means a body without one raises `SerializationException`, which is the shape check the contract allows (§1, §14).
+Tile records are read from the parsed `JsonObject` into an internal `TileRecord(value: JsonObject, uri: String?, importance: Long?)`; the rest of the payload is dropped. A record that is not an object, or whose `value` is not one, is skipped and the tile stays used (contract §4.4); a `uri` that is not a string and an `importance` that is not a number read as null, and a non-integer importance truncates toward zero (§1). A `getTiles` body with no `tiles` array has no usable tile list and raises `SerializationException` (§1); entries of `tiles` that are not strings are skipped.
 
 ### Errors
 
@@ -149,7 +149,7 @@ class AtgeoException(val code: String, message: String) : RuntimeException(messa
 
 Bad arguments (contract §3) throw `IllegalArgumentException` from `require()`, before the first suspension point, so a caller sees them at the call site. This matches the JS client's `TypeError` in spirit: a programming error, kept out of `AtgeoException`'s code namespace.
 
-Network failures throw `IOException` (or whatever the injected transport throws) unwrapped. A 2xx body that does not decode throws `SerializationException` unwrapped, except for tiles, where it counts as a failed tile. Cancellation throws `CancellationException` and must be rethrown, never swallowed, anywhere the client catches `Throwable` (the tile-fetch loop is the one such place; section 5 gives the exact rule).
+Network failures throw `IOException` (or whatever the injected transport throws) unwrapped. A 2xx body that is not JSON, or has no usable body in the contract's narrow sense (§1: no `tiles` array, no `record` object, a describe body that is not an object), throws `SerializationException` unwrapped; nothing else about a body's shape throws. For tiles, either counts as a failed tile. Cancellation throws `CancellationException` and must be rethrown, never swallowed, anywhere the client catches `Throwable` (the tile-fetch loop is the one such place; section 5 gives the exact rule).
 
 ## 4. Transport
 
