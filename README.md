@@ -88,6 +88,14 @@ interface SearchResult {
   complete: boolean;                          // false if any tile failed to load
   overview: boolean;                          // true if the server answered with its coarse overview; see below
   tiles: { fetched: number; failed: number };
+  tileFailures: TileFailure[];                // one per failed tile, in tile URL order; empty if complete
+}
+
+interface TileFailure {
+  url: string;                                // the tile URL, as the server gave it
+  kind: "refused" | "status" | "decode" | "transport";
+  status?: number;                            // the HTTP status, for "status" only
+  error: unknown;                             // what went wrong, for you to log or inspect
 }
 
 interface SearchHit {
@@ -145,7 +153,13 @@ Returns the tileset's descriptor: `slug`, `collections` (each a `{ dataset, coll
 
 - `AtgeoError` has a `code` string and the HTTP `status`, which tells a request the server refused (4xx) from one it failed to answer (5xx) without matching on codes. A non-2xx response from the server becomes an `AtgeoError` whose `code` and message come from the server's JSON error body (`error`, `message`); if there isn't one, the code is `HttpError`. Apart from `HttpError`, every code comes from the server: for example `PlaceNotFound`, `TilesetNotFound`, `DatasetNotFound`, `CollectionNotFound`, `BboxTooLarge`, or `InvalidRequest` for a malformed parameter. The lexicons in `test/lexicon/` list the codes each method declares.
 - `searchPlaces` throws `TypeError` for an invalid region (non-finite or out-of-range coordinates, `minLat > maxLat`, negative radius) and for `sort: "similarity"` without text. It throws synchronously, before any request.
-- A failed `getTiles` request rejects the whole search. A failed tile request does not: that tile is skipped, `tiles.failed` counts it, and `complete` is `false`.
+- A failed `getTiles` request rejects the whole search. A failed tile request does not: that tile is skipped, `tiles.failed` counts it, `complete` is `false`, and `tileFailures` says which tile and why. The `kind` is where it went wrong:
+  - `refused`: the URL isn't a string, isn't an absolute `http` or `https` URL, or carries credentials (`https://user:pw@host/…`). No request is made.
+  - `status`: the tile answered non-2xx. `status` is the HTTP status and `error` the `AtgeoError`, except that a body of exactly `null` gets you a `TypeError` instead. That's a known wart, not a promise.
+  - `decode`: the tile answered 2xx with something that isn't a tile: not JSON, or no `records` array.
+  - `transport`: `fetch` threw, or the body couldn't be read. `error` is whatever it threw, as is.
+
+  The kind comes from which step failed, not from the error's type: a custom `fetch` that throws an `AtgeoError` of its own is still `transport`. An entry holds the tile URL and what fetching it produced, never your search text or region, and the SDK doesn't log it or send it anywhere. What you do with it is up to you.
 - Aborting rejects with whatever `fetch` throws, so it only takes effect through a request. A call answered entirely from cache completes normally, even with an already-aborted signal. Network errors from `fetch` propagate as-is.
 
 ## Privacy

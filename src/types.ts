@@ -67,6 +67,20 @@ export interface SearchResult {
   complete: boolean;
   overview: boolean;
   tiles: { fetched: number; failed: number };
+  // One entry per failed tile, in tile URL order; empty when complete.
+  tileFailures: TileFailure[];
+}
+
+// refused: not an absolute http(s) URL, or it carries credentials; no request was made.
+// status: a non-2xx. decode: a 2xx whose body is not a usable tile payload. transport: fetch threw.
+export type TileFailureKind = "refused" | "status" | "decode" | "transport";
+
+export interface TileFailure {
+  url: string;
+  kind: TileFailureKind;
+  // The HTTP status, for kind "status" only.
+  status?: number;
+  error: unknown;
 }
 
 export interface ClientOptions {

@@ -87,3 +87,29 @@ describe("precise coordinates stay local", () => {
     }
   });
 });
+
+describe("failed tiles carry no search text", () => {
+  it("leaves every form of the text out of tileFailures", async () => {
+    const tiles = ["a", "b", "c", "d"].map((n) => `https://tiles.example/${n}.json`);
+    const server = fakeServer({
+      failTiles: [tiles[0]],
+      tilesets: [overture(tiles.map((url) => ({ url, records: [record(place("r1", "Zanzibar Quokka Cafe", [point(37.775, -122.418)]))] })))],
+    });
+    const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const u = new Request(input, init).url;
+      if (u === tiles[1]) return new Response("<html>not a tile</html>");
+      if (u === tiles[2]) throw new TypeError("fetch failed");
+      if (u === tiles[3]) return new Response("null", { status: 500 });
+      return server.fetch(input, init);
+    }) as typeof globalThis.fetch;
+    const text = "  ZANZIBÁR   quokka ";
+    const result = await new AtgeoClient({ fetch }).searchPlaces({ region: { lat: 37.7749295, lon: -122.4194155, radius: 500 }, text });
+    expect(result.tileFailures.map((f) => f.kind)).toEqual(["status", "decode", "transport", "status"]);
+    const haystack = JSON.stringify(
+      result.tileFailures.map((f) => [f.url, f.kind, f.status, String(f.error), (f.error as Error).message, (f.error as Error).stack]),
+    ).toLowerCase();
+    for (const needle of [text.toLowerCase(), text.trim().toLowerCase(), "zanzibar quokka", "zanzib", "quokka"]) {
+      expect(haystack).not.toContain(needle);
+    }
+  });
+});

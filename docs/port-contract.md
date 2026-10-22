@@ -175,10 +175,25 @@ For each URL in that order, with at most 8 fetches in flight:
 
 - A tile in the tile cache is used without a request, and is marked recently used. Whether a port consults the cache when a worker reaches the URL (the reference) or for every URL before fetching begins affects only the order in which recency is touched, which nothing here pins.
 - Otherwise fetch the URL exactly as given. On a 2xx with a body that decodes to a payload with a `records` array, keep `{ value, uri?, importance? }` per usable record (section 1: a record that is not an object, or has no object `value`, is skipped, and skipping never fails the tile), store the tile in the cache with its size (section 10), and use it. A tile whose every record was skipped is still a used tile with no records.
-- Any other outcome (non-2xx, network error, undecodable body, a payload that is not an object, `records` absent or not an array) marks the tile failed. So does a tile URL that is not an absolute `http` or `https` URL, or that carries credentials (`https://user:pw@host/…`), which the reference's `fetch` refuses before any request: the Fetch standard's `Request` throws on both. It is skipped, not retried, and the search continues.
-- If the search was cancelled, a tile failure is not swallowed. The reference rethrows the tile's own error, so a search aborted while a tile with an unparsable body was in flight fails with the JSON error, not the cancellation error; a port may fail with its cancellation error instead (section 14).
+- Any other outcome (non-2xx, network error, undecodable body, a payload that is not an object, `records` absent or not an array) marks the tile failed. So does a tile URL that is not an absolute `http` or `https` URL, or that carries credentials (a non-empty username or password once parsed, by WHATWG or by any parser the port's transports use: `https://user:pw@host/…`, `https://user@host/…`, and on the JVM `https://h\@x/…`, whose `h\` `java.net.URL` reads as a user), which the reference refuses with its own check before any request. (The Fetch standard's `Request` refuses credentials, and in Node a relative URL, but accepts `data:` and `blob:` URLs and, in a browser, resolves a relative URL against the page, so `fetch` alone is not the rule.) An empty userinfo (`https://@host/…`) carries no credentials and the reference fetches it; a port may refuse it instead, since a compliant server never sends one, and says so in its `CONFORMANCE.md`. It is skipped, not retried, and the search continues.
+- If the search was cancelled, a tile failure is not swallowed. The reference rethrows the tile's own error, so a search aborted while a tile with an unparsable body was in flight fails with the JSON error, not the cancellation error; a port may fail with its cancellation error instead (section 14). A search that fails, cancelled or otherwise, has no result, so its tiles are never reported as failed.
 
-The result's `tiles.fetched` is the number of tiles used, from cache or network. `tiles.failed` is the number that failed. `complete` is `failed == 0`.
+What counts as a failed tile is fixed by where the error arises, not by its type. Everything that handles input from the server or the app is guarded: the URL check, the transport call (whatever the transport raises: a network error, a timeout, a body over a cap, or anything an app's transport throws), the status check, and decoding the payload and its records, however the decoder fails, since its input is the server's. The client's own work after that, storing the tile in the cache and the search's bookkeeping, is not guarded: an error there fails the search, so that a bug in the client cannot pass for a run of bad tiles. Running out of memory (Python's `MemoryError`, the JVM's `OutOfMemoryError`) fails the search wherever it arises. A decoder that overflows its stack on deeply nested JSON (Python's `RecursionError`, the JVM's `StackOverflowError`) is `decode`, since the server's input caused it; the reference's `JSON.parse` does not overflow. A port whose own work after decoding cannot fail (Rust's, where a bug panics and the panic propagates) has nothing to move out of the guard. A port must not draw the line by the error's type instead: in the reference a network failure is a `TypeError`, the type of a bug, and an app's transport may throw anything.
+
+Each failed tile is reported in the result's `tileFailures`, in the URL order of 4.3, not in completion order:
+
+| Field | Value |
+|---|---|
+| `url` | the tile URL as the tile list gave it |
+| `kind` | `refused`: the URL is not an absolute `http` or `https` URL, or carries credentials, and no request was made; `status`: a non-2xx; `decode`: a 2xx whose body is not a usable tile payload; `transport`: the transport raised |
+| `status` | the HTTP status for `status`, else absent |
+| `error` | the port's own error for the failure: its `AtgeoError` for `status`, its decoding error or whatever the decoder raised for `decode`, the transport's error unwrapped for `transport` (except where the port's own rules convert it, as Kotlin turns a transport's stray `CancellationException` into an `IOException`; section 14), an error of the port's choosing for `refused` |
+
+`refused` also covers a URL the port's own URL type cannot represent as the absolute http(s) URL WHATWG would read (Foundation on Linux reads a backslash in the authority differently, for one), which the port lists in its `CONFORMANCE.md`. A URL that passes the port's check and that its transport then cannot send is `transport`. So `kind` is pinned for the URLs a compliant server sends and for the refused cases above; for the odd URLs in between, each port's `CONFORMANCE.md` says what happens. A body over a size cap is `transport`, not a kind of its own: the cap belongs to the transport (section 14), an app's transport has its own cap or none, and the default transports name the cap in the error's message. A cached tile whose body fails to parse again, which a deterministic parser cannot do, is `decode`.
+
+`url`, `kind` and `status` are part of the result and must be the same in every SDK. `error` is not: its type and message are the platform's. Where a port's result type defines equality, hashing or serialization, it leaves `error` out of them, so that two results are equal when they agree on everything this document pins. The reference's results are plain objects and are exempt. An entry is built from the tile's URL and what fetching it produced, nothing else; in particular nothing from the search text, and nothing about the region beyond what the tile URL already says (section 12). A tile URL names a tile the server chose for the snapped box, so it reveals the coarse area searched, though not the region itself.
+
+The result's `tiles.fetched` is the number of tiles used, from cache or network. `tiles.failed` is the number that failed, which is the length of `tileFailures`. `complete` is `failed == 0`.
 
 ### 4.5 Concatenate
 
@@ -200,7 +215,7 @@ Keep records for which `inRegion(locate(value), region)` holds (sections 5 and 6
 
 ### 4.9 Rank
 
-Section 8. The result is `{ places, complete, overview, tiles: { fetched, failed } }`.
+Section 8. The result is `{ places, complete, overview, tiles: { fetched, failed }, tileFailures: [{ url, kind, status?, error }] }`. Each port spells `tileFailures` and `kind`'s values in its language's style and says so in its spec.
 
 Warm searches: a repeat of the same region within the hour, with every tile still cached, makes no request at all. Changing only `text` or `sort` reuses everything.
 
@@ -381,6 +396,8 @@ These are what the client is for. Items 1 to 4 must be covered by tests against 
 4. `getPlace` on a cache miss sends the origin and nothing else.
 5. A port's default transport sends a fixed `User-Agent` naming the port and nothing else, with no version (`atgeo-client-kotlin`, `atgeo-client-swift`), the same on every request and every device, in place of the platform's default, which can name the OS release and the device model (Android's `http.agent` does). A version would split users by app update. It sends no `Accept-Language` derived from the user's locale: either none, or a fixed `*`. URLSession adds one from the locale (`en-US,en;q=0.9` on Apple platforms, `en` on Linux) unless the request sets its own. The fake server replaces the transport, so the transport's own loopback test asserts both, on whatever platforms the port's CI can run it; where it can't (Kotlin on Android), the port's spec says how the platform's behaviour was established. The reference is exempt: its runtime's `fetch` sends values that are fixed for the runtime (Node 22's sends `User-Agent: node` and `Accept-Language: *`), and in a browser or a worker both headers are the runtime's, the same for every site. A transport the app supplies sends whatever its HTTP stack does, and the port's README says so.
 
+Diagnostics stay in the app's process. A port sends no telemetry and no error report, to the server or anywhere else. A failed-tile entry (section 4.4) or a log line (section 14) carries a tile URL, which the server chose and the app may see, and what fetching it produced; never the search text in any form, nor the region or the bbox strings of section 3. A tile URL reveals the coarse area searched, so a port that logs one marks it private where its logging facility has such a notion.
+
 ## 13. Conformance
 
 A port vendors, at a pinned atgeo-sdk-js commit recorded in a `SOURCE` file:
@@ -395,7 +412,7 @@ It also reproduces the worked examples in sections 3 and 6, and ports the behavi
 - `region.test.ts`: serialization, outward snapping, degenerate spans, circle to bbox, antimeridian splitting, invalid regions.
 - `merge.test.ts` and `distance.test.ts`: dedupe, ordering ties, region filtering for both region kinds, seams at ±180 and the poles, determinism.
 - `client.test.ts`: getPlace cache and network paths, describe calls, result shapes, dataset and collection resolution.
-- `transport.test.ts`: failed tiles, typed errors, URL construction.
+- `transport.test.ts`: failed tiles (each `kind`, with its URL and status, in URL order), typed errors, URL construction.
 - `cache.test.ts`: warm regions, expiry, the `getPlace` cache scan. It has no test of LRU eviction or the cache budget; section 10 is the specification for those.
 - `overview.test.ts`: the overview flag.
 - `privacy.test.ts`: section 12.
@@ -415,12 +432,16 @@ A port may:
 - fail a cancelled search with its cancellation error rather than with the error of the tile that was in flight (section 4.4);
 - time out a request in its transport: a timeout is a network failure, and inside a tile fetch a failed tile. The reference relies on its platform's `fetch` defaults: in Node, undici's (10 seconds to connect, 300 seconds for headers and body); in a browser, whatever the browser imposes.
 - cap the size of a response body in its transport, decoded size included: a larger body is a network failure, and inside a tile fetch a failed tile. Tile URLs come from the server and a small gzip body can decode to gigabytes. The Kotlin port caps at 32 MiB; the largest tiles places.atgeo.org serves are about 2 MB.
+- log each failed tile through the platform's standard logging facility, with no new dependency, at its debug level and never above, carrying only the fields of the tile's `tileFailures` entry, and only for a search that returns a result. The result is the contract's channel for failures; a log is a convenience for a developer who turns it on, and a library that logged a failed tile at a higher level would flood an app that searches on every keystroke over a poor connection.
 - give a hit and a place record accessors that read the place for the app, such as its `name` when that is a string and the location section 5 reads, as long as the place itself is still surfaced as served.
 
 A port must not:
 
 - be stricter than section 1 about what a response may contain: fail a call over an unknown field, a missing optional field, a wrong-typed field it can treat as absent, or a record it can skip;
 - retry a failed tile within a search;
+- log above its platform's debug level, or log the search text or the region at any level (section 12);
+- report a failure anywhere but to the app: no telemetry, no error report to the server (section 12);
+- count as a failed tile an error from the client's own work after a tile is decoded (section 4.4);
 - subdivide a region after `BboxTooLarge`;
 - send the collection parameter for a dataset-only search;
 - send anything but the snapped box, dataset and collection on a search;
@@ -440,8 +461,8 @@ Carried over from the reference as-is, and open for all the SDKs together rather
 
 Reference behaviour at `8654ea7` that a port must not reproduce: crashes, wrong counts, and places where the reference is laxer about types than section 1. This section wins over the source. The crashes and wrong counts are to be fixed in the reference, after which this section shrinks.
 
-- A `getTiles` body that decodes but has no `tiles` array (`{}`, `[]`, `{ "tiles": "x" }`) is reported as one failed tile and no places, because the undefined list is treated as a tile URL, and the bad list is cached for an hour. A `null` body throws a bare `TypeError`. Entries of `tiles` that are not strings are fetched as URLs and counted as failed tiles. A port raises its decoding error for a missing list and caches nothing, and skips non-string entries (sections 1 and 4.2).
+- A `getTiles` body that decodes but has no `tiles` array (`{}`, `[]`, `{ "tiles": "x" }`) is reported as one failed tile and no places, because the undefined list is treated as a tile URL, and the bad list is cached for an hour. A `null` body throws a bare `TypeError`. Entries of `tiles` that are not strings are counted as failed tiles, reported as `refused` with the non-string value as `url`; a missing list is one refused tile whose `url` is `undefined`, and any other non-array `tiles` is taken whole as one entry, so `"x"` is one refused tile with `url` `"x"` and `"abc"` one with `url` `"abc"`. A port raises its decoding error for a missing list and caches nothing, and skips non-string entries (sections 1 and 4.2).
 - A `null` element in a place's `locations` throws a bare `TypeError` from the region filter and fails the whole search, for a record that reaches that filter; so does a `null` element in `variants` when the search has text. Other non-object elements are skipped harmlessly. A port skips `null` too (sections 5 and 7).
 - A tile record that is a number, a string or an array, or whose `value` is `null` or missing, throws a bare `TypeError` from the dedupe step after the tile was counted as fetched. A `null` record fails its whole tile, since destructuring it throws inside the tile fetch. A `value` that is a scalar does not throw: it has no location and the region filter drops it, but it consumes its dedupe key first, so a later copy with the same `uri` is lost. The bad records are also cached with their tile, so every later search that touches the tile, and every `getPlace` call, throws the same `TypeError` until the tile is evicted. A port skips every such record and keeps the tile (section 4.4).
-- A `uri` that is not a string is used as a dedupe key and surfaced as the hit's `origin` as is; an `importance` that is not a number is surfaced as is; a coordinate given as a one-element array (`latitude: [0.5]`) parses as that element, because the reference stringifies before parsing; `error` and `message` fields of an error body that are not strings are surfaced as is; and a non-2xx body of `null` throws a bare `TypeError`. A port treats each as absent (sections 1 and 5).
+- A `uri` that is not a string is used as a dedupe key and surfaced as the hit's `origin` as is; an `importance` that is not a number is surfaced as is; a coordinate given as a one-element array (`latitude: [0.5]`) parses as that element, because the reference stringifies before parsing; `error` and `message` fields of an error body that are not strings are surfaced as is; and a non-2xx body of `null` throws a bare `TypeError`, which in a tile fetch is reported as kind `status`, with its `status`, and that `TypeError` as `error`. A port treats each as absent (sections 1 and 5).
 - A `getPlace` body with no object `record` is returned with `place` missing or non-object, and a `null` body throws a bare `TypeError`. A describe body of any JSON type is returned as is, and a falsy service description (`null`, `false`, `0`, `""`) is fetched again on every call. A port raises its decoding error for a body that is not an object, or a `getPlace` body with no object `record` (section 1).

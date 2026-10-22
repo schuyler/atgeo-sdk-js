@@ -29,17 +29,34 @@ export class Transport {
 
   // Fetches a URL exactly as given and returns the body text; non-2xx raises AtgeoError.
   async get(url: string, signal?: AbortSignal): Promise<string> {
+    return checkStatus(await this.fetch(url, signal));
+  }
+
+  // Fetches a URL exactly as given and reads the whole body, whatever the status.
+  // Anything this throws came from fetch or the body read, never from a status check.
+  async fetch(url: string, signal?: AbortSignal): Promise<HttpResponse> {
     const response = await this.fetchImpl(url, { signal });
     const text = await response.text();
-    if (!response.ok) {
-      let body: { error?: string; message?: string } = {};
-      try {
-        body = JSON.parse(text);
-      } catch {}
-      throw new AtgeoError(body.error ?? "HttpError", body.message ?? `HTTP ${response.status}`, response.status);
-    }
-    return text;
+    return { ok: response.ok, status: response.status, text };
   }
+}
+
+export interface HttpResponse {
+  ok: boolean;
+  status: number;
+  text: string;
+}
+
+// Returns the body of a 2xx; raises AtgeoError for anything else.
+export function checkStatus({ ok, status, text }: HttpResponse): string {
+  if (!ok) {
+    let body: { error?: string; message?: string } = {};
+    try {
+      body = JSON.parse(text);
+    } catch {}
+    throw new AtgeoError(body.error ?? "HttpError", body.message ?? `HTTP ${status}`, status);
+  }
+  return text;
 }
 
 export async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
