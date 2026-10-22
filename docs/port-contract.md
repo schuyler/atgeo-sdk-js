@@ -40,11 +40,11 @@ For the two describe calls, every field is optional on the way in. A port's type
 
 ### Errors
 
-A non-2xx response raises the port's `AtgeoError` type with a `code` string and a `message`. If the body is a JSON object whose `error` is a string, that is the code; otherwise the code is `HttpError`. If its `message` is a string, that is the message; otherwise the message is `HTTP {status}`. Each field is judged on its own, and a body that is not a JSON object has neither (section 16). The body is read before the status is checked, so a server that sends an error body with a non-2xx status is always reported with its own code.
+A non-2xx response raises the port's `AtgeoError` type with a `code` string, a `message`, and the response's HTTP `status` as an integer, so that a caller can tell a refused request (4xx) from a server failure (5xx) without matching on `code`. If the body is a JSON object whose `error` is a string, that is the code; otherwise the code is `HttpError`. If its `message` is a string, that is the message; otherwise the message is `HTTP {status}`. Each field is judged on its own, and a body that is not a JSON object has neither (section 16). The body is read before the status is checked, so a server that sends an error body with a non-2xx status is always reported with its own code.
 
 Every code other than `HttpError` comes from the server. The lexicons declare which codes each query can return: `BboxTooLarge`, `BboxTooPrecise`, `DatasetNotFound`, `CollectionNotFound`, `InvalidBbox` for getTiles; `PlaceNotFound` for getPlace; `TilesetNotFound` for describeTileset; `InvalidRequest` for any malformed parameter. The list is informative, not closed: a port passes any code through unchanged and never decides what to do by matching on it, so that a code the server adds later is reported, not mishandled.
 
-A 2xx response whose body is not valid JSON, or decodes but has no usable body, raises the port's JSON decoding error, not `AtgeoError`, except inside a tile fetch (section 4), where it counts as a failed tile. "No usable body" is the narrow list above: a `getTiles` body with no `tiles` array, a `getPlace` body with no `record` object, a describe body that is not an object. Nothing else about a body's shape is an error. The reference checks none of this (section 16).
+A 2xx response whose body is not valid JSON, or decodes but has no usable body, raises the port's decoding error, not `AtgeoError`: the platform's JSON decoding error, or a type of the port's own where the platform's would be caught as something else (Kotlin's `SerializationException` is an `IllegalArgumentException`, the type of an argument error), except inside a tile fetch (section 4), where it counts as a failed tile. "No usable body" is the narrow list above: a `getTiles` body with no `tiles` array, a `getPlace` body with no `record` object, a describe body that is not an object. Nothing else about a body's shape is an error. The reference checks none of this (section 16).
 
 Network failures propagate as the port's HTTP layer's own error type, unwrapped. The transport follows at least same-scheme redirects (the JVM's `HttpURLConnection` does not cross from `http` to `https`), and the response's content type is not checked.
 
@@ -360,7 +360,7 @@ Three caches, all in memory, none persisted, none shared between clients.
 
 - Tile lists: key from 4.2, value `{ tiles, overview }`, expires 3,600,000 ms after being set, by wall-clock time: an entry is fresh while `now < set + 3,600,000` and a miss from exactly that instant on. Entries need not be evicted on expiry, but a port may prune them.
 - Service description: one entry, same one-hour expiry.
-- Tiles: keyed by URL, LRU, capped by `cacheBudgetBytes`. A tile's size is the length of its response body; the reference counts UTF-16 code units of the text, a port counts bytes. Reading a tile by URL during a search marks it most recently used; the `getPlace` scan (section 9) does not. Inserting a tile adds its size and then evicts least recently used tiles until the total is within budget (a single tile larger than the budget evicts every other tile and then itself, so the cache never exceeds the budget after an insert). Replacing a URL subtracts the old size first.
+- Tiles: keyed by URL, LRU, capped by `cacheBudgetBytes`. A tile's size is the length of its response body; the reference counts UTF-16 code units of the text, a port counts bytes. Reading a tile by URL during a search marks it most recently used; the `getPlace` scan (section 9) does not. Inserting a tile adds its size and then evicts least recently used tiles until the total is within budget (a single tile larger than the budget evicts every other tile and then itself, so the cache never exceeds the budget after an insert). Replacing a URL subtracts the old size first. A port may hold each tile's body and parse it again when it is read, and may keep the parsed records of some tiles outside the budget as a memo, because a parsed tile can take several times its body size in memory; what is fetched, and when, and the recency order must be exactly as without the memo.
 
 Expiry tests set the clock, so a port must take its time source from somewhere a test can control.
 
@@ -410,6 +410,8 @@ A port may:
 - throw a cancellation error from a fully cached call (section 11);
 - fail a cancelled search with its cancellation error rather than with the error of the tile that was in flight (section 4.4);
 - time out a request in its transport: a timeout is a network failure, and inside a tile fetch a failed tile. The reference relies on its platform's `fetch` defaults: in Node, undici's (10 seconds to connect, 300 seconds for headers and body); in a browser, whatever the browser imposes.
+- cap the size of a response body in its transport, decoded size included: a larger body is a network failure, and inside a tile fetch a failed tile. Tile URLs come from the server and a small gzip body can decode to gigabytes. The Kotlin port caps at 32 MiB; the largest tiles places.atgeo.org serves are about 2 MB.
+- give a hit and a place record accessors that read the place for the app, such as its `name` when that is a string and the location section 5 reads, as long as the place itself is still surfaced as served.
 
 A port must not:
 
@@ -426,7 +428,7 @@ A port must not:
 Carried over from the reference as-is, and open for all three SDKs together rather than one port:
 
 - A disk cache. The HTTP layer is the seam: an app can supply one that caches, at the cost of the no-persistence default.
-- A lower default cache budget on phones. 50 MiB stays, per the maintainer's decision; a port exposes the option and keeps the default.
+- A lower default cache budget on phones. 50 MiB stays, per the maintainer's decision; a port exposes the option and keeps the default. Measured on the Kotlin port, a parsed tile takes 6.9 times its body size on HotSpot and 5.1 times on ART, so a port that caches parsed tiles against a body-size budget holds 250 to 350 MB when full; the Kotlin port caches bodies instead and keeps only the latest search's tiles parsed (section 10), which makes the budget close to its heap cost. The JavaScript and Swift ports have not been measured.
 - Coalescing of duplicate in-flight requests.
 - Restricting tile URLs. The server names the tile URLs and the client fetches them as given, so a compromised server can send a client anywhere. Section 12 covers what the client sends, not where. A port may want to refuse tile URLs that are not `https`, or that are off the server's host; none of the three SDKs does yet, and it is a decision for all of them together.
 
