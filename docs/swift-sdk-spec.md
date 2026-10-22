@@ -2,7 +2,7 @@
 
 A Swift port of `@atgeo/client`: a client for the atgeo gazetteer that searches places without telling the server what you searched for. This document covers the Swift package, its public API, and the decisions that are specific to Swift. Behaviour (what a search sends, filters, scores and returns) is defined once, for every port, in [port-contract.md](port-contract.md); this document cites it by section and does not restate it.
 
-Status: proposal. Nothing here has been built. The normalization and similarity recipes in section 6 follow the contract but have not been run against the fixtures from Swift yet (the JVM recipes in the Kotlin spec have), and section 6 names one place (final sigma) where Swift's standard library is expected to differ. Treat every version number below as a starting point.
+Status: proposal. Nothing here has been built. The normalization, similarity, snapping and distance recipes in section 6 have been run from Swift 6.4.1 on Linux against the fixtures and the contract's worked tables, and pass. Swift's standard library does differ in one place, final sigma, and section 6 says how to handle it. Treat every version number below as a starting point.
 
 ## 1. Goals
 
@@ -141,7 +141,7 @@ public struct Tileset: Sendable, Equatable, Codable {
 }
 ```
 
-Every field of the describe types is optional, and the client's decoding of them is written by hand rather than synthesized: each field is read with `try?` from a keyed container, so a missing field or one of the wrong type is `nil`; the three lists the lexicon requires (`tilesets`, `ServedTileset.collections`, `Tileset.collections`) default to empty, and an optional list is `nil` when missing or not an array; and an array element that fails to decode is dropped rather than failing the array (decode `[JSONValue]` and map). Unknown keys are ignored, which keyed containers do by default. This is the contract's robustness rule (§1): the server may add, drop or retype a field the app does not read without the call failing. The `Codable` conformance stays for apps that persist what they fetched; the lenient path is the one the client uses on a response.
+Every field of the describe types is optional. The client has one decoding path for every response: a 2xx body is decoded once to `JSONValue`, then mapped by hand with lenient accessors. Describe types, tile lists, tile records, `getPlace` bodies and error bodies are all read this way. A missing field or one of the wrong type is `nil`; the three lists the lexicon requires (`tilesets`, `ServedTileset.collections`, `Tileset.collections`) default to empty, and an optional list is `nil` when missing or not an array; an array element that cannot be read is dropped rather than failing the array; unknown keys are ignored. This is the contract's robustness rule (§1): the server may add, drop or retype a field the app does not read without the call failing. The synthesized `Codable` conformance stays for apps that persist what they fetched. It is strict (a missing `tilesets` fails it) and is never used on a server response.
 
 `importance` is `Int64`, not `Int`: `Int` is 32 bits on arm64_32, which is what watchOS runs on, and cannot hold the range. It is read from `JSONValue.number`, a `Double`, so precision beyond 2^53 is lost exactly as in the JavaScript client; the contract's 64-bit decoding (§1) is about range, and that is what this port gives. `publishedAt` and the extent's edges stay strings, as served; parsing dates and coordinates is the app's business, and the extent is a lexicon bbox whose values are strings.
 
@@ -248,8 +248,35 @@ private static let whitespace: Set<Unicode.Scalar> = [
     "\u{205F}", "\u{3000}", "\u{FEFF}",
 ]
 
+/// Unicode default full lowercase mapping, plus SpecialCasing's Final_Sigma condition.
+func lowercase(_ s: String) -> String {
+    let scalars = Array(s.unicodeScalars)
+    var out = String.UnicodeScalarView()
+    for (i, u) in scalars.enumerated() {
+        guard u.value == 0x03A3 else {
+            out.append(contentsOf: u.properties.lowercaseMapping.unicodeScalars)
+            continue
+        }
+        // Final_Sigma: a cased letter before and none after, skipping case-ignorables on both sides.
+        var before = false, j = i - 1
+        while j >= 0 {
+            let p = scalars[j].properties
+            if p.isCaseIgnorable { j -= 1; continue }
+            before = p.isCased; break
+        }
+        var after = false, k = i + 1
+        while k < scalars.count {
+            let p = scalars[k].properties
+            if p.isCaseIgnorable { k += 1; continue }
+            after = p.isCased; break
+        }
+        out.append(before && !after ? "\u{03C2}" : "\u{03C3}")
+    }
+    return String(out)
+}
+
 func normalize(_ s: String) -> String {
-    let folded = s.lowercased().decomposedStringWithCompatibilityMapping   // 1. lowercase, 2. NFKD
+    let folded = lowercase(s).decomposedStringWithCompatibilityMapping     // 1. lowercase, 2. NFKD
     var out = String.UnicodeScalarView()
     var pendingSpace = false
     for u in folded.unicodeScalars {
@@ -262,13 +289,13 @@ func normalize(_ s: String) -> String {
 }
 ```
 
-`lowercased()` is Foundation-free and locale-independent, and uses full case mapping, so `İ` becomes `i` + U+0307 as the contract requires. It maps scalar by scalar through `Unicode.Scalar.Properties.lowercaseMapping`, which cannot apply the context-sensitive Final_Sigma rule, so expect `ΟΔΟΣ` to come out `οδοσ` where the contract says `οδος` (§7). The fixture has no sigma case, so the port can pass 30/30 and still differ here; check it on the first toolchain run. If it differs, apply Final_Sigma by hand while lowercasing: only a U+03C3 that came from a U+03A3 in the input, and that is preceded by a cased letter (skipping case-ignorable scalars) and not followed by one, becomes U+03C2, as SpecialCasing.txt defines it. A lowercase sigma already in the input is left alone, which is what V8 does. Add the three cases the contract names (`ΟΔΟΣ`, `İstanbul`, `ẞ`) to the port's own tests. `decomposedStringWithCompatibilityMapping` is Foundation's NFKD and exists on Linux. The whitespace set is spelled out because neither `Character.isWhitespace` nor `\s` in Swift `Regex` matches JavaScript's set: both include U+0085 and exclude U+FEFF. Do not use `CharacterSet.whitespacesAndNewlines` either.
+`lowercaseMapping` is Foundation-free and locale-independent, and is the full case mapping, so `İ` becomes `i` + U+0307 as the contract requires. It is context-free, so it cannot apply the Final_Sigma rule, and neither can `String.lowercased()`, which maps scalar by scalar through it: `ΟΔΟΣ` comes out `οδοσ` where the contract says `οδος` (§7). `lowercase` applies Final_Sigma by hand: only a U+03C3 that came from a U+03A3 in the input, and that is preceded by a cased letter and not followed by one, skipping case-ignorable scalars on both sides, becomes U+03C2, as SpecialCasing.txt defines it. A lowercase sigma already in the input is left alone, which is what V8 does. Do not substitute `(s as NSString).lowercased(with: nil)`: it passes a fixture without abbreviations, but CoreFoundation does not skip the MidLetter and MidNumLet case-ignorables (`.`, `:`, `·`), so `Α.Σ.` comes out `α.σ.` and `ΑΣ.Α` comes out `ας.α`, both unlike V8. `normalize.json` covers this (`ΟΔΟΣ`, `Α.Σ.`, `ΑΣ.Α`), along with `Ὀδυσσεύς`, `İstanbul` and `ẞ`. `decomposedStringWithCompatibilityMapping` is Foundation's NFKD and exists on Linux. The whitespace set is spelled out because neither `Character.isWhitespace` nor `\s` in Swift `Regex` matches JavaScript's set: both include U+0085 and exclude U+FEFF. Do not use `CharacterSet.whitespacesAndNewlines` either.
 
 Run `normalize.json` early. If a case fails on one platform and passes on another, that is Unicode version skew between ICU builds; record it, and if the maintainer agrees, add the case to the port's known-skew list rather than changing the algorithm.
 
 ### Jaro-Winkler (contract §7)
 
-Operate on `Array(a.utf16)` and `Array(b.utf16)`. Not `Array(a)` (grapheme clusters) and not `unicodeScalars`; the fixtures and the emoji example in the contract only hold for UTF-16 code units. Use `[Bool]` match arrays, not sets.
+Operate on `Array(a.utf16)` and `Array(b.utf16)`. Not `Array(a)` (grapheme clusters) and not `unicodeScalars`; the fixtures and the emoji example in the contract only hold for UTF-16 code units. Use `[Bool]` match arrays, not sets. Guard the inner match loop's range: where the reference's `for` runs zero times because the window's start is past its end, a Swift `lo...hi` traps. The `Starbux` ranking scenario reaches it.
 
 ### Numbers and trigonometry (contract §3, §6)
 
@@ -287,7 +314,7 @@ Swift `String` compares, hashes and orders by Unicode canonical equivalence: a p
 
 ### Ranking (contract §8)
 
-Swift's `sort` is documented stable on current toolchains, but add the input index as a final comparator anyway so the guarantee does not depend on the toolchain. Implement the comparators as `(SearchHit, SearchHit) -> Int` and fold them exactly as the reference does; do not translate into a single `<` with early returns, which is where ports usually drop a tie-break.
+Swift's `sort` is documented stable on current toolchains, but add the input index as a final comparator anyway so the guarantee does not depend on the toolchain. Implement the comparators as `(SearchHit, SearchHit) -> Int` and fold them exactly as the reference does; do not translate into a single `<` with early returns, which is where ports usually drop a tie-break. Compare, do not subtract: each comparator returns the sign of a three-way comparison, never a difference. Like the Jaro-Winkler `lo...hi` range above, a literal transcription traps where JavaScript carries on: `byImportance` traps on `Int64` overflow when two importances span more than 2^63 (`Int64.max` against `-1`), and importances are untrusted server data.
 
 ### Caches (contract §10)
 
