@@ -171,7 +171,7 @@ Take the union of every list's `tiles`, remove duplicates, and sort ascending by
 
 For each URL in that order, with at most 8 fetches in flight:
 
-- A tile in the tile cache is used without a request, and is marked recently used.
+- A tile in the tile cache is used without a request, and is marked recently used. Whether a port consults the cache when a worker reaches the URL (the reference) or for every URL before fetching begins affects only the order in which recency is touched, which nothing here pins.
 - Otherwise fetch the URL exactly as given. On a 2xx with a body that decodes to a payload with a `records` array, keep `{ value, uri?, importance? }` per usable record (section 1: a record that is not an object, or has no object `value`, is skipped, and skipping never fails the tile), store the tile in the cache with its size (section 10), and use it. A tile whose every record was skipped is still a used tile with no records.
 - Any other outcome (non-2xx, network error, undecodable body, a payload that is not an object, `records` absent or not an array) marks the tile failed. It is skipped, not retried, and the search continues.
 - If the search was cancelled, a tile failure is not swallowed. The reference rethrows the tile's own error, so a search aborted while a tile with an unparsable body was in flight fails with the JSON error, not the cancellation error; a port may fail with its cancellation error instead (section 14).
@@ -396,7 +396,7 @@ It also reproduces the worked examples in sections 3 and 6, and ports the behavi
 - `overview.test.ts`: the overview flag.
 - `privacy.test.ts`: section 12.
 
-The fake server should validate every request and response it handles against the lexicons where a lexicon validator exists for the language. Where none does, it must at least check the request parameter names, that `bbox` matches `^-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d$`, and that its own responses carry the required fields. It must capture every request (URL, method, headers, body) for the privacy tests, and must be able to go offline (every request fails) and to fail named tiles.
+The fake server should validate every request and response it handles against the lexicons where a lexicon validator exists for the language. Where none does, it must at least check the request parameter names, that `bbox` matches `^-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d$`, and that its own responses carry the required fields. It must capture every request's URL for the privacy tests, and the method, headers and body where the port's transport seam carries them (a seam that carries only a URL fixes those by construction), and must be able to go offline (every request fails) and to fail named tiles.
 
 ## 14. Deliberate freedoms
 
