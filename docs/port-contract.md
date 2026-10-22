@@ -98,6 +98,8 @@ If `minLat == -90` or `maxLat == 90` or `sinHalfLon` is not strictly less than 1
 
 The longitude half-width is the spherical cap's true half-width, not `half / cos(lat)`. At high latitudes the two differ and the simpler formula misses the cap's east and west edges.
 
+Unlike the distances of section 6, these values are snapped, so a last-bit difference can move an edge across a grid line and send a different box. A port writes each expression as the reference does, operation for operation (`sin((half * PI) / 180)`, not `sin(half * (PI / 180))`): the Python port's first transcription sent a different box for 519 of 40,000 circles chosen to put an edge near the grid. What remains is the platform's `sin`, `cos` and `asin` against V8's, which differ in the last bit on some inputs (28 of the same 40,000 against glibc). A port lists that margin in its `CONFORMANCE.md`; it changes which cell is asked for, never what the wire reveals.
+
 ### Snapping
 
 The box that goes on the wire is snapped outward to a 0.01° grid, so that the server learns a cell, not a coordinate. Working in hundredths of a degree as integers:
@@ -173,7 +175,7 @@ For each URL in that order, with at most 8 fetches in flight:
 
 - A tile in the tile cache is used without a request, and is marked recently used. Whether a port consults the cache when a worker reaches the URL (the reference) or for every URL before fetching begins affects only the order in which recency is touched, which nothing here pins.
 - Otherwise fetch the URL exactly as given. On a 2xx with a body that decodes to a payload with a `records` array, keep `{ value, uri?, importance? }` per usable record (section 1: a record that is not an object, or has no object `value`, is skipped, and skipping never fails the tile), store the tile in the cache with its size (section 10), and use it. A tile whose every record was skipped is still a used tile with no records.
-- Any other outcome (non-2xx, network error, undecodable body, a payload that is not an object, `records` absent or not an array) marks the tile failed. It is skipped, not retried, and the search continues.
+- Any other outcome (non-2xx, network error, undecodable body, a payload that is not an object, `records` absent or not an array) marks the tile failed. So does a tile URL that is not an absolute `http` or `https` URL, or that carries credentials (`https://user:pw@host/…`), which the reference's `fetch` refuses before any request: the Fetch standard's `Request` throws on both. It is skipped, not retried, and the search continues.
 - If the search was cancelled, a tile failure is not swallowed. The reference rethrows the tile's own error, so a search aborted while a tile with an unparsable body was in flight fails with the JSON error, not the cancellation error; a port may fail with its cancellation error instead (section 14).
 
 The result's `tiles.fetched` is the number of tiles used, from cache or network. `tiles.failed` is the number that failed. `complete` is `failed == 0`.
