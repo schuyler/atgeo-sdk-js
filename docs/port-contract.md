@@ -1,6 +1,6 @@
 # Port contract
 
-What a port of `@atgeo/client` to another language must do to be the same client. The Swift and Kotlin specs ([swift-sdk-spec.md](swift-sdk-spec.md), [kotlin-sdk-spec.md](kotlin-sdk-spec.md)) describe each port's API, packaging and idioms, and point here for behaviour, so that the three SDKs can't drift apart on what a search returns.
+What a port of `@atgeo/client` to another language must do to be the same client. The port specs ([swift-sdk-spec.md](swift-sdk-spec.md), [kotlin-sdk-spec.md](kotlin-sdk-spec.md), [python-sdk-spec.md](python-sdk-spec.md), [rust-sdk-spec.md](rust-sdk-spec.md)) describe each port's API, packaging and idioms, and point here for behaviour, so that the SDKs can't drift apart on what a search returns.
 
 The reference is the TypeScript source in `src/` at the commit this document was written against (`8654ea7`). Where this document and the source disagree, the source wins and this document has a bug, except for the reference deviations listed in [section 16](#16-known-reference-deviations), where the behaviour stated here is the contract. The fixtures in `fixtures/` and the lexicons in `test/lexicon/` are the executable half of this contract; see [Conformance](#conformance).
 
@@ -426,12 +426,12 @@ A port must not:
 
 ## 15. Out of scope for a first port
 
-Carried over from the reference as-is, and open for all three SDKs together rather than one port:
+Carried over from the reference as-is, and open for all the SDKs together rather than one port:
 
 - A disk cache. The HTTP layer is the seam: an app can supply one that caches, at the cost of the no-persistence default.
 - A lower default cache budget on phones. 50 MiB stays, per the maintainer's decision; a port exposes the option and keeps the default. Measured on the Kotlin port, a parsed tile takes 6.9 times its body size on HotSpot and 5.1 times on ART, so a port that caches parsed tiles against a body-size budget holds 250 to 350 MB when full; the Kotlin port caches bodies instead and keeps only the latest search's tiles parsed (section 10), which makes the budget close to its heap cost. The JavaScript and Swift ports have not been measured.
 - Coalescing of duplicate in-flight requests.
-- Restricting tile URLs. The server names the tile URLs and the client fetches them as given, so a compromised server can send a client anywhere. Section 12 covers what the client sends, not where. A port may want to refuse tile URLs that are not `https`, or that are off the server's host; none of the three SDKs does yet, and it is a decision for all of them together.
+- Restricting tile URLs. The server names the tile URLs and the client fetches them as given, so a compromised server can send a client anywhere. Section 12 covers what the client sends, not where. A port may want to refuse tile URLs that are not `https`, or that are off the server's host; none of the SDKs does yet, and it is a decision for all of them together.
 
 ## 16. Known reference deviations
 

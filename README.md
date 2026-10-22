@@ -184,7 +184,7 @@ There are more scripts in `package.json`, including a browser smoke test and an 
 - `normalize.json` and `jaro-winkler.json` are input/output pairs that a port must match exactly.
 - `ranking-scenarios.json` describes regions, text, and records, and asserts which places land in the top K. It checks membership, not exact order, since the weights are likely to change. Each record is `{ value, importance }`: `value` is an `org.atgeo.place` with an `origin`, and `importance` is an integer, as on the wire. The expectations name places by `origin`.
 
-`docs/port-contract.md` is the language-neutral statement of what this client does, written for ports; `docs/swift-sdk-spec.md` and `docs/kotlin-sdk-spec.md` are the specifications for the Swift and Kotlin ports.
+`docs/port-contract.md` is the language-neutral statement of what this client does, written for ports; `docs/swift-sdk-spec.md` and `docs/kotlin-sdk-spec.md` are the specifications for the Swift and Kotlin ports, and `docs/python-sdk-spec.md` and `docs/rust-sdk-spec.md` the proposed ones for Python and Rust.
 
 `test/lexicon/` holds copies of the wire contract's lexicon files, taken from garganorn at the commit named in `test/lexicon/SOURCE`. The test suite's fake server validates every request and response against them, so a test can't pass on a response the real server would never send.
 
