@@ -8,8 +8,8 @@ Status: proposal. Nothing here has been built. The recipes in section 6 were run
 
 - Same results as the TypeScript client for the same server answers, verified by the shared fixtures.
 - Same privacy properties: search text and precise coordinates never leave the device.
-- Idiomatic Rust: an async client that runs on any executor because it has none of its own and spawns nothing, and a blocking client for code without one, with the same methods and results; owned result types; one error enum; a client that is `Send + Sync` and meant to be shared.
-- A small dependency tree, and nothing for HTTP unless the app asks for the default transports.
+- Idiomatic Rust: an async client that runs on any executor because it has none of its own and spawns nothing (its default transport, reqwest, does need Tokio), and a blocking client for code without one, with the same methods and results; owned result types; one error enum; a client that is `Send + Sync` and meant to be shared.
+- A small dependency tree: 13 crates for the core, with the default transports behind features.
 
 Non-goals for the first release: `wasm32` (the JS client serves browsers), persistence, `no_std`, C or UniFFI bindings, and a typed `Place` model.
 
@@ -44,7 +44,29 @@ CONFORMANCE.md        where this port reads malformed input differently from the
 deny.toml             cargo-deny policy: permissive licences only, no known advisories
 ```
 
-CRATE-TOOLCHAIN
+Edition 2024, `rust-version = "1.85"`. 1.85 is the floor because edition 2024 needs it and so do the current reqwest (0.13), ureq (3.5) and tokio (1.54); the transport trait alone needs only 1.75 (return-position `impl Trait` in traits, measured: it fails on 1.74.1). A trap waits under that floor: with the newest versions, reqwest → `url` → `idna` resolves `icu_*` 2.4, which needs rustc 1.88. Cargo's MSRV-aware resolver, the default under edition 2024, honours `rust-version` and picks `icu_*` 2.1 instead, and the whole graph then builds on 1.85.0 (measured). CI's MSRV job therefore resolves its own lockfile with the 1.85 toolchain rather than reusing one made by stable.
+
+```toml
+[dependencies]
+serde_json = "1"
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+unicode-normalization = "0.1.26"
+unicode-properties = { version = "0.1.4", default-features = false, features = ["general-category"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "gzip"], optional = true }
+ureq = { version = "3.5", default-features = false, features = ["rustls", "platform-verifier"], optional = true }
+flate2 = { version = "1", optional = true }
+serde = { version = "1", features = ["derive", "rc"], optional = true }
+
+[features]
+default = ["reqwest"]
+reqwest = ["dep:reqwest"]                   # the async client's default transport
+blocking = ["dep:ureq", "dep:flate2"]       # blocking::AtgeoClient and its default transport
+serde = ["dep:serde"]
+```
+
+The core (`serde_json`, `futures-util` with only `alloc`, the two Unicode crates) is 13 crates. reqwest with `rustls` and `gzip` brings the build to 91, and everything together to about 103; the blocking transport alone is about 30 (all measured with `cargo tree`). reqwest's defaults are turned off to drop `http2`, `charset` and `system-proxy`, none of which the client needs; an app that wants HTTP/2 passes its own `reqwest::Client` (section 4). reqwest 0.13's `rustls` feature uses the aws-lc-rs crypto provider, a C build, with the operating system's root certificates; its `rustls-no-provider` alternative was tried with `ring` and panics at `Client::builder().build()` unless a process-wide provider is installed, which a library must not do, so the spec takes the default provider. ureq's `rustls` uses `ring`, and `platform-verifier` makes it trust the operating system's roots like reqwest does rather than a bundled Mozilla list (checked against places.atgeo.org). ureq is built without its `gzip` feature; section 4 says why. Nothing pulls in OpenSSL. Test scope: `tokio` (with `rt`, `macros` and `test-util`) and nothing else.
+
+Licence: BSD-3-Clause, the same `LICENSE` file as the other repositories. Distribution during beta mirrors the JS client: not on crates.io. Depend on the repository pinned to a commit, `atgeo = { git = "https://github.com/schuyler/atgeo-sdk-rust", rev = "<sha>" }`; the API is still moving. Publish to crates.io as `atgeo` once the wire contract settles.
 
 ## 3. Public API
 
@@ -58,10 +80,10 @@ impl AtgeoClient<ReqwestTransport> {
     pub fn new() -> Self;                                         // default server, ReqwestTransport::new()
 }
 
-impl<T: HttpTransport> AtgeoClient<T> {
-    pub const DEFAULT_SERVER: &'static str = "https://places.atgeo.org";
-    pub const DEFAULT_CACHE_BUDGET_BYTES: u64 = 50 * 1024 * 1024;
+pub const DEFAULT_SERVER: &str = "https://places.atgeo.org";
+pub const DEFAULT_CACHE_BUDGET_BYTES: u64 = 50 * 1024 * 1024;
 
+impl<T: HttpTransport> AtgeoClient<T> {
     pub fn with_transport(transport: T) -> Self;
     pub fn server(self, server: impl Into<String>) -> Self;       // trailing slashes stripped (contract §2)
     pub fn cache_budget_bytes(self, bytes: u64) -> Self;
@@ -74,7 +96,7 @@ impl<T: HttpTransport> AtgeoClient<T> {
 }
 ```
 
-`blocking::AtgeoClient<T = blocking::UreqTransport>` has the same constructors and the same four methods without `async`, over `blocking::HttpTransport`. Configuration is by value on the new client (`AtgeoClient::new().server("http://localhost:8000")`) rather than through a separate builder type: there are three options, and every one of them must be set before the first call, which taking `self` by value enforces. `AtgeoClient` is `Send + Sync` whenever `T` is; share it by reference or in an `Arc`, one per server for the life of the process.
+`blocking::AtgeoClient<T = blocking::UreqTransport>` has the same constructors and the same four methods without `async`, over `blocking::HttpTransport`. Configuration is by value on the new client (`AtgeoClient::new().server("http://localhost:8000")`) rather than through a separate builder type: there are three options, all of them settings for a client nobody shares yet, and taking `self` by value means a client behind `&` or an `Arc` cannot be reconfigured under its callers. `AtgeoClient` is `Send + Sync` whenever `T` is; share it by reference or in an `Arc`, one per server for the life of the process.
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -195,7 +217,7 @@ pub struct DecodingError { /* message; source: Option<serde_json::Error> */ }
 pub enum ArgumentError { InvalidRegion(&'static str), SimilarityRequiresText }
 ```
 
-One enum, as Rust callers expect, with a variant per kind the contract keeps apart: the server's refusals (whose `code` stays the server's namespace), unusable answers, transport failures, and argument errors. `Display`, `std::error::Error` and `source()` are written by hand rather than with `thiserror`, which would be the crate's only proc-macro dependency for about forty lines. `Error::Transport` holds the transport's own error, which is as close to "unwrapped" (contract §1) as a typed `Result` gets: `err.downcast_ref::<reqwest::Error>()` reaches it. Argument errors are returned, not panicked: a region is often computed from data, and a panic in a library over input it could reject is wrong. Since an `async fn` body does not run until polled, the error appears on the first poll; either way, no request is made.
+One enum, as Rust callers expect, with a variant per kind the contract keeps apart: the server's refusals (whose `code` stays the server's namespace), unusable answers, transport failures, and argument errors. `Display`, `std::error::Error` and `source()` are written by hand rather than with `thiserror`, which would add a proc-macro to every build to save about forty lines. `Error::Transport` holds the transport's own error, which is as close to "unwrapped" (contract §1) as a typed `Result` gets: `err.downcast_ref::<reqwest::Error>()` reaches it. Argument errors are returned, not panicked: a region is often computed from data, and a panic in a library over input it could reject is wrong. Since an `async fn` body does not run until polled, the error appears on the first poll; either way, no request is made.
 
 ## 4. Transport
 
@@ -219,11 +241,101 @@ pub mod blocking {
 }
 ```
 
-TRANSPORT-DETAILS
+The trait is not object-safe (a `Box<dyn HttpTransport>` is error E0038, measured), which is why the client is generic over its transport rather than holding a trait object. An implementor writes `async fn get(&self, url: &str) -> Result<HttpResponse, BoxError>` in its `impl`, and the compiler checks the `Send` bound there: an implementation holding an `Rc` across an `.await` is rejected at the `impl`, not at some distant call site. A trait declared with a plain `async fn` instead could not promise that the client's own futures are `Send`, and `tokio::spawn` would refuse them. With the bound, `tokio::spawn(async move { client.search_places(..).await })` compiles for any `T: HttpTransport + 'static` behind an `Arc` (measured).
+
+Both transports return an `HttpResponse` for every status and never produce `Error::Atgeo`. The conversion of a non-2xx into `Error::Atgeo` happens above the seam, in `xrpc.rs` and the tile loop, so that it applies to the fake server's responses as much as to the real ones: the body is parsed with `parse_body` (section 6), `error` and `message` are each read only if they are strings, and anything missing falls back to `HttpError` and `HTTP {status}` (contract §1, §16). The body is always in hand before the status is judged. XRPC URLs are built by percent-encoding each query value over everything but the RFC 3986 unreserved characters (`A-Z a-z 0-9 - . _ ~`), which encodes `+` as `%2B` and a space as `%20`, as the contract allows (§1); the encoder is ten lines, so the core needs no `url` or `percent-encoding` dependency. The tile cache measures a tile as `body.len()`, the decoded length.
+
+### `ReqwestTransport` (feature `reqwest`)
+
+```rust
+pub struct ReqwestTransport { /* client: reqwest::Client, max_body_bytes: usize */ }
+impl ReqwestTransport {
+    pub fn new() -> Self;                                   // the client below; 32 MiB cap
+    pub fn with_client(client: reqwest::Client) -> Self;    // an app's own client (HTTP/2, proxies, its own TLS)
+    pub fn max_body_bytes(self, bytes: usize) -> Self;
+}
+```
+
+`new()` builds `reqwest::Client::builder().referer(false).connect_timeout(10 s).read_timeout(30 s)` and sends `Accept: application/json` on each request. Measured against a loopback server with reqwest 0.13.5:
+
+- **reqwest needs Tokio.** It spawns a Tokio task per connection, and run under another executor (`futures::executor::block_on`) it panics: "there is no reactor running, must be called from the context of a Tokio 1.x runtime". The client is runtime-agnostic; this transport is not. An app on another runtime supplies a transport built on its own HTTP stack.
+- **Referer.** By default reqwest adds a `Referer` header on every redirect hop carrying the previous URL in full, query included, to another host too. A redirected getTiles call would hand the snapped bbox, dataset and collection to whatever host the redirect names, which contract §12 rules out. `referer(false)` removes it, and an app's own client passed to `with_client` must set it too.
+- Headers: `accept: application/json`, `accept-encoding: gzip` and `host`, and nothing else (no `user-agent`), identical on every request, a 404 included.
+- Every status is `Ok`: 404, 429, 500 and 503 came back with their bodies, each from exactly one request. reqwest never retries.
+- Redirects: followed up to 10 hops, 303, 307 and 308 included, which meets the contract's "at least same-scheme" (§1). https → http is followed too; `https_only(true)` would refuse it, and like restricting tile URLs (contract §15) that is a decision for every SDK together. Authorization and cookie headers are dropped on a change of host.
+- gzip: decoded automatically, with `content-encoding` and `content-length` removed afterwards. An empty body labelled gzip is `Ok` and empty.
+- The body cap (contract §14) has to count decoded bytes as they arrive. `Response::bytes()` returned all 64 MiB of a 65 KB gzip body and peaked at 129 MiB of heap, twice the decoded size. Read chunks instead, which reqwest yields decoded and at most 4 KiB at a time:
+
+  ```rust
+  let mut body = Vec::new();
+  while let Some(chunk) = response.chunk().await? {
+      if chunk.len() > max - body.len() { return Err("response body exceeds max_body_bytes".into()); }
+      body.extend_from_slice(&chunk);
+  }
+  ```
+
+  With a 32 MiB cap that stops the same body at exactly 33,554,432 bytes, with 32 MiB of heap. Deflate expands at most about 1030 to 1, so a body that decodes past 32 MiB is at least 32 KB on the wire.
+- Timeouts: `read_timeout` is a per-read idle timer (a 2-second body trickling every 100 ms succeeds under a 300 ms timer; a stall fails at 303 ms), and there is no total, as in the Kotlin port. A body-phase timeout reports both `is_timeout()` and `is_decode()`; it is a transport error either way, a failed tile inside a search.
+- Proxies: `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` are honoured even with `system-proxy` off; that feature only adds the macOS and Windows system settings. No cookie jar and no cache, so the contract's no-persistence default (§10, §14) holds.
+- Cancellation: dropping the future mid-body, or while waiting for headers, closed the socket within 0.3 ms on a multi-threaded runtime. The socket belongs to a task reqwest spawned, so on a current-thread runtime it closes when that runtime next runs: in the probe, not at all during 500 ms idle, then within 0.5 ms of the runtime being driven again.
+
+### `blocking::UreqTransport` (feature `blocking`)
+
+```rust
+pub struct UreqTransport { /* agent: ureq::Agent, max_body_bytes: usize */ }
+impl UreqTransport {
+    pub fn new() -> Self;
+    pub fn with_agent(agent: ureq::Agent) -> Self;
+    pub fn max_body_bytes(self, bytes: usize) -> Self;
+}
+```
+
+`new()` builds `Agent::config_builder().http_status_as_error(false).timeout_connect(Some(10 s)).timeout_per_read(Some(30 s))` with the platform verifier as its root store (`TlsConfig::builder().root_certs(RootCerts::PlatformVerifier)`), and sends `Accept: application/json` and `Accept-Encoding: gzip` itself. Measured with ureq 3.5.0:
+
+- By default a non-2xx is `Err(StatusCode(404))` with the body thrown away, which would lose the server's error code. `http_status_as_error(false)` makes every status `Ok` with its body.
+- ureq's own gzip support is not used, for three reasons. Its body limit (`with_config().limit(n)`) counts wire bytes, not decoded bytes: `limit(32 MiB)` returned all 64 MiB of the 65 KB gzip body. `read_to_vec()` applies a silent 10 MiB default limit. And it fails an empty body labelled gzip with `Decompress("gzip", UnexpectedEof)`, where reqwest and the reference read it as empty. So the crate is built without ureq's `gzip` feature, the transport asks for gzip itself, and when the response's `Content-Encoding` is `gzip` and the body is not empty (a `fill_buf` check), it decodes through `flate2::bufread::GzDecoder`, reading into a fixed 64 KiB buffer and failing once the decoded total passes the cap. That reads the tile identically, returns an empty gzip body as empty, and stops the 65 KB body at the cap with 32 MiB of heap. (`take(max + 1).read_to_end` peaks at twice the cap; avoid it.)
+- Headers: `accept`, `accept-encoding: gzip`, `user-agent: ureq/3.5.0` and `host`, identical on every request.
+- Redirects: followed up to 10 hops, with no `Referer` added; https → http is followed, as with reqwest.
+- Timeouts: `timeout_per_read` is a per-read idle timer (the 100 ms trickle succeeds under 300 ms; a stall fails at 320 ms), `timeout_connect` fired at its 300 ms in the probe, and the totals (`timeout_global`, `timeout_recv_body`) are left unset, as with reqwest.
+- Proxies: on by default, but not as reqwest reads them: ureq takes the first of `ALL_PROXY`, `HTTPS_PROXY` and `HTTP_PROXY` that is set and uses it for every scheme, tunnelling with CONNECT, and honours `NO_PROXY`. No cookies, no cache, no retries.
+- One `Agent` shared by the eight worker threads pooled its connections: 40 requests went over 8 connections with 8 in flight at peak.
+- Cargo unifies features, so another crate in the app can switch ureq's `gzip` feature back on. ureq then decodes gzip itself and removes `Content-Encoding`, and the transport, which decodes only when that header is still there, reads the already-decoded stream through the same 64 KiB loop, so the cap on decoded bytes still holds. What changes is ureq's own handling of an empty body labelled gzip, which then fails the tile; `CONFORMANCE.md` notes it.
+
+Any transport an app supplies must disable its own response cache, or accept that the contract's no-persistence default (§10, §14) no longer holds, and should not send a `Referer`.
 
 ## 5. Concurrency and cancellation
 
-CONCURRENCY-DETAILS
+Both clients drive the same engine. The engine owns the caches and does everything that is not I/O: it validates and plans a search (the bbox strings, the tile-list keys and which of them are cached), turns a getTiles response into a tile list, parses and stores a tile, and assembles the result (§4.5 to §4.9). Each driver supplies the requests and the concurrency.
+
+The async driver, inside the caller's future and spawning nothing:
+
+- Validate and plan, so that an invalid region returns `Error::InvalidArgument` on the first poll with no request made.
+- The one or two tile lists go through `futures_util::future::try_join_all`. A cached list resolves without a request; the first error returns at once and drops the other future, cancelling its request (allowed, §14). A failed getTiles caches nothing.
+- The tiles are fetched by the reference's `mapLimit`, transcribed as `min(8, n)` worker futures joined with `join_all`, each claiming the next index from a shared `AtomicUsize`:
+
+  ```rust
+  let next = AtomicUsize::new(0);
+  let workers = (0..n.min(8)).map(|_| async {
+      let mut done = Vec::new();
+      loop {
+          let i = next.fetch_add(1, Ordering::Relaxed);
+          if i >= n { return done; }
+          done.push((i, self.tile(&urls[i]).await));   // Some(records) or None for a failed tile
+      }
+  });
+  let slots = join_all(workers).await;
+  ```
+
+  Measured with a delaying transport, for n of 1, 3, 7, 8, 9, 20 and 100, on current-thread and multi-threaded Tokio: the peak in flight was exactly `min(8, n)`, and requests started in index order every time. `AtomicUsize` rather than `Cell` is what keeps the future `Send`. `tile(url)` checks the tile cache under the mutex when a worker reaches the URL, as the reference does, so a cached tile never becomes a request and recency is touched in the reference's order; otherwise it awaits the transport, parses the body, and stores the tile under the mutex. A transport error or an unusable body is `None`, never an `Err`, and the search goes on (§4.4). `fetched` is the count of `Some` slots and `failed` the rest, so nothing is counted across workers.
+- Assemble.
+
+Cancellation is dropping the future (contract §11): every request future inside it is dropped with it, and with the fake transport the 8 in-flight requests were dropped and no new one started, on both runtimes. Whether the socket closes at once is the transport's business (section 4). The search's own cancellation therefore needs no rule in the tile loop, unlike Kotlin's: a dropped future runs no more code, so there is nothing to tell apart from a tile's failure. A search answered entirely from cache completes on its first poll, which the reference does and contract §11 asks for.
+
+The CPU work runs on the thread that polls the future. Measured on the Philadelphia tiles in release builds: `serde_json` parses 112 to 127 MB/s, about 12 ms for a 2 MB tile; scoring all 15,849 records takes 43 ms for `Starbux` and 97 ms for `Reading Terminal Market`, and locating them 16 ms. `join_all` polls every worker that is ready in the same poll, so when eight large tiles arrive together one poll parses all eight: 141 ms in the worst probe; with real reqwest, gzip and parsing over the 42 tiles, the longest single poll was 56 ms. That is more than Tokio's guidance for time between `.await`s, and it is what reqwest's own `.json()` does too. The library does not move the work to another thread itself, because doing so means `spawn_blocking`, which ties the crate to Tokio. A server that cannot afford the stall calls the blocking client from `tokio::task::spawn_blocking`, which puts the parsing, the ranking and the requests themselves on the blocking pool.
+
+The blocking driver runs the same steps on threads, inside `std::thread::scope`: the one or two tile lists on their own scoped threads (both are joined before the search returns, since a blocking request cannot be cancelled, so a failed getTiles still waits for its sibling, bounded by the timeouts), then `min(8, n)` scoped worker threads claiming indices from the same kind of `AtomicUsize`, each returning its `(index, slot)` pairs through its join handle. Spawning eight threads costs microseconds next to a request. The blocking client has no cancellation beyond the transport's timeouts (section 8). A panic in a worker thread propagates out of the scope, failing the search rather than passing for one bad tile.
+
+The caches' mutexes are never held across an `.await`, a transport call, or a parse.
 
 ## 6. Implementing the contract in Rust
 
@@ -309,7 +421,7 @@ fn parse_body(body: &[u8]) -> Result<Value, serde_json::Error> {
 }
 ```
 
-`JSON.parse` sees text that `response.text()` produced, which drops a leading byte-order mark and turns invalid UTF-8 into U+FFFD. `serde_json::from_slice` fails on both, so decode leniently first. Verified margins for `CONFORMANCE.md`, all from malformed input, each of which makes a tile fail where the reference carries on: a number literal that overflows a double (`1e400`) is an error, where `JSON.parse` reads Infinity; a lone surrogate escape (`"\ud800"`) is an error, since a Rust `String` cannot hold one; nesting deeper than 127 arrays or objects is an error (serde_json's recursion limit). Where the two agree: `1e-400` is 0, the last of duplicate keys wins, `-0` stays negative zero, and an integer past 64 bits becomes the nearest double. FLOAT-ROUNDTRIP
+`JSON.parse` sees text that `response.text()` produced, which drops a leading byte-order mark and turns invalid UTF-8 into U+FFFD. `serde_json::from_slice` fails on both, so decode leniently first. Verified margins for `CONFORMANCE.md`, all from malformed input, each of which makes a tile fail where the reference carries on: a number literal that overflows a double (`1e400`) is an error, where `JSON.parse` reads Infinity; a lone surrogate escape (`"\ud800"`) is an error, since a Rust `String` cannot hold one; nesting deeper than 127 arrays or objects is an error (serde_json's recursion limit). Where the two agree: `1e-400` is 0, the last of duplicate keys wins, `-0` stays negative zero, and an integer past 64 bits becomes the nearest double. One more margin applies only to coordinates sent as JSON numbers, which no garganorn tile contains (its coordinates are strings; the Philadelphia tiles hold 31,698 numbers, every one an integer, and `str::parse::<f64>` agrees with `serde_json` on all 108,862 numeric strings in them): without `float_roundtrip`, serde_json rounds some decimal literals of 17 or more significant digits to a neighbouring double. That is within the contract's 1e-6 tolerance for distances and is listed in `CONFORMANCE.md`; enabling the feature would impose it on every app (Place values, section 3).
 
 ### String comparison (contract §4.3, §8, §10)
 
@@ -325,7 +437,7 @@ fn parse_body(body: &[u8]) -> Result<Value, serde_json::Error> {
 
 ### Caches (contract §10)
 
-`TileCache` holds each tile's body as served, not its parsed records, with the keys (§4.6) of its usable records for the `get_place` scan; a tile counts as `body.len()`. PARSED-MEMORY `ParsedTiles` keeps the parsed records of the latest search's tiles outside the budget, as contract §10 allows, as `Arc<[TileRecord]>` keyed by URL with the cache entry's generation number, so that a search uses a memoized tile only while `TileCache` still holds that same entry; fetching and recency are exactly as without the memo.
+`TileCache` holds each tile's body as served, not its parsed records, with the keys (§4.6) of its usable records for the `get_place` scan; a tile counts as `body.len()`. Parsed into `serde_json::Value`s, a tile takes 6.0 times its body size (5.9 to 6.2 per file, measured with a counting allocator over the 42 Philadelphia tiles: 211 MB for 35 MB of bodies), so a cache of parsed tiles against a body-size budget would hold about 300 MB when the default 50 MiB is full. `ParsedTiles` keeps the parsed records of the latest search's tiles outside the budget, as contract §10 allows, as `Arc<[TileRecord]>` keyed by URL with the cache entry's generation number, so that a search uses a memoized tile only while `TileCache` still holds that same entry; fetching and recency are exactly as without the memo.
 
 There is no ordered map in the standard library, and the cache does not need a crate for one. `TileCache` is a `HashMap<String, Entry>` where each entry carries a recency tick from a counter, plus a `BTreeMap<u64, String>` from tick to URL: a read moves the entry to a fresh tick, an insert subtracts a replaced entry's size, and eviction takes `pop_first()` until the total is within budget, which lets one large tile evict several. `find(key)` iterates the `HashMap` without touching ticks (contract §10 wants the scan not to count as use) and keeps the lowest URL by code units whose key set holds the key.
 
@@ -370,9 +482,9 @@ CI: GitHub Actions. `cargo fmt --check`; `cargo clippy --all-targets --all-featu
 | Importance type | `i64`, read through `f64` | contract §1 |
 | Errors | one `#[non_exhaustive]` enum, hand-written impls | one `Result` type for callers; no proc-macro dependency |
 | Result types | `#[non_exhaustive]` | fields can be added in a minor release |
-| Tile cache | bodies and key sets, plus the latest search's parsed tiles; LRU from a `HashMap` and a `BTreeMap` of ticks | MEMO-WHY; no LRU crate |
+| Tile cache | bodies and key sets, plus the latest search's parsed tiles; LRU from a `HashMap` and a `BTreeMap` of ticks | a parsed tile is 6 times its body; no LRU crate |
 | TTL clock | `SystemTime` | `Instant` may stop while a machine sleeps |
-| MSRV | MSRV-ROW |
+| MSRV | 1.85, edition 2024 | what reqwest, ureq and tokio already require; the MSRV-aware resolver keeps `icu` within it |
 | Beta distribution | git dependency pinned to a commit | free, no publishing step, pins like the JS client |
 
 Open:
@@ -380,4 +492,5 @@ Open:
 1. `wasm32`. The transport trait requires `Send` futures, which reqwest's browser backend does not give, and the JS client already serves browsers. A `?Send` variant of the trait for `wasm32` is possible if a Rust-in-the-browser app turns up.
 2. Cancellation for the blocking client. It has none beyond the transport's timeouts. A cancellation token argument is easy to add and not needed until someone asks.
 3. Reserving `atgeo` on crates.io before the beta ends. A name nobody holds can be taken; publishing a placeholder is the maintainer's call.
-4. The default cache budget, with the size of the parsed-tile memo beside it (contract §15).
+4. The size of the parsed-tile memo. It holds the latest search's tiles parsed, outside the budget: 211 MB for the 35 MB Philadelphia set, at 6 times the body size. That is the price of a free repeat search (re-parsing those tiles takes about 0.3 s); a cap measured in body bytes would bound it. Revisit with an app's numbers, together with the default budget (contract §15).
+5. An offload hook for the async client's CPU work (section 5), for apps that want it off the executor without switching to the blocking client. Not until someone asks; it would mean a spawner trait, or a Tokio feature.
