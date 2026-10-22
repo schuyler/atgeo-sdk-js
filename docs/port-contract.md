@@ -262,7 +262,7 @@ A port is not expected to be bit-identical in trigonometry across runtimes; agre
 3. Remove every scalar whose general category is Mn (nonspacing mark). This strips the accents NFKD split off: `café` → `cafe`, and the dot from `İ`, giving `istanbul`. Mc and Me marks stay (`a` + U+20DD is unchanged).
 4. Replace every run of one or more whitespace scalars with a single U+0020, then strip leading and trailing whitespace. The whitespace set is exactly JavaScript's `\s`: U+0009, U+000A, U+000B, U+000C, U+000D, U+0020, U+00A0, U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF. U+200B (zero-width space) and U+0085 are not in it. Ideographic space counts, so `　東京　` → `東京`.
 
-`fixtures/normalize.json` must pass exactly. Runtimes disagree on Unicode versions at the margins; the fixture is the arbiter. It does not yet cover the final sigma, `İ` and `ẞ` cases above, so until it does a port tests those three itself; the Swift spec names the runtime that is expected to differ.
+`fixtures/normalize.json` must pass exactly. Runtimes disagree on Unicode versions at the margins; the fixture is the arbiter. It covers the final sigma, `İ` and `ẞ` cases above, and two abbreviations (`Α.Σ.` → `α.ς.`, `ΑΣ.Α` → `ασ.α`) that pin Final_Sigma's skipping of case-ignorable punctuation on both sides of the sigma. Swift's standard library does not apply Final_Sigma; the Swift spec says how that port does.
 
 The search text and every candidate name are normalized with this function. Empty text after normalization means no text: no scoring, no filtering, and `sort = similarity` is an error.
 
@@ -381,7 +381,7 @@ These are what the client is for, and must be covered by tests against a request
 
 A port vendors, at a pinned atgeo-sdk-js commit recorded in a `SOURCE` file:
 
-- `fixtures/normalize.json` (30 cases, exact match),
+- `fixtures/normalize.json` (36 cases, exact match),
 - `fixtures/jaro-winkler.json` (33 cases, within 5e-7),
 - `fixtures/ranking-scenarios.json` (12 scenarios, membership),
 - `test/lexicon/*.json`, for a fake server that validates its own traffic.
@@ -392,7 +392,7 @@ It also reproduces the worked examples in sections 3 and 6, and ports the behavi
 - `merge.test.ts` and `distance.test.ts`: dedupe, ordering ties, region filtering for both region kinds, seams at ±180 and the poles, determinism.
 - `client.test.ts`: getPlace cache and network paths, describe calls, result shapes, dataset and collection resolution.
 - `transport.test.ts`: failed tiles, typed errors, URL construction.
-- `cache.test.ts`: warm regions, expiry, LRU eviction.
+- `cache.test.ts`: warm regions, expiry, the `getPlace` cache scan. It has no test of LRU eviction or the cache budget; section 10 is the specification for those.
 - `overview.test.ts`: the overview flag.
 - `privacy.test.ts`: section 12.
 
