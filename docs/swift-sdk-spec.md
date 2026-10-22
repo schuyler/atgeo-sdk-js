@@ -175,7 +175,7 @@ Numbers decode as `Double`, which loses integers beyond 2^53 exactly as the Java
 
 `SearchHit.place["name"]?.stringValue` is how an app reads a name. A typed `Place` struct is a reasonable later addition on top of `JSONObject`, not a replacement for it.
 
-Tile records are read from `JSONValue`, not through `Codable`: a record that is not an object, or whose `value` is not an object, is skipped and the tile stays used (contract §4.4); a `uri` that is not a string and an `importance` that is not a number read as `nil`, and a non-integer importance truncates toward zero as `Int64(d.rounded(.towardZero))`, reading as `nil` when outside `Int64`'s range (§1). A `getTiles` body with no `tiles` array has no usable tile list and throws `DecodingError` (§1); entries of `tiles` that are not strings are skipped.
+Tile records are read from `JSONValue`, not through `Codable`: a record that is not an object, or whose `value` is not an object, is skipped and the tile stays used (contract §4.4); a `uri` that is not a string and an `importance` that is not a number read as `nil`, and a non-integer importance truncates toward zero and an out-of-range one reads as `nil`: test `d.isFinite && d.magnitude < 9223372036854775808` before converting, since `Int64(d)` traps on an out-of-range value and `Int64(exactly:)` rejects a fraction (§1). A `getTiles` body with no `tiles` array has no usable tile list and throws `DecodingError` (§1); entries of `tiles` that are not strings are skipped.
 
 ### Errors
 
@@ -272,9 +272,9 @@ Operate on `Array(a.utf16)` and `Array(b.utf16)`. Not `Array(a)` (grapheme clust
 
 ### Numbers and trigonometry (contract §3, §6)
 
-- `Double(someString)` rejects leading whitespace and trailing text; the contract allows that strictness (§5). It accepts `inf`, `infinity` and `nan` in any case, so check `isFinite` after parsing, as the reference does. Accept `.number` and `.string` JSON values; anything else is no location.
+- `Double(someString)` rejects leading whitespace and trailing text; the contract allows that strictness (§5). It accepts `inf`, `infinity` and `nan` in any case, so check `isFinite` after parsing, as the reference does. Accept `.number` and `.string` JSON values; anything else, an array included, is no location (contract §16).
 - `round3`: `(x * 1000).rounded() / 1000`. The default rounding rule is `.toNearestOrAwayFromZero`, which agrees with `Math.round` for the non-negative scores it is applied to.
-- Snapping: `(x * 100).rounded()` for the epsilon test, `.rounded(.down)` and `.rounded(.up)` for floor and ceil. Format with `String(format: "%.2f", units / 100)` after mapping `-0.0` to `0.0`; `%.2f` prints `-0.00` for negative zero.
+- Snapping: `(x * 100).rounded()` for the epsilon test, `.rounded(.down)` and `.rounded(.up)` for floor and ceil. Format with `String(format: "%.2f", Double(units) / 100)`, converting before dividing since `units` is an integer, after mapping `-0.0` to `0.0`; `%.2f` prints `-0.00` for negative zero.
 - Use `Foundation.sin`, `cos`, `asin`, `atan2`, `sqrt`. Compare the worked distance tables to 1e-6 relative, containment exactly.
 
 ### String comparison and equality
