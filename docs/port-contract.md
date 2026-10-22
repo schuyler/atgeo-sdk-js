@@ -36,7 +36,7 @@ For the two describe calls, every field is optional on the way in. A port's type
 
 `value` (a tile record) and `record` (getPlace) are `org.atgeo.place` values and must be surfaced to the caller unmodified: every key, nested value and unknown field as served. Nothing about the schema of a place is assumed beyond what sections 5 and 7 read.
 
-`importance` is a JSON integer on the wire, decoded through a double and range-checked into a signed 64-bit integer, so precision beyond 2^53 is lost exactly as in the reference; a port must not decode the literal exactly, or it would order huge values differently from the other SDKs. A compliant server never sends a non-integer; when one arrives, the reference keeps it as a float and a port whose importance type is integral truncates it toward zero. A number outside the signed 64-bit range is absent. Anything that is not a JSON number, including an array or a string holding one, is absent (section 16). None of this fails the tile.
+`importance` is a JSON integer on the wire, decoded through a double and range-checked into a signed 64-bit integer, so precision beyond 2^53 is lost exactly as in the reference; a port must not decode the literal exactly, or it would order huge values differently from the other SDKs. A compliant server never sends a non-integer; when one arrives, the reference keeps it as a float and a port whose importance type is integral truncates it toward zero. A number whose magnitude is 2^63 or more is absent (the check is symmetric, so exactly -2^63 is absent too, although a signed 64-bit integer could hold it). Anything that is not a JSON number, including an array or a string holding one, is absent (section 16). None of this fails the tile.
 
 ### Errors
 
