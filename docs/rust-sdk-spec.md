@@ -45,7 +45,7 @@ CONFORMANCE.md        where this port reads malformed input differently from the
 deny.toml             cargo-deny policy: permissive licences only, no known advisories
 ```
 
-Edition 2024, `rust-version = "1.85"`. 1.85 is the floor because edition 2024 needs it and so do the current reqwest (0.13), ureq (3.5) and tokio (1.54); the transport trait alone needs only 1.75 (return-position `impl Trait` in traits, measured: it fails on 1.74.1). A trap waits under that floor: with the newest versions, reqwest → `url` → `idna` resolves `icu_*` 2.4, which needs rustc 1.88. Cargo's MSRV-aware resolver, the default under edition 2024, honours `rust-version` and picks `icu_*` 2.1 instead, and the whole graph then builds on 1.85.0 (measured); stable cargo resolves the crate's committed lockfile the same way, and CI builds that lockfile with 1.85. An app resolves its own lockfile, though: an edition-2021 app on cargo 1.85 resolved `icu_provider` 2.4 and failed to build (measured). The README tells apps on 1.85 to 1.87 to set `resolver = "3"` or run `cargo update -p icu_provider --precise 2.1.1`, and a CI job builds such an app on 1.85.
+Edition 2024, `rust-version = "1.85"`. 1.85 is the floor because edition 2024 needs it and so do the current reqwest (0.13), ureq (3.5) and tokio (1.54); the transport trait alone needs only 1.75 (return-position `impl Trait` in traits, measured: it fails on 1.74.1). A trap waits under that floor: with the newest versions, reqwest → `url` → `idna` resolves `icu_*` 2.4, which needs rustc 1.88. Cargo's MSRV-aware resolver, the default under edition 2024, honours `rust-version` and picks `icu_*` 2.1 instead, and the whole graph then builds on 1.85.0 (measured); stable cargo resolves the crate's committed lockfile the same way, and CI builds that lockfile with 1.85. An app resolves its own lockfile, though: an edition-2021 app on cargo 1.85 resolved `icu_provider` 2.4 and failed to build (measured). The README tells apps on 1.85 to 1.87 to set `resolver = "3"`, and a CI job builds such an app on 1.85. Pinning `icu_provider` alone does not work: `cargo update -p icu_provider --precise 2.1.1` fails, since `icu_normalizer` 2.4 requires `icu_provider` 2.4 (found in the port's review), and `icu_*` 2.2 and `idna_adapter` 1.2.2 already need 1.86.
 
 ```toml
 [dependencies]
@@ -66,7 +66,7 @@ ureq = ["blocking", "dep:ureq", "dep:flate2"]   # blocking::UreqTransport, the b
 serde = ["dep:serde"]
 
 [dev-dependencies]
-tokio = { version = "1.54", features = ["rt", "rt-multi-thread", "macros", "test-util"] }
+tokio = { version = "1.54", features = ["rt", "rt-multi-thread", "macros", "test-util", "time"] }
 flate2 = "1"
 
 [[example]]
@@ -523,7 +523,7 @@ The caches sit behind `std::sync::Mutex`es that are never held across an `.await
 
 ## 7. Testing
 
-`cargo test`. Integration tests in `tests/` are a separate crate and see only the public API, so the tests of internals are unit tests beside the code, in `#[cfg(test)]` modules: `text.rs` runs `normalize.json` and `jaro-winkler.json` and ports `normalize.test.ts` and `similarity.test.ts`; `locations.rs` ports `distance.test.ts` and the contract's §6 table; `wire.rs` covers the lenient readers, `prepare_url` and the redirect rule; `cache.rs` covers the caches. They read the fixtures with `include_str!("../tests/fixtures/…")`.
+`cargo test`. Integration tests in `tests/` are a separate crate and see only the public API, so the tests of internals are unit tests beside the code, in `#[cfg(test)]` modules: `text.rs` runs `normalize.json` and `jaro-winkler.json` and ports `normalize.test.ts` and `similarity.test.ts`; `locations.rs` ports `distance.test.ts` and the contract's §6 table; `wire.rs` covers the lenient readers; `xrpc.rs` covers the query encoding, `prepare_url` and the redirect rule; `cache.rs` covers the caches. They read the fixtures with `include_str!("../tests/fixtures/…")`.
 
 Contract §13 notes that the reference has no test of LRU eviction or of the budget, so §10 is the specification and `cache.rs` tests it directly: recency order after reads; one insert evicting several entries; a tile larger than the budget evicting every other tile and then itself; a replacement subtracting the old size; `find` choosing the lowest URL by code units on a pair where `str` order disagrees, and leaving recency alone; a memoized tile used only while its cache entry has the same generation; and a tile list fresh at `set + 3,599,999` ms and missing at exactly `set + 3,600,000`.
 
