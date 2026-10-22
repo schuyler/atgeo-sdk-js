@@ -171,7 +171,7 @@ extension JSONValue {
 }
 ```
 
-Numbers decode as `Double`, which loses integers beyond 2^53 exactly as the JavaScript client does. Key order is not preserved, which the contract does not require. The `Codable` conformance must try `Bool` before `Double` and `Double` before `String` when decoding a single value, and must encode `.null` as JSON null, not as a missing key.
+Numbers decode as `Double`, which loses integers beyond 2^53 exactly as the JavaScript client does. Key order is not preserved, which the contract does not require. The `Codable` conformance tries `String` first when decoding a single value, then `Bool` before `Double`, so that `true` is not read as 1. String goes first because each failed `try?` throws and discards an error, and most values are strings; `JSONDecoder` reads neither a number nor a boolean as a `String`, which the port's tests check on every CI platform (Swift PR #5). It must encode `.null` as JSON null, not as a missing key.
 
 `SearchHit.place["name"]?.stringValue` is how an app reads a name. A typed `Place` struct is a reasonable later addition on top of `JSONObject`, not a replacement for it.
 
