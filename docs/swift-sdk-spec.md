@@ -336,7 +336,7 @@ The fake server is an `HTTPTransport` that:
 
 Test files map one to one onto the reference's `test/*.test.ts`, with the same `describe`/`it` names turned into suites and test names, so that a reviewer can diff coverage by eye. The fixture tests (`normalize.json`, `jaro-winkler.json`, `ranking-scenarios.json`) are table-driven with `@Test(arguments:)`.
 
-The default transport gets one small test of its own against a loopback HTTP server, since the fake replaces it everywhere else: a 4xx with a JSON error body, a 4xx with an empty body, a redirect, cancellation mid-request, and the exact request headers it sends.
+The default transport gets one small test of its own against a loopback HTTP server, since the fake replaces it everywhere else: a 4xx with a JSON error body, a 4xx with an empty body, a redirect, cancellation mid-request, and the request headers it sets itself: `Accept: application/json` and `User-Agent: atgeo-client-swift` (contract §12, item 5). URLSession adds others of its own that vary by platform, so the test asserts only on these.
 
 An end-to-end script against a local garganorn (`ATGEO_SERVER`, `ATGEO_DATASET`, `ATGEO_COLLECTION`, `ATGEO_REGION`, same variables as `scripts/e2e.ts`) lives in `Scripts/e2e.swift` and is not part of `swift test`.
 
