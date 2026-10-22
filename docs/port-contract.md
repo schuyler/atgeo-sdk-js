@@ -2,7 +2,7 @@
 
 What a port of `@atgeo/client` to another language must do to be the same client. The Swift and Kotlin specs ([swift-sdk-spec.md](swift-sdk-spec.md), [kotlin-sdk-spec.md](kotlin-sdk-spec.md)) describe each port's API, packaging and idioms, and point here for behaviour, so that the three SDKs can't drift apart on what a search returns.
 
-The reference is the TypeScript source in `src/` at the commit this document was written against (`8654ea7`). Where this document and the source disagree, the source wins and this document has a bug. The fixtures in `fixtures/` and the lexicons in `test/lexicon/` are the executable half of this contract; see [Conformance](#conformance).
+The reference is the TypeScript source in `src/` at the commit this document was written against (`8654ea7`). Where this document and the source disagree, the source wins and this document has a bug, except for the reference bugs listed in [section 16](#16-known-reference-bugs), where the behaviour stated here is the contract. The fixtures in `fixtures/` and the lexicons in `test/lexicon/` are the executable half of this contract; see [Conformance](#conformance).
 
 "Must" marks behaviour a port has to reproduce. "Should" marks the reference behaviour where a port may do better, as long as the observable results stay the same. "May" marks a deliberate freedom.
 
@@ -20,7 +20,7 @@ Everything goes over HTTP GET with no request body. There are four XRPC queries 
 
 `{server}` is the configured server with trailing slashes removed. The default is `https://places.atgeo.org`.
 
-Query values must be percent-encoded so the server decodes them to the exact strings. The reference uses form encoding (`URLSearchParams`), which turns `,` into `%2C` and `:` into `%3A`; a port may send those two characters raw. Space, `&`, `=`, `#`, `+` and `%` must be encoded.
+Query values must be percent-encoded so the server decodes them to the exact strings. The reference uses form encoding (`URLSearchParams`), which turns `,` into `%2C` and `:` into `%3A`; a port may send those two characters raw. Space, `&`, `=`, `#`, `+` and `%` must be encoded. The reference form-encodes a space as `+`; `%20` is equally acceptable. A literal `+` must go as `%2B`, since a form-decoding server reads a raw `+` as a space.
 
 Responses are JSON. The schemas are the lexicons in `test/lexicon/`; the ones a port reads are:
 
@@ -40,7 +40,7 @@ A non-2xx response raises the port's `AtgeoError` type with a `code` string and 
 
 Every code other than `HttpError` comes from the server. The lexicons declare which codes each query can return: `BboxTooLarge`, `BboxTooPrecise`, `DatasetNotFound`, `CollectionNotFound`, `InvalidBbox` for getTiles; `PlaceNotFound` for getPlace; `TilesetNotFound` for describeTileset; `InvalidRequest` for any malformed parameter.
 
-A 2xx response whose body is not valid JSON (or not the expected shape) raises the port's JSON decoding error, not `AtgeoError`, except inside a tile fetch (section 4), where it counts as a failed tile.
+A 2xx response whose body is not valid JSON raises the port's JSON decoding error, not `AtgeoError`, except inside a tile fetch (section 4), where it counts as a failed tile. The reference does not check the shape of a decoded body and misbehaves when a required field is missing (section 16); a port may check, and then raises the same decoding error.
 
 Network failures propagate as the port's HTTP layer's own error type, unwrapped.
 
@@ -103,7 +103,7 @@ snapDown(x): r = round(x * 100); if |x * 100 - r| < 1e-9 then r else floor(x * 1
 snapUp(x):   r = round(x * 100); if |x * 100 - r| < 1e-9 then r else ceil(x * 100)
 ```
 
-`round` here is round-half-away-from-zero (JavaScript's `Math.round` is round-half-up, which agrees for every value this is applied to, since the epsilon test only passes when `x * 100` is within 1e-9 of an integer).
+`round` is any nearest-integer rounding. Its tie-breaking rule never matters, because `r` is only used when the epsilon test passes, and a tie is 0.5 away from every integer.
 
 For each axis, `lo = snapDown(min)`, `hi = snapUp(max)`. If `lo == hi` (a point or a line), widen by one step: `hi += 1` unless `hi` is already the axis limit (9000 for latitude, 18000 for longitude), in which case `lo -= 1`. The epsilon keeps a grid-aligned input such as `-122.42` from widening through floating-point error: `-122.42 * 100` is `-12242.000000000002` in binary and must still snap to `-12242`.
 
@@ -169,7 +169,7 @@ For each URL in that order, with at most 8 fetches in flight:
 
 - A tile in the tile cache is used without a request, and is marked recently used.
 - Otherwise fetch the URL exactly as given. On a 2xx with a body that decodes to a payload with a `records` array, keep `{ value, uri?, importance? }` per record, store the tile in the cache with its size (section 10), and use it.
-- Any other outcome (non-2xx, network error, undecodable body, missing `records`) marks the tile failed. It is skipped, not retried, and the search continues.
+- Any other outcome (non-2xx, network error, undecodable body, missing `records`) marks the tile failed. It is skipped, not retried, and the search continues. A record that is not an object, or whose `value` is not an object, makes the tile malformed and it counts as failed too (section 16).
 - If the search was cancelled, a tile failure is not swallowed: the search fails with the cancellation error.
 
 The result's `tiles.fetched` is the number of tiles used, from cache or network. `tiles.failed` is the number that failed. `complete` is `failed == 0`.
@@ -205,7 +205,7 @@ Warm searches: a repeat of the same region within the hour, with every tile stil
 - `point` is the first element with `$type == "community.lexicon.location.geo"` whose `latitude` and `longitude` parse to finite numbers.
 - `bbox` is the first element with `$type == "community.lexicon.location.bbox"` whose `south`, `north`, `east`, `west` all parse to finite numbers; it is stored as `{ south, north, segments: lonSegments(west, east) }`, so a box with `west > east` crosses the antimeridian.
 
-Both may be present. Elements with other `$type`s, and elements whose numbers don't parse, are skipped (a non-parsing geo element does not stop a later geo element from being the point).
+Both may be present. Elements with other `$type`s, and elements whose numbers don't parse, are skipped (a non-parsing geo element does not stop a later geo element from being the point). An element that is not a JSON object is skipped too (section 16).
 
 Parsing: the lexicon types these as strings; the reference converts whatever is there to a string and applies JavaScript `parseFloat`, so a JSON number works too. A port must accept a JSON string holding a decimal number (optional sign, optional fraction, optional exponent) and a JSON number. It may reject what `parseFloat` would partially accept (leading whitespace, trailing garbage such as `"1.5abc"`); garganorn emits neither. `Infinity`, `NaN` and the like are non-finite and are skipped.
 
@@ -258,7 +258,7 @@ A port is not expected to be bit-identical in trigonometry across runtimes; agre
 3. Remove every scalar whose general category is Mn (nonspacing mark). This strips the accents NFKD split off: `café` → `cafe`, and the dot from `İ`, giving `istanbul`. Mc and Me marks stay (`a` + U+20DD is unchanged).
 4. Replace every run of one or more whitespace scalars with a single U+0020, then strip leading and trailing whitespace. The whitespace set is exactly JavaScript's `\s`: U+0009, U+000A, U+000B, U+000C, U+000D, U+0020, U+00A0, U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF. U+200B (zero-width space) and U+0085 are not in it. Ideographic space counts, so `　東京　` → `東京`.
 
-`fixtures/normalize.json` must pass exactly. Runtimes disagree on Unicode versions at the margins; the fixture is the arbiter.
+`fixtures/normalize.json` must pass exactly. Runtimes disagree on Unicode versions at the margins; the fixture is the arbiter. It does not yet cover the final sigma, `İ` and `ẞ` cases above, so until it does a port tests those three itself; the Swift spec names the runtime that is expected to differ.
 
 The search text and every candidate name are normalized with this function. Empty text after normalization means no text: no scoring, no filtering, and `sort = similarity` is an error.
 
@@ -282,7 +282,9 @@ jaroWinkler(a, b):
   jaro + prefix * 0.1 * (1 - jaro)
 ```
 
-`fixtures/jaro-winkler.json` gives scores to six decimals; a port must match to within 5e-7.
+Every division is in floating point. `transpositions` can be odd (`abcvwxyz` against `cabvwxyz` has three), so an integer `transpositions / 2` fails the fixture.
+
+`fixtures/jaro-winkler.json` gives scores to six decimals; a port must match to within 5e-7. That is exactly the rounding budget, with no headroom: the algorithm is rational arithmetic in doubles, so a straight transcription lands within 1e-15 of the reference before rounding, and the JVM transcription's worst distance from the fixture is 4.8e-7.
 
 ### Scoring a record
 
@@ -334,13 +336,13 @@ Sort modes:
 | `distance` | distance, specificity, importance, score, origin |
 | `similarity` | score, distance, origin |
 
-The sort must be stable: hits that tie on every comparator (only possible when both lack an origin, or share one) keep their order from section 4.5. A port that cannot rely on its library sort being stable must add the input index as a final tie-break.
+The sort must be stable: hits that tie on every comparator (only possible when both lack an origin, since dedupe leaves one hit per origin) keep their order from section 4.5. A port that cannot rely on its library sort being stable must add the input index as a final tie-break.
 
 `fixtures/ranking-scenarios.json` must pass: for each scenario, run the records through sections 4.6 to 4.9 (no network) and check that each `expect.top[k].origins` set is a subset of the first `k` hits' origins and each `expect.absent` origin is not in the result at all. The fixture checks membership, not order.
 
 ## 9. The other calls
 
-`getPlace(origin)`: search the tile cache for a record whose key (4.6) equals `origin`; if several cached tiles hold one, take the record from the lowest tile URL. On a hit return `{ origin, place: value, importance ?? null }` with no request. On a miss call `getPlace` with `uri = origin` (no `describeService` first) and return `{ origin, place: record, importance ?? null }`. The returned `origin` is the caller's string, not the response's `uri`.
+`getPlace(origin)`: search the tile cache for a record whose key (4.6) equals `origin`; if several cached tiles hold one, take the record from the lowest tile URL. The scan does not mark any tile recently used (section 10). On a hit return `{ origin, place: value, importance ?? null }` with no request. On a miss call `getPlace` with `uri = origin` (no `describeService` first) and return `{ origin, place: record, importance ?? null }`. The returned `origin` is the caller's string, not the response's `uri`.
 
 `describeService()`: cached for one hour; otherwise one request. Returned as decoded.
 
@@ -350,9 +352,9 @@ The sort must be stable: hits that tie on every comparator (only possible when b
 
 Three caches, all in memory, none persisted, none shared between clients.
 
-- Tile lists: key from 4.2, value `{ tiles, overview }`, expires 3,600,000 ms after being set, by wall-clock time. An expired entry is a miss. Entries need not be evicted on expiry, but a port may prune them.
+- Tile lists: key from 4.2, value `{ tiles, overview }`, expires 3,600,000 ms after being set, by wall-clock time: an entry is fresh while `now < set + 3,600,000` and a miss from exactly that instant on. Entries need not be evicted on expiry, but a port may prune them.
 - Service description: one entry, same one-hour expiry.
-- Tiles: keyed by URL, LRU, capped by `cacheBudgetBytes`. A tile's size is the length of its response body; the reference counts UTF-16 code units of the text, a port counts bytes. Reading a tile marks it most recently used. Inserting a tile adds its size and then evicts least recently used tiles until the total is within budget (a single tile larger than the budget evicts every other tile and then itself, so the cache never exceeds the budget after an insert). Replacing a URL subtracts the old size first.
+- Tiles: keyed by URL, LRU, capped by `cacheBudgetBytes`. A tile's size is the length of its response body; the reference counts UTF-16 code units of the text, a port counts bytes. Reading a tile by URL during a search marks it most recently used; the `getPlace` scan (section 9) does not. Inserting a tile adds its size and then evicts least recently used tiles until the total is within budget (a single tile larger than the budget evicts every other tile and then itself, so the cache never exceeds the budget after an insert). Replacing a URL subtracts the old size first.
 
 Expiry tests set the clock, so a port must take its time source from somewhere a test can control.
 
@@ -399,7 +401,9 @@ A port may:
 - prune expired TTL entries;
 - cancel sibling requests when a `getTiles` call fails, where structured concurrency does that for free;
 - coalesce concurrent identical requests, as long as results are unchanged;
-- throw a cancellation error from a fully cached call (section 11).
+- throw a cancellation error from a fully cached call (section 11);
+- time out a request in its transport: a timeout is a network failure, and inside a tile fetch a failed tile;
+- check the shape of a decoded XRPC body and raise its JSON decoding error when a required field is missing (section 1).
 
 A port must not:
 
@@ -417,3 +421,12 @@ Carried over from the reference as-is, and open for all three SDKs together rath
 - A disk cache. The HTTP layer is the seam: an app can supply one that caches, at the cost of the no-persistence default.
 - A lower default cache budget on phones. 50 MiB stays, per the maintainer's decision; a port exposes the option and keeps the default.
 - Coalescing of duplicate in-flight requests.
+- Restricting tile URLs. The server names the tile URLs and the client fetches them as given, so a compromised server can send a client anywhere. Section 12 covers what the client sends, not where. A port may want to refuse tile URLs that are not `https`, or that are off the server's host; none of the three SDKs does yet, and it is a decision for all of them together.
+
+## 16. Known reference bugs
+
+Reference behaviour at `8654ea7` that a port must not reproduce. Each is a crash or a wrong count rather than a design choice, and is to be fixed in the reference; until then, this section wins over the source.
+
+- A `getTiles` body that decodes but has no `tiles` array (`{}`, `[]`, `{ "tiles": "x" }`) is reported as one failed tile and no places, because the undefined list is treated as a tile URL. A `null` body throws a bare `TypeError`. A port raises its decoding error (section 1).
+- A `null` or other non-object element in a place's `locations` throws a bare `TypeError` from the region filter and fails the whole search. A port skips the element (section 5).
+- A tile record that is not an object, or whose `value` is `null`, throws a bare `TypeError` after the tile was counted as fetched; a `value` that is a non-object scalar passes through as a place with no name and no location. A port counts the tile as failed (section 4.4).

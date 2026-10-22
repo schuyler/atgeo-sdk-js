@@ -138,7 +138,7 @@ Every `@Serializable` type is decoded with a `Json { ignoreUnknownKeys = true }`
 
 A place is arbitrary JSON and must be surfaced untouched (contract §1). `kotlinx.serialization.json.JsonObject` is exactly that: immutable, structurally equal, and preserving every key and nested value as served, including key order. `SearchHit.place["name"]?.jsonPrimitive?.contentOrNull` is how an app reads a name. A typed `Place` class is a reasonable later addition on top of `JsonObject`, not a replacement for it.
 
-Tile records are decoded into an internal `TileRecord(value: JsonObject, uri: String?, importance: Long?)`; the rest of the payload is dropped. A record whose `value` is not a JSON object is a malformed tile, and the tile counts as failed.
+Tile records are decoded into an internal `TileRecord(value: JsonObject, uri: String?, importance: Long?)`; the rest of the payload is dropped. A record that is not an object, or whose `value` is not one, makes the tile malformed and it counts as failed (contract §4.4 and §16). Decoding `getTiles` into a class with a required `tiles` field means a body without one raises `SerializationException`, which is the shape check the contract allows (§1, §14).
 
 ### Errors
 
@@ -149,7 +149,7 @@ class AtgeoException(val code: String, message: String) : RuntimeException(messa
 
 Bad arguments (contract §3) throw `IllegalArgumentException` from `require()`, before the first suspension point, so a caller sees them at the call site. This matches the JS client's `TypeError` in spirit: a programming error, kept out of `AtgeoException`'s code namespace.
 
-Network failures throw `IOException` (or whatever the injected transport throws) unwrapped. A 2xx body that does not decode throws `SerializationException` unwrapped, except for tiles, where it counts as a failed tile. Cancellation throws `CancellationException` and must be rethrown, never swallowed, anywhere the client catches `Throwable` (the tile-fetch loop is the one such place).
+Network failures throw `IOException` (or whatever the injected transport throws) unwrapped. A 2xx body that does not decode throws `SerializationException` unwrapped, except for tiles, where it counts as a failed tile. Cancellation throws `CancellationException` and must be rethrown, never swallowed, anywhere the client catches `Throwable` (the tile-fetch loop is the one such place; section 5 gives the exact rule).
 
 ## 4. Transport
 
@@ -169,6 +169,8 @@ class HttpUrlConnectionTransport(
 
 The default transport uses `java.net.HttpURLConnection` because it is on every JVM and every Android version with no dependency, which is the cost-conscious default. It runs the blocking call under `withContext(Dispatchers.IO)` inside `suspendCancellableCoroutine`-style handling so that cancelling the coroutine calls `disconnect()` and the thread comes back; sets `useCaches = false`; sends `Accept: application/json`; reads the whole body before looking at the status (contract §1); and reads error bodies from `errorStream` so that a 4xx with a JSON error body becomes an `AtgeoException` with the server's code.
 
+The timeouts are a freedom the contract grants (§14): the reference has none, so a tile that times out is a failed tile here where it would hang there.
+
 `HttpURLConnection` on Android has no HTTP/2 and a dated TLS stack on old devices. Apps that already ship OkHttp should pass a ten-line `OkHttpTransport`, which the `android-sample/` module provides as copy-paste code rather than as a dependency of the library. Any transport an app supplies must disable its own response cache or accept that the contract's no-persistence default (§10, §14) no longer holds.
 
 XRPC URLs are built by percent-encoding each query value with `java.net.URLEncoder.encode(value, UTF_8)` and then replacing `+` with `%20`. That is form encoding (`,` → `%2C`, `:` → `%3A`) with spaces as `%20`; the contract allows either (§1). Never build query strings by string template without encoding.
@@ -178,7 +180,7 @@ The tile cache measures a tile as `body.size` bytes (§10).
 ## 5. Concurrency and cancellation
 
 - `searchPlaces` runs inside `coroutineScope`. The two `getTiles` calls for an antimeridian-crossing region are `async` siblings; if one throws, structured concurrency cancels the other and the search fails with the first error (allowed, §14).
-- Tiles are fetched as `async` children sharing a `Semaphore(8)`, launched in URL order. Each child catches everything but `CancellationException`, returns `null` for a failed tile, and never throws otherwise. Results are collected with `awaitAll()` and assembled in URL order, so completion order never affects results (§4.3).
+- Tiles are fetched as `async` children sharing a `Semaphore(8)`, launched in URL order. Each child catches `Throwable`, calls `coroutineContext.ensureActive()` inside the catch so that its own cancellation propagates, and otherwise returns `null` for the failed tile. Catching everything but `CancellationException` is not the same rule: a transport that uses `withTimeout` throws `TimeoutCancellationException`, which is a `CancellationException`, and the search would fail instead of counting one failed tile. The reference's check is `signal.aborted`, the search's own cancellation and nothing else. Results are collected with `awaitAll()` and assembled in URL order, so completion order never affects results (§4.3).
 - The tile cache is checked under the mutex before launching a child, so a cached tile never becomes a request. Writes happen under the mutex as children complete. The mutex is never held across a transport call.
 - Nothing blocks a dispatcher thread except inside the default transport's `Dispatchers.IO` block. Normalizing and scoring run on whatever dispatcher called `searchPlaces`; for tens of thousands of records this is milliseconds, and a caller who cares wraps the call in `withContext(Dispatchers.Default)`.
 
@@ -219,7 +221,7 @@ Verified against all 33 fixture cases on a JVM. Kotlin strings are UTF-16, so `s
 
 ### Numbers and trigonometry (contract §3, §6)
 
-- Coordinates arrive as `JsonPrimitive`. Accept a string primitive via `toDoubleOrNull()` and a numeric primitive via `doubleOrNull`; anything else is no location. `toDoubleOrNull()` accepts a few things `parseFloat` would not (hex floats, `1.5f`) and rejects trailing text; both are within the contract's freedom (§5). Check `isFinite()` after parsing.
+- Coordinates arrive as `JsonPrimitive`. Accept a string primitive via `toDoubleOrNull()` and a numeric primitive via `doubleOrNull`; anything else is no location. `toDoubleOrNull()` accepts a few things `parseFloat` would not (hex floats, `1.5f`, surrounding ASCII whitespace) and rejects trailing text; both are within the contract's freedom (§5). Check `isFinite()` after parsing.
 - `round3`: `Math.round(x * 1000) / 1000.0`. `Math.round(Double)` rounds half up, the same as `Math.round` in JavaScript, and returns `Long`.
 - Snapping: `Math.round(x * 100)` for the epsilon test, `floor` and `ceil` from `kotlin.math`. Format with `"%.2f".format(Locale.ROOT, units / 100.0)` after mapping `-0.0` to `0.0`; the locale matters (a German default locale would print `37,77`) and `%.2f` prints `-0.00` for negative zero.
 - `kotlin.math.sin`, `cos`, `asin`, `atan2`, `sqrt` map to `java.lang.Math`, which may differ from V8's implementations in the last bit. Compare the worked distance tables to 1e-6 relative, containment exactly.
@@ -227,13 +229,13 @@ Verified against all 33 fixture cases on a JVM. Kotlin strings are UTF-16, so `s
 
 ### Ranking (contract §8)
 
-`sortedWith` is stable (it is `java.util.Arrays.sort` on objects, a TimSort), but add the input index as a final `thenBy` anyway so the guarantee is in the code and not in a library contract. Build the comparator chain with `Comparator` and `thenComparing`/`thenBy` in exactly the order of the contract's table, and keep `byScore` on `round3` of the score; the usual porting mistake is to compare raw scores and lose the ties the reference has.
+`sortedWith` is stable (it is `java.util.Arrays.sort` on objects, a TimSort), but add the input index as a final `thenBy` anyway so the guarantee is in the code and not in a library contract. Build the comparator chain with `Comparator` and `thenComparing`/`thenBy` in exactly the order of the contract's table, and keep `byScore` on `round3` of the score; the usual porting mistake is to compare raw scores and lose the ties the reference has. Compare with `compareByDescending`/`compareValues`, not by subtraction: `(b.importance ?: 0) - (a.importance ?: 0)` overflows `Long` at the extremes, and the contract's comparator table describes an order, not arithmetic.
 
 ### Caches (contract §10)
 
 `TileCache` is a `LinkedHashMap<String, Entry>(16, 0.75f, true)` (access order) plus a running total, with eviction done by iterating from the eldest after each insert; `removeEldestEntry` is tempting but cannot evict more than one entry per insert, and a large tile must be able to evict several. `TtlCache` takes a `clock: () -> Long` (epoch millis); the public constructor of `AtgeoClient` passes `System::currentTimeMillis`, an `internal` constructor lets tests inject one.
 
-`find(key)` for `getPlace` scans every cached tile and keeps the match from the lowest URL.
+`find(key)` for `getPlace` scans every cached tile and keeps the match from the lowest URL. Iterate the map's entries for this: iterating an access-ordered `LinkedHashMap` does not count as access, which is what §10 wants (`find` must not touch recency), and `get` would both reorder and throw `ConcurrentModificationException` mid-iteration.
 
 ## 7. Testing
 
