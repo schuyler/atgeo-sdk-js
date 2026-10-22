@@ -205,7 +205,7 @@ Pointers for the parts where the JVM's defaults would give the wrong answer. Eve
 
 ### Normalization (contract §7)
 
-Verified against all 30 fixture cases on a JVM (JDK 21, Kotlin 2.2):
+Verified against all 36 fixture cases on a JVM (JDK 21; Kotlin 2.2 when written, 2.4 in the port):
 
 ```kotlin
 private val WHITESPACE: Set<Int> = (
@@ -230,7 +230,7 @@ fun normalize(s: String): String {
 }
 ```
 
-One pass over code points does steps 3 and 4 together: a whitespace run becomes a single space only when a non-space follows it, which also trims both ends. `String.lowercase()` is `toLowerCase(Locale.ROOT)`: locale-independent full case mapping through `SpecialCasing`, so `ΟΔΟΣ` gets its final sigma, `İ` becomes `i` + U+0307 and `ẞ` becomes `ß`, the three cases the contract names and the fixture does not cover (§7); `NormalizeTest` asserts all three. Never `toLowerCase()` with the default locale, which on a Turkish device turns `I` into dotless `ı`. The whitespace set is spelled out because Java's `\s` is ASCII-only by default, `UNICODE_CHARACTER_CLASS` matches a different set (it includes U+0085 and excludes U+FEFF), and Kotlin's `trim()` with no predicate uses `Char.isWhitespace`, which trims U+001C to U+001F and keeps U+FEFF; none of them can stand in for the loop.
+One pass over code points does steps 3 and 4 together: a whitespace run becomes a single space only when a non-space follows it, which also trims both ends. `String.lowercase()` is `toLowerCase(Locale.ROOT)`: locale-independent full case mapping through `SpecialCasing`, so `ΟΔΟΣ` gets its final sigma, `İ` becomes `i` + U+0307 and `ẞ` becomes `ß`, the cases the contract names (§7), which the fixture now covers along with the two Greek abbreviations; JDK 21 matches V8 on all six with no extra code. Never `toLowerCase()` with the default locale, which on a Turkish device turns `I` into dotless `ı`. The whitespace set is spelled out because Java's `\s` is ASCII-only by default, `UNICODE_CHARACTER_CLASS` matches a different set (it includes U+0085 and excludes U+FEFF), and Kotlin's `trim()` with no predicate uses `Char.isWhitespace`, which trims U+001C to U+001F and keeps U+FEFF; none of them can stand in for the loop.
 
 `java.text.Normalizer` is in Android since API 9. Unicode version skew between the JDK, Android's ICU and V8 is possible at the margins; the fixture is the arbiter, and a case that fails only on one runtime is recorded as known skew rather than worked around in the algorithm.
 
