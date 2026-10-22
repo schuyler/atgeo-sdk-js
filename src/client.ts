@@ -173,7 +173,10 @@ export class AtgeoClient {
 // absolute, or that carries credentials. Fetch also accepts schemes other than http and https,
 // which a tile URL may not use. Checked here so every runtime refuses the same URLs, including a
 // browser that would otherwise resolve a relative URL against the page.
-function refuseUrl(url: string): TypeError | undefined {
+function refuseUrl(url: unknown): TypeError | undefined {
+  // The tile list is unchecked (contract section 16), so an entry may be any JSON value; fetch
+  // would stringify it.
+  if (typeof url !== "string") return new TypeError("tile URL is not a string");
   let parsed: URL;
   try {
     parsed = new URL(url);

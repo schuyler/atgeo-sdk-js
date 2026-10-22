@@ -64,7 +64,7 @@ describe("failed tiles", () => {
 const TILE_BODY = JSON.stringify({ records: [record(place("ok", "OK", [point(37.772, -122.412)]))] });
 const ok = () => new Response(TILE_BODY);
 
-function scripted(tiles: Record<string, () => Response | Promise<Response>>) {
+function scripted(tiles: Record<string, () => Response | Promise<Response>>, getTilesBody?: unknown) {
   const requests: string[] = [];
   const handlers = new Map<string, () => Response | Promise<Response>>();
   for (const [key, handler] of Object.entries(tiles)) {
@@ -78,7 +78,7 @@ function scripted(tiles: Record<string, () => Response | Promise<Response>>) {
     const request = new Request(input, init);
     requests.push(request.url);
     if (request.url.startsWith(`${DEFAULT_SERVER}/xrpc/org.atgeo.getTiles`)) {
-      return new Response(JSON.stringify({ tiles: Object.keys(tiles) }));
+      return new Response(JSON.stringify(getTilesBody ?? { tiles: Object.keys(tiles) }));
     }
     const handler = handlers.get(request.url);
     return handler ? handler() : new Response("Not found", { status: 404 });
@@ -189,6 +189,58 @@ describe("tile failures", () => {
       },
     });
     await expect(search(server.fetch, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it.each([
+    ["a number", 5],
+    ["null", null],
+    ["an array", ["https://tiles.example/a.json"]],
+    ["an object", { url: "https://tiles.example/a.json" }],
+  ])("refuses a tile list entry that is %s, with the value as url", async (_name, entry) => {
+    const server = scripted({ [url("a")]: ok }, { tiles: [entry] });
+    const result = await search(server.fetch);
+    expect(result.tileFailures).toEqual([{ url: entry, kind: "refused", error: expect.any(TypeError) }]);
+    expect(server.requests.filter((u) => !u.includes("/xrpc/"))).toEqual([]);
+  });
+
+  it.each([
+    ["a missing list", {}, undefined],
+    ["a string list", { tiles: "x" }, "x"],
+    ["a longer string list", { tiles: "abc" }, "abc"],
+  ])("reports %s as one refused tile (contract section 16)", async (_name, body, entry) => {
+    const server = scripted({}, body);
+    const result = await search(server.fetch);
+    expect(result.tileFailures).toEqual([{ url: entry, kind: "refused", error: expect.any(TypeError) }]);
+  });
+
+  it("reports a non-2xx with a null body as status, with a TypeError (contract section 16)", async () => {
+    const server = scripted({ [url("a")]: () => new Response("null", { status: 502 }) });
+    const result = await search(server.fetch);
+    expect(result.tileFailures).toEqual([{ url: url("a"), kind: "status", status: 502, error: expect.any(TypeError) }]);
+  });
+
+  it("rejects with the JSON error when cancelled while an unparsable tile is in flight", async () => {
+    const controller = new AbortController();
+    const server = scripted({
+      [url("a")]: () => {
+        controller.abort();
+        return new Response("<html>");
+      },
+    });
+    await expect(search(server.fetch, controller.signal)).rejects.toBeInstanceOf(SyntaxError);
+  });
+
+  it("rejects with the AtgeoError when cancelled while a non-2xx tile is in flight", async () => {
+    const controller = new AbortController();
+    const server = scripted({
+      [url("a")]: () => {
+        controller.abort();
+        return new Response("", { status: 503 });
+      },
+    });
+    const p = search(server.fetch, controller.signal);
+    await expect(p).rejects.toBeInstanceOf(AtgeoError);
+    await expect(p).rejects.toMatchObject({ status: 503 });
   });
 
   it("fails the search when storing a tile in the cache throws", async () => {
