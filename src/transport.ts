@@ -89,6 +89,9 @@ export class Transport {
     let giveUp!: (error: unknown) => void;
     const abandoned = new Promise<never>((_, reject) => (giveUp = reject));
     abandoned.catch(() => {});
+    // Rejects when the request is over, for the wait for headers and for the body.
+    const stop = Promise.race([expired, abandoned]);
+    stop.catch(() => {});
     const onCallerAbort = () => {
       callerAborted = !timedOut;
       controller.abort(signal?.reason);
@@ -109,9 +112,9 @@ export class Transport {
     try {
       pending = Promise.resolve(this.fetchImpl(url, { signal: controller.signal }));
       // Either ends the wait for headers if a custom fetch ignores its signal.
-      const response = await Promise.race([pending, expired, abandoned]);
+      const response = await Promise.race([pending, stop]);
       if (timedOut) throw controller.signal.reason;
-      const text = await readText(response, this.maxBodyBytes, controller.signal);
+      const text = await readText(response, this.maxBodyBytes, stop);
       return { ok: response.ok, status: response.status, text };
     } catch (error) {
       // A response that arrives after the request was given up on is nobody's; let go of its connection.
@@ -136,30 +139,30 @@ function discard(response: Response): void {
 }
 
 // Reads a response body as UTF-8 text, failing with BodyTooLargeError as soon as more than
-// maxBodyBytes decoded bytes (what response.body yields, after any gzip) have arrived, and with the
-// signal's reason if it aborts first, even when the stream itself is not tied to the signal.
-async function readText(response: Response, maxBodyBytes: number, signal: AbortSignal): Promise<string> {
-  // Only an abort that comes during the read ends it. A signal already aborted when the response
-  // arrived is the caller's, and a fetch that was honouring it would have rejected: what is in hand
-  // is still read, so that the tile's own failure (an unparsable body, say) is what surfaces, as in
-  // the contract (section 4.4).
+// maxBodyBytes decoded bytes (what response.body yields, after any gzip) have arrived. `stop` is a
+// promise that rejects when the request is over (its timeout, or the turn after the caller's abort);
+// the read is raced against it, so a body that stalls and ignores the abort signal still ends, and
+// is cancelled. A body that finishes before `stop` rejects is read even if the caller has already
+// aborted: what is in hand surfaces its own failure (an unparsable body, say), as in the contract
+// (section 4.4), and a fetch that was honouring the signal would have rejected already.
+async function readText(response: Response, maxBodyBytes: number, stop: Promise<never>): Promise<string> {
   if (!response.body) {
     // No stream: a body that is genuinely empty (null on a standard Response), or a fetch that
     // cannot stream. Read what there is whole; the cap is then checked after the fact, which still
     // keeps an oversize body from reaching the caller but cannot save the memory it took.
-    const bytes = await abortable(response.arrayBuffer(), signal);
+    const read = response.arrayBuffer();
+    read.catch(() => {});
+    let bytes: ArrayBuffer;
+    try {
+      bytes = await Promise.race([read, stop]);
+    } catch (error) {
+      discard(response);
+      throw error;
+    }
     if (bytes.byteLength > maxBodyBytes) throw new BodyTooLargeError(maxBodyBytes);
     return new TextDecoder().decode(bytes);
   }
   const reader = response.body.getReader();
-  // Cancelling a reader with a read pending settles that read as done, not as an error, so the
-  // loop below checks this flag after every read.
-  let aborted = false;
-  const onAbort = () => {
-    aborted = true;
-    void reader.cancel(signal.reason).catch(() => {});
-  };
-  signal.addEventListener("abort", onAbort, { once: true });
   // Same decoding as response.text(): UTF-8, a leading BOM dropped, bad bytes replaced; stream mode
   // carries a character split across two chunks into the next call.
   const decoder = new TextDecoder();
@@ -167,31 +170,24 @@ async function readText(response: Response, maxBodyBytes: number, signal: AbortS
   let total = 0;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
-      if (aborted) throw signal.reason;
+      const { done, value } = await Promise.race([reader.read(), stop]);
       if (done) break;
       total += value.byteLength;
-      if (total > maxBodyBytes) {
-        void reader.cancel().catch(() => {});
-        throw new BodyTooLargeError(maxBodyBytes);
-      }
+      if (total > maxBodyBytes) throw new BodyTooLargeError(maxBodyBytes);
       parts.push(decoder.decode(value, { stream: true }));
     }
     parts.push(decoder.decode());
     return parts.join("");
+  } catch (error) {
+    // Whatever ended the read, the stream is not wanted: cancel it, which also settles a read that
+    // is still pending, so the lock can be released.
+    void reader.cancel().catch(() => {});
+    throw error;
   } finally {
-    signal.removeEventListener("abort", onAbort);
-    reader.releaseLock();
+    try {
+      reader.releaseLock();
+    } catch {}
   }
-}
-
-// Settles with promise, or rejects with the signal's reason if it aborts first.
-function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
-  });
 }
 
 export interface HttpResponse {

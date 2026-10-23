@@ -439,6 +439,94 @@ describe("a caller's abort is not a timeout", () => {
       expect(timeout).toMatchObject({ name: "TimeoutError" });
     });
 
+    // A response in hand whose body stalls and knows nothing of the signal; `state.cancelled` says
+    // whether the client let go of the stream.
+    const deafBody = (opts: { withoutStream?: boolean } = {}) => {
+      const state = { cancelled: false };
+      const response = opts.withoutStream
+        ? Object.defineProperty(new Response("x"), "body", { value: null })
+        : new Response(
+            new ReadableStream<Uint8Array>({
+              start: (c) => void c.enqueue(encoder.encode("{")),
+              pull: () => new Promise(() => {}),
+              cancel: () => void (state.cancelled = true),
+            }),
+          );
+      if (opts.withoutStream) Object.defineProperty(response, "arrayBuffer", { value: () => new Promise(() => {}) });
+      return { response, state };
+    };
+    const getPlace = (client: AtgeoClient, signal?: AbortSignal) =>
+      client.getPlace({ origin: "urn:atgeo:overturemaps.org:place:x", signal });
+
+    describe.each([
+      ["a stream", false],
+      ["no stream", true],
+    ])("a response with %s that stalls", (_name, withoutStream) => {
+      it("rejects with the caller's reason promptly when the signal was aborted beforehand", async () => {
+        const { response, state } = deafBody({ withoutStream });
+        const controller = new AbortController();
+        controller.abort(reason);
+        const started = Date.now();
+        await expect(getPlace(new AtgeoClient({ fetch: (async () => response) as typeof fetch, requestTimeoutMs: 5000 }), controller.signal)).rejects.toBe(reason);
+        expect(Date.now() - started).toBeLessThan(2000);
+        if (!withoutStream) expect(state.cancelled).toBe(true);
+      });
+
+      it("rejects with the caller's reason when the caller aborts inside the fetch", async () => {
+        const { response, state } = deafBody({ withoutStream });
+        const controller = new AbortController();
+        const fetch = (async () => {
+          controller.abort(reason);
+          return response;
+        }) as typeof globalThis.fetch;
+        await expect(getPlace(new AtgeoClient({ fetch, requestTimeoutMs: 5000 }), controller.signal)).rejects.toBe(reason);
+        if (!withoutStream) expect(state.cancelled).toBe(true);
+      });
+
+      it("rejects with the caller's reason when the caller aborts while it stalls", async () => {
+        const { response, state } = deafBody({ withoutStream });
+        const controller = new AbortController();
+        const p = getPlace(new AtgeoClient({ fetch: (async () => response) as typeof fetch, requestTimeoutMs: 5000 }), controller.signal);
+        setTimeout(() => controller.abort(reason), 20);
+        await expect(p).rejects.toBe(reason);
+        if (!withoutStream) expect(state.cancelled).toBe(true);
+      });
+
+      it("times out when nobody aborts", async () => {
+        const { response, state } = deafBody({ withoutStream });
+        const p = getPlace(new AtgeoClient({ fetch: (async () => response) as typeof fetch, requestTimeoutMs: 30 }));
+        await expect(p).rejects.toMatchObject({ name: "TimeoutError" });
+        if (!withoutStream) expect(state.cancelled).toBe(true);
+      });
+
+      it("times out for a signal that is aborted only after the timeout", async () => {
+        const { response } = deafBody({ withoutStream });
+        const controller = new AbortController();
+        const p = getPlace(new AtgeoClient({ fetch: (async () => response) as typeof fetch, requestTimeoutMs: 20 }), controller.signal);
+        setTimeout(() => controller.abort(reason), 100);
+        await expect(p).rejects.toMatchObject({ name: "TimeoutError" });
+      });
+    });
+
+    it("reads a response in hand that completes in the same turn as the abort, and surfaces its own failure", async () => {
+      const controller = new AbortController();
+      const fetch = (async () => {
+        controller.abort(reason);
+        return new Response("<html>");
+      }) as typeof globalThis.fetch;
+      // The body is not JSON: that, not the abort, is what getPlace's reader reports.
+      await expect(getPlace(new AtgeoClient({ fetch }), controller.signal)).rejects.toBeInstanceOf(SyntaxError);
+    });
+
+    it("reports a body error after a caller abort as the caller's reason", async () => {
+      const controller = new AbortController();
+      const fetch = (async () => {
+        controller.abort(reason);
+        return new Response(new Uint8Array(2000));
+      }) as typeof globalThis.fetch;
+      await expect(getPlace(new AtgeoClient({ fetch, maxBodyBytes: 1000 }), controller.signal)).rejects.toBe(reason);
+    });
+
     it("cancels the body of a response that arrives after the caller gave up", async () => {
       let cancelled = false;
       let answer!: () => void;
