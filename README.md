@@ -145,18 +145,21 @@ A cache hit returns the copy from the cached tile with the lowest URL, the same 
 
 Returns `{ did, tilesets: [{ slug, collections: [{ dataset, collection }] }] }`. Cached for an hour.
 
+The describe calls read the server's answer leniently, so every scalar in the result is optional in the types (`did?: string`, `slug?: string`, and so on): a field the server leaves out, or sends as the wrong type, comes back absent, with no key, rather than as an `undefined` typed as a string. `tilesets`, and `collections` within a tileset or a service description, are the exceptions; they're always arrays, empty when the server sent none. List elements that can't be read are dropped.
+
 ### `describeTileset(slug): Promise<Tileset>`
 
-Returns the tileset's descriptor: `slug`, `collections` (each a `{ dataset, collection }` with optional `release`, `source`, `licenses`, `attribution`, `recordCount`, `locationFormats`, `containmentTypes`, `categories` and `attributes`), and optional `publishedAt`, `extent` and `references`. Not cached.
+Returns the tileset's descriptor: `slug`, `collections` (each a `{ dataset, collection }` with optional `release`, `source`, `licenses`, `attribution`, `recordCount`, `locationFormats`, `containmentTypes`, `categories` and `attributes`), and optional `publishedAt`, `extent` and `references`. Not cached. The same leniency applies.
 
 ### Errors
 
 - `AtgeoError` has a `code` string and the HTTP `status`, which tells a request the server refused (4xx) from one it failed to answer (5xx) without matching on codes. A non-2xx response from the server becomes an `AtgeoError` whose `code` and message come from the server's JSON error body (`error`, `message`); if there isn't one, the code is `HttpError`. Apart from `HttpError`, every code comes from the server: for example `PlaceNotFound`, `TilesetNotFound`, `DatasetNotFound`, `CollectionNotFound`, `BboxTooLarge`, or `InvalidRequest` for a malformed parameter. The lexicons in `test/lexicon/` list the codes each method declares.
+- `DecodingError` means the server answered 2xx with JSON that has nothing the client can use: a `getTiles` body with no `tiles` array, a `getPlace` body with no `record` object, or a describe body that isn't an object. It rejects the call, and nothing is cached. The client is otherwise tolerant: it ignores fields it doesn't read, treats a missing or wrong-typed one as absent, and skips a tile record or list entry it can't read instead of failing. A body that isn't JSON at all rejects with the `SyntaxError` from `JSON.parse`, not a `DecodingError`.
 - `searchPlaces` throws `TypeError` for an invalid region (non-finite or out-of-range coordinates, `minLat > maxLat`, negative radius) and for `sort: "similarity"` without text. It throws synchronously, before any request.
 - A failed `getTiles` request rejects the whole search. A failed tile request does not: that tile is skipped, `tiles.failed` counts it, `complete` is `false`, and `tileFailures` says which tile and why. The `kind` is where it went wrong:
-  - `refused`: the URL isn't a string, isn't an absolute `http` or `https` URL, or carries credentials (`https://user:pw@host/…`). No request is made.
-  - `status`: the tile answered non-2xx. `status` is the HTTP status and `error` the `AtgeoError`, except that a body of exactly `null` gets you a `TypeError` instead. That's a known wart, not a promise.
-  - `decode`: the tile answered 2xx with something that isn't a tile: not JSON, or no `records` array.
+  - `refused`: the URL isn't an absolute `http` or `https` URL, or carries credentials (`https://user:pw@host/…`). No request is made.
+  - `status`: the tile answered non-2xx. `status` is the HTTP status and `error` the `AtgeoError`.
+  - `decode`: the tile answered 2xx with something that isn't a tile: not JSON, or no `records` array. A record in it that isn't usable (not an object, or with no object `value`) is skipped and doesn't fail the tile.
   - `transport`: `fetch` threw, or the body couldn't be read. `error` is whatever it threw, as is.
 
   The kind comes from which step failed, not from the error's type: a custom `fetch` that throws an `AtgeoError` of its own is still `transport`. An entry holds the tile URL and what fetching it produced, never your search text or region, and the SDK doesn't log it or send it anywhere. What you do with it is up to you.
@@ -196,6 +199,7 @@ There are more scripts in `package.json`, including a browser smoke test and an 
 `fixtures/` holds language-neutral contract files, meant for future ports of this client to other languages:
 
 - `normalize.json` and `jaro-winkler.json` are input/output pairs that a port must match exactly.
+- `lenient-readers.json` is a response body for each reader of the wire protocol (`getTiles`, a tile payload, `getPlace`, `describeService`, `describeTileset`) with what the reader keeps of it, or that it throws `DecodingError`. It pins what a port does with a missing, wrong-typed or unusable field.
 - `ranking-scenarios.json` describes regions, text, and records, and asserts which places land in the top K. It checks membership, not exact order, since the weights are likely to change. Each record is `{ value, importance }`: `value` is an `org.atgeo.place` with an `origin`, and `importance` is an integer, as on the wire. The expectations name places by `origin`.
 
 `docs/port-contract.md` is the language-neutral statement of what this client does, written for ports; `docs/swift-sdk-spec.md` and `docs/kotlin-sdk-spec.md` are the specifications for the Swift and Kotlin ports, `docs/python-sdk-spec.md` for the Python port, and `docs/rust-sdk-spec.md` the proposed one for Rust.

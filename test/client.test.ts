@@ -114,14 +114,14 @@ describe("describeService and describeTileset", () => {
         { slug: "osm", collections: [{ dataset: "openstreetmap.org", collection: "way" }] },
       ],
     });
-    const slugs: string[] = service.tilesets.map((t) => t.slug);
+    const slugs: (string | undefined)[] = service.tilesets.map((t) => t.slug);
     expect(slugs).toEqual(["overture-place", "osm"]);
   });
 
   it("describeTileset returns the descriptor", async () => {
     const tileset = await new AtgeoClient({ fetch: fake().fetch }).describeTileset("osm");
     expect(tileset).toEqual({ slug: "osm", collections: OSM.collections, references: OSM.references });
-    const slug: string = tileset.slug;
+    const slug: string | undefined = tileset.slug;
     expect(slug).toBe("osm");
   });
 
