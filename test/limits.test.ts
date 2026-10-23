@@ -99,6 +99,22 @@ describe("maxBodyBytes", () => {
     expect(result.tileFailures.map((f) => f.kind)).toEqual(["transport"]);
   });
 
+  it("does not race every chunk against the request's stop promise", async () => {
+    // A race per chunk would hang a reaction on a promise that stays pending for the whole request,
+    // so the memory held would grow with the number of chunks, not with the cap: a 32 MiB body in
+    // 16-byte chunks cost over a gigabyte.
+    const bytes = tileOfSize(40_000);
+    const race = vi.spyOn(Promise, "race");
+    try {
+      const fetch = tileFetch(() => new Response(bodyOf(bytes, 16)));
+      const result = await search(new AtgeoClient({ fetch }));
+      expect(result.tileFailures).toEqual([]);
+      expect(race.mock.calls.length).toBeLessThan(20);
+    } finally {
+      race.mockRestore();
+    }
+  });
+
   it("defaults to 32 MiB", async () => {
     const MiB = 1024 * 1024;
     const over = chunked(33, MiB);

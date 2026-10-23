@@ -168,9 +168,27 @@ async function readText(response: Response, maxBodyBytes: number, stop: Promise<
   const decoder = new TextDecoder();
   const parts: string[] = [];
   let total = 0;
+  // One reaction on `stop` for the whole body, not one per chunk: a race against a promise that stays
+  // pending for the life of the request would keep every chunk's race alive until it settled.
+  let stopped = false;
+  let stopError: unknown;
+  let rejectRead: ((error: unknown) => void) | undefined;
+  stop.catch((error) => {
+    stopped = true;
+    stopError = error;
+    rejectRead?.(error);
+  });
+  const readOne = () =>
+    new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+      if (stopped) return reject(stopError);
+      rejectRead = reject;
+      reader.read().then(resolve, reject);
+    }).finally(() => {
+      rejectRead = undefined;
+    });
   try {
     for (;;) {
-      const { done, value } = await Promise.race([reader.read(), stop]);
+      const { done, value } = await readOne();
       if (done) break;
       total += value.byteLength;
       if (total > maxBodyBytes) throw new BodyTooLargeError(maxBodyBytes);
@@ -181,7 +199,9 @@ async function readText(response: Response, maxBodyBytes: number, stop: Promise<
   } catch (error) {
     // Whatever ended the read, the stream is not wanted: cancel it, which also settles a read that
     // is still pending, so the lock can be released.
-    void reader.cancel().catch(() => {});
+    try {
+      void Promise.resolve(reader.cancel()).catch(() => {});
+    } catch {}
     throw error;
   } finally {
     try {
