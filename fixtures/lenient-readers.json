@@ -594,6 +594,56 @@
   },
   {
     "reader": "tilePayload",
+    "name": "a fractional importance is truncated toward zero",
+    "body": {
+      "records": [
+        {
+          "value": {},
+          "importance": 2.9
+        },
+        {
+          "value": {},
+          "importance": -2.9
+        },
+        {
+          "value": {},
+          "importance": 0.5
+        },
+        {
+          "value": {},
+          "importance": -0.5
+        },
+        {
+          "value": {},
+          "importance": -0.0
+        }
+      ]
+    },
+    "result": [
+      {
+        "value": {},
+        "importance": 2
+      },
+      {
+        "value": {},
+        "importance": -2
+      },
+      {
+        "value": {},
+        "importance": 0
+      },
+      {
+        "value": {},
+        "importance": 0
+      },
+      {
+        "value": {},
+        "importance": 0
+      }
+    ]
+  },
+  {
+    "reader": "tilePayload",
     "name": "no records array: empty object",
     "body": {},
     "decodingError": true
@@ -671,6 +721,18 @@
     },
     "result": {
       "record": {}
+    }
+  },
+  {
+    "reader": "getPlace",
+    "name": "a fractional importance is truncated toward zero",
+    "body": {
+      "record": {},
+      "importance": -2.9
+    },
+    "result": {
+      "record": {},
+      "importance": -2
     }
   },
   {
@@ -1113,6 +1175,73 @@
               "value": "v",
               "count": 2
             },
+            {}
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "reader": "describeTileset",
+    "name": "fractional recordCount and count are truncated toward zero",
+    "body": {
+      "collections": [
+        {
+          "dataset": "d",
+          "collection": "c",
+          "recordCount": 2.9,
+          "categories": [
+            {
+              "value": "a",
+              "count": -2.9
+            },
+            {
+              "value": "b",
+              "count": -0.5
+            }
+          ]
+        }
+      ]
+    },
+    "result": {
+      "collections": [
+        {
+          "dataset": "d",
+          "collection": "c",
+          "recordCount": 2,
+          "categories": [
+            {
+              "value": "a",
+              "count": -2
+            },
+            {
+              "value": "b",
+              "count": 0
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "reader": "describeTileset",
+    "name": "recordCount out of range is absent",
+    "body": {
+      "collections": [
+        {
+          "recordCount": 1e+30,
+          "categories": [
+            {
+              "count": -9223372036854775808
+            }
+          ]
+        }
+      ]
+    },
+    "result": {
+      "collections": [
+        {
+          "categories": [
             {}
           ]
         }

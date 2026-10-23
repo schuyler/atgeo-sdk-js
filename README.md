@@ -143,7 +143,7 @@ A cache hit returns the copy from the cached tile with the lowest URL, the same 
 
 ### `describeService(): Promise<ServiceDescription>`
 
-Returns `{ did, tilesets: [{ slug, collections: [{ dataset, collection }] }] }`. Cached for an hour.
+Returns `{ did?, tilesets: [{ slug?, collections: [{ dataset?, collection? }] }] }`. Cached for an hour.
 
 The describe calls read the server's answer leniently, so every scalar in the result is optional in the types (`did?: string`, `slug?: string`, and so on): a field the server leaves out, or sends as the wrong type, comes back absent, with no key, rather than as an `undefined` typed as a string. `tilesets`, and `collections` within a tileset or a service description, are the exceptions; they're always arrays, empty when the server sent none. List elements that can't be read are dropped.
 

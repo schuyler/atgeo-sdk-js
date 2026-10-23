@@ -36,7 +36,7 @@ For the two describe calls, every field is optional on the way in. A port's type
 
 `value` (a tile record) and `record` (getPlace) are `org.atgeo.place` values and must be surfaced to the caller unmodified: every key, nested value and unknown field as served. Nothing about the schema of a place is assumed beyond what sections 5 and 7 read.
 
-`importance` is a JSON integer on the wire, decoded through a double and range-checked into a signed 64-bit integer, so precision beyond 2^53 is lost exactly as in the reference; a port must not decode the literal exactly, or it would order huge values differently from the other SDKs. A compliant server never sends a non-integer; when one arrives, the reference keeps it as a float and a port whose importance type is integral truncates it toward zero. A number whose magnitude is 2^63 or more is absent (the check is symmetric, so exactly -2^63 is absent too, although a signed 64-bit integer could hold it). Anything that is not a JSON number, including an array or a string holding one, is absent. None of this fails the tile.
+`importance` is a JSON integer on the wire, decoded through a double and range-checked into a signed 64-bit integer, so precision beyond 2^53 is lost exactly as in the reference; a port must not decode the literal exactly, or it would order huge values differently from the other SDKs. A compliant server never sends a non-integer; when one arrives it is truncated toward zero (`2.9` is 2, `-2.9` is -2, `-0.5` is 0), in the reference and in every port. A number whose magnitude is 2^63 or more is absent (the check is symmetric, so exactly -2^63 is absent too, although a signed 64-bit integer could hold it). Anything that is not a JSON number, including an array or a string holding one, is absent. None of this fails the tile. The same reading applies to `recordCount` in a collection and `count` in a category of a describe call.
 
 ### Errors
 
@@ -405,7 +405,7 @@ A port vendors, at a pinned atgeo-sdk-js commit recorded in a `SOURCE` file:
 - `fixtures/normalize.json` (41 cases, exact match),
 - `fixtures/jaro-winkler.json` (33 cases, within 5e-7),
 - `fixtures/ranking-scenarios.json` (12 scenarios, membership),
-- `fixtures/lenient-readers.json` (84 cases, exact match): a response body for each of the five readers of section 1 (`getTiles`, a tile payload, `getPlace`, `describeService`, `describeTileset`) and either what a port's reader keeps of it or `decodingError`. A missing key is an absent field. The expected values are in JSON terms, so a port maps them onto its own types; an `importance` outside the range of section 1 is the one place they differ from the reference, which keeps a fractional number that an integral port truncates, and no case has one,
+- `fixtures/lenient-readers.json` (88 cases, exact match): a response body for each of the five readers of section 1 (`getTiles`, a tile payload, `getPlace`, `describeService`, `describeTileset`) and either what a port's reader keeps of it or `decodingError`. A missing key is an absent field. The expected values are in JSON terms, so a port maps them onto its own types.
 - `test/lexicon/*.json`, for a fake server that validates its own traffic.
 
 It also reproduces the worked examples in sections 3 and 6, and ports the behavioural tests in `test/`. The tests that matter most, because they pin behaviour this document could describe wrongly:

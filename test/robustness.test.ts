@@ -244,3 +244,25 @@ describe("describeTileset body", () => {
     });
   });
 });
+
+describe("a 2xx body that is not JSON", () => {
+  const broken = () => new Response("{");
+  const origin = "urn:atgeo:overturemaps.org:place:x";
+
+  // Invalid JSON is the platform's SyntaxError, not a DecodingError (contract section 1).
+  it.each([
+    ["getTiles", (c: AtgeoClient) => c.searchPlaces({ region }), { getTiles: broken }],
+    ["getPlace", (c: AtgeoClient) => c.getPlace({ origin }), { getPlace: broken }],
+    ["describeService", (c: AtgeoClient) => c.describeService(), { describeService: broken }],
+    ["describeTileset", (c: AtgeoClient) => c.describeTileset("s"), { describeTileset: broken }],
+  ])("rejects %s with a SyntaxError", async (_name, call, routes) => {
+    const error = await call(new AtgeoClient({ fetch: rawServer(routes).fetch })).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SyntaxError);
+    expect(error).not.toBeInstanceOf(DecodingError);
+  });
+
+  it("reports a tile payload as a decode failure whose error is a SyntaxError", async () => {
+    const result = await new AtgeoClient({ fetch: rawServer({ getTiles: { tiles: [tileUrl("a")] }, tiles: { [tileUrl("a")]: broken } }).fetch }).searchPlaces({ region });
+    expect(result.tileFailures).toEqual([{ url: tileUrl("a"), kind: "decode", error: expect.any(SyntaxError) }]);
+  });
+});

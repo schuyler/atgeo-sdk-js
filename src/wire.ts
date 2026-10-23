@@ -39,9 +39,14 @@ export const readString = (v: unknown): string | undefined => (typeof v === "str
 // 2^63: a number of this magnitude or more is absent, so exactly -2^63 is too (contract section 1).
 const TWO_TO_THE_63 = 2 ** 63;
 
-/** A JSON number below 2^63 in magnitude; absent for anything else, a string holding a number included. */
-export const readNumber = (v: unknown): number | undefined =>
-  typeof v === "number" && Number.isFinite(v) && Math.abs(v) < TWO_TO_THE_63 ? v : undefined;
+/**
+ * A JSON number read as an integer: truncated toward zero, and absent unless finite and below 2^63 in
+ * magnitude. Anything else, a string holding a number included, is absent. The ports truncate the same way.
+ */
+export function readInteger(v: unknown): number | undefined {
+  if (typeof v !== "number" || !Number.isFinite(v) || Math.abs(v) >= TWO_TO_THE_63) return undefined;
+  return Math.trunc(v) + 0; // + 0 turns -0, which -0.5 truncates to, into 0
+}
 
 /** Drops the keys whose value is undefined, so an absent field is a missing key. */
 function present<T extends object>(o: T): T {
@@ -71,7 +76,7 @@ export function readTilePayload(body: unknown): TileRecord[] {
   const records: TileRecord[] = [];
   for (const r of body.records) {
     if (!isObject(r) || !isObject(r.value)) continue;
-    records.push(present({ value: r.value, uri: readString(r.uri), importance: readNumber(r.importance) }));
+    records.push(present({ value: r.value, uri: readString(r.uri), importance: readInteger(r.importance) }));
   }
   return records;
 }
@@ -80,7 +85,7 @@ export function readTilePayload(body: unknown): TileRecord[] {
 export function readPlace(body: unknown): { record: PlaceValue; importance?: number } {
   if (!isObject(body)) return unusable("getPlace body is not an object");
   if (!isObject(body.record)) return unusable("getPlace body has no record object");
-  return present({ record: body.record, importance: readNumber(body.importance) });
+  return present({ record: body.record, importance: readInteger(body.importance) });
 }
 
 const readCollectionRef = (o: Record<string, unknown>): CollectionRef =>
@@ -99,10 +104,10 @@ const readAttribution = (o: Record<string, unknown>): CollectionAttribution =>
 const readCollectionInfo = (o: Record<string, unknown>): CollectionInfo =>
   present({
     ...readAttribution(o),
-    recordCount: readNumber(o.recordCount),
+    recordCount: readInteger(o.recordCount),
     locationFormats: readStrings(o.locationFormats),
     containmentTypes: readStrings(o.containmentTypes),
-    categories: readObjects(o.categories, (c) => present({ value: readString(c.value), count: readNumber(c.count) })),
+    categories: readObjects(o.categories, (c) => present({ value: readString(c.value), count: readInteger(c.count) })),
     attributes: readStrings(o.attributes),
   });
 
