@@ -407,6 +407,24 @@ A port vendors, at a pinned atgeo-sdk-js commit recorded in a `SOURCE` file:
 - `fixtures/ranking-scenarios.json` (12 scenarios, membership),
 - `test/lexicon/*.json`, for a fake server that validates its own traffic.
 
+### Pinning and the check
+
+A `SOURCE` file records where a vendored directory came from, one line per upstream:
+
+```
+atgeo-sdk-js <40-hex commit> fixtures/
+garganorn <40-hex commit> garganorn/lexicon/
+```
+
+The first field is the repository (`atgeo-sdk-js` or `garganorn`), the second the full commit SHA, and the third the directory in that repository the files were copied from. Blank lines and lines starting with `#` are skipped, and anything after the third field is ignored, so a note or a parenthetical there (Swift's `(from atgeo-sdk-js test/lexicon/SOURCE)`) is fine. The fixtures directory's `SOURCE` has the `atgeo-sdk-js` line. The lexicon copy takes its `garganorn` line from its own `SOURCE` (`lexicon/SOURCE` next to the fixtures, or `test/lexicon/SOURCE` here), or, in a port that keeps both in one directory, from the fixtures' `SOURCE`. A pin is a commit that exists in that repository's history: a SHA that only ever lived on a rebased or deleted branch cannot be checked and fails.
+
+[`scripts/check-fixtures.sh`](../scripts/check-fixtures.sh) holds each vendored directory to its pin. It needs only bash, git and network access, and takes `--fixtures <dir>` (a port's fixtures directory, and the `lexicon/` inside it) or `--lexicon <dir>` (this repository's `test/lexicon`):
+
+- It **fails** if a pinned commit does not exist (or an abbreviated SHA is ambiguous), or if any file differs from the pinned commit's by a single byte, is missing from the copy, or is in the copy but not at the pinned commit. Every file counts, at any depth and of any type, except `SOURCE` itself (and the `lexicon/` directory inside a port's fixtures directory, which is checked against its own pin).
+- It **warns**, with a GitHub `::warning::` annotation and a zero exit status, if the pin is behind: the fixtures differ from the default branch of `atgeo-sdk-js`, a port's lexicons differ from that branch's `test/lexicon/`, or this repository's `test/lexicon/` differs from the default branch of garganorn. A warning is not a failure because a fixture change here would otherwise turn every port's CI red until each had re-vendored. Re-vendor at your leisure, but do: a port on a stale pin passes against a contract the reference no longer has.
+
+Every port's CI runs it, from a copy of the script pinned by commit in the workflow so that a change to the script reaches a port only when that port moves the pin; this repository's CI runs it on `test/lexicon`. To re-pin, copy the files from the new commit, put its full SHA in `SOURCE`, and run the script before pushing.
+
 It also reproduces the worked examples in sections 3 and 6, and ports the behavioural tests in `test/`. The tests that matter most, because they pin behaviour this document could describe wrongly:
 
 - `region.test.ts`: serialization, outward snapping, degenerate spans, circle to bbox, antimeridian splitting, invalid regions.

@@ -77,10 +77,20 @@ jobs:
       - run: npx playwright install --with-deps --only-shell chromium
       - run: npm run test:browser
 
+  # test/lexicon is what its SOURCE says: garganorn's lexicons at the named commit. A pin that has
+  # fallen behind garganorn's default branch is a warning annotation, not a failure.
+  fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: bash scripts/check-fixtures.sh --lexicon test/lexicon
+
   # The one check to mark required. A skipped browser job passes; a failed or
   # cancelled job anywhere fails this.
   ci:
-    needs: [test, changes, browser]
+    needs: [test, changes, browser, fixtures]
     if: always()
     runs-on: ubuntu-latest
     steps:
