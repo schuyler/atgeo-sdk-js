@@ -2,6 +2,11 @@ export type PlaceValue = { [key: string]: unknown };
 
 export interface PlaceRecord {
   origin: string;
+  // The record value as served. It is frozen (shallowly) and may be the very object the tile cache holds, so
+  // assigning to it, deleting from it or defining a property on it throws a TypeError in strict mode (and does
+  // nothing in sloppy mode). Nested objects and arrays (locations, variants, attributes, ...) are not frozen
+  // and are shared with the cache: do not change them either. For a copy you can change, use
+  // structuredClone(place) (deep) or { ...place } (shallow, nested values still shared).
   place: PlaceValue;
   importance: number | null;
 }
@@ -59,6 +64,11 @@ export interface SearchOptions {
 
 export interface SearchHit {
   origin: string | null;
+  // The record value as served. It is frozen (shallowly) and is the very object the tile cache holds, shared by
+  // every later search over the same tile and by getPlace, so assigning to it, deleting from it or defining a
+  // property on it throws a TypeError in strict mode (and does nothing in sloppy mode). Nested objects and
+  // arrays (locations, variants, attributes, ...) are not frozen and are shared too: do not change them either.
+  // For a copy you can change, use structuredClone(place) (deep) or { ...place } (shallow, nested values still shared).
   place: PlaceValue;
   importance: number | null;
   distance: number;
