@@ -117,7 +117,7 @@ Sort modes:
 
 Similarity is compared to three decimal places, so scores that differ only beyond that count as ties. Remaining ties break on `origin` (a hit with no `origin` sorts last), so ordering is deterministic.
 
-`place` is the gazetteer's value, untouched. Importance lives on `hit.importance` and identity on `hit.origin`.
+`place` is the gazetteer's value as served, every key and nested value unmodified. Importance lives on `hit.importance` and identity on `hit.origin`.
 
 **`place` is shared with the client's tile cache, so it is frozen.** The object in a hit is the one the cache holds: every later search over the same tile, and `getPlace` from the cache, returns it too. To keep one app's edits from corrupting what the next search sees, the client freezes each place once, when it parses the tile (and a `getPlace` answer from the network, for consistency). Assigning to `hit.place.name`, deleting a key, or defining a property throws a `TypeError` in strict mode (ES modules are strict) and silently does nothing in sloppy mode.
 
@@ -128,7 +128,7 @@ const mine = structuredClone(hit.place); // deep copy, safe to change
 const top = { ...hit.place };            // shallow copy: top-level keys are yours, nested values are still shared
 ```
 
-(Deep-freezing every record was measured and adds about 50% to the time it takes to parse a 15,000-record tile; the shallow freeze adds nothing measurable. That's why it's shallow.) The declared TypeScript type of `place` is still a mutable `{ [key: string]: unknown }`, so the compiler will not warn you; the runtime will.
+(It's shallow because a deep freeze made parsing a large tile markedly slower, while the shallow one costs nothing measurable.) The declared TypeScript type of `place` is still a mutable `{ [key: string]: unknown }`, so the compiler will not warn you; the runtime will.
 
 #### Overview answers
 
