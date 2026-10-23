@@ -223,6 +223,22 @@ describe("requestTimeoutMs", () => {
     expect(isTimeout(result.tileFailures[0].error)).toBe(true);
   });
 
+  it("covers the body of a non-2xx too: a stalled error body is a transport failure, not a status", async () => {
+    const stalledError = (init: RequestInit | undefined) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode(`{"error":"Gone",`));
+            init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason));
+          },
+        }),
+        { status: 500 },
+      );
+    const result = await search(new AtgeoClient({ fetch: tileFetch(stalledError), requestTimeoutMs: 30 }));
+    expect(result.tileFailures).toEqual([{ url: TILE, kind: "transport", error: expect.anything() }]);
+    expect(isTimeout(result.tileFailures[0].error)).toBe(true);
+  });
+
   it("covers a body that trickles: the limit is on the whole request, not on silence", async () => {
     const trickle = () => {
       let timer: ReturnType<typeof setInterval>;

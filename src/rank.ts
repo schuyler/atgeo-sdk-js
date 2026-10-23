@@ -4,6 +4,7 @@ import { normalize } from "./normalize.js";
 import { center } from "./region.js";
 import { jaroWinkler } from "./similarity.js";
 import type { Region, SearchHit, SortMode } from "./types.js";
+import { isObject } from "./wire.js";
 
 const JW_THRESHOLD = 0.6;
 const MAX_QUERY_TOKENS = 12;
@@ -17,8 +18,8 @@ function scoreName(query: string, tokens: string[], name: string): number {
 
 function textScore(query: string, value: TileRecord["value"]): number {
   const tokens = query.split(" ").slice(0, MAX_QUERY_TOKENS);
-  const variants = Array.isArray(value.variants) ? (value.variants as { name?: unknown }[]) : [];
-  const names = [value.name, ...variants.map((v) => v.name)]
+  const variants: unknown[] = Array.isArray(value.variants) ? value.variants : [];
+  const names = [value.name, ...variants.map((v) => (isObject(v) ? v.name : undefined))]
     .filter((n): n is string => typeof n === "string")
     .map(normalize)
     .filter((n) => n !== "");

@@ -2,7 +2,7 @@
 
 What a port of `@atgeo/client` to another language must do to be the same client. The port specs ([swift-sdk-spec.md](swift-sdk-spec.md), [kotlin-sdk-spec.md](kotlin-sdk-spec.md), [python-sdk-spec.md](python-sdk-spec.md), [rust-sdk-spec.md](rust-sdk-spec.md)) describe each port's API, packaging and idioms, and point here for behaviour, so that the SDKs can't drift apart on what a search returns.
 
-The reference is the TypeScript source in `src/` at the commit this document was written against (`8654ea7`). Where this document and the source disagree, the source wins and this document has a bug, except for the reference deviations listed in [section 16](#16-known-reference-deviations), where the behaviour stated here is the contract. The fixtures in `fixtures/` and the lexicons in `test/lexicon/` are the executable half of this contract; see [Conformance](#conformance).
+The reference is the TypeScript source in `src/` at the commit this document was written against (`8654ea7`). Where this document and the source disagree, the source wins and this document has a bug. The fixtures in `fixtures/` and the lexicons in `test/lexicon/` are the executable half of this contract; see [Conformance](#conformance).
 
 "Must" marks behaviour a port has to reproduce. "Should" marks the reference behaviour where a port may do better, as long as the observable results stay the same. "May" marks a deliberate freedom.
 
@@ -26,9 +26,9 @@ Query values must be percent-encoded so the server decodes them to the exact str
 
 Responses are JSON. The schemas are the lexicons in `test/lexicon/`; the ones a port reads are:
 
-- `getTiles` → `{ tiles: string[], overview?: boolean }`. `tiles` is in ascending string order on the wire, but the client sorts anyway (section 4). Entries that are not strings are skipped (section 16). `overview` follows JavaScript truthiness, which is exactly: false when absent, `null`, `false`, `0`, `-0` or `""`, and true for any other value. A body with no `tiles` array has no usable tile list (Errors, below).
-- tile payload (`org.atgeo.tilePayload`) → `{ records: [{ value, uri?, importance? }], ... }`. Only `value`, `uri` and `importance` are kept per record; `publishedAt` and `attribution` are ignored. A record that is not an object, or whose `value` is not an object, is skipped and the tile is still used. A `uri` that is not a string, and an `importance` that is not a number, are absent (section 16).
-- `getPlace` → `{ uri, record, importance? }`. `record` must be an object, or the response has no usable body; `importance` as for a tile record; `uri` is not read. The reference checks none of this (section 16).
+- `getTiles` → `{ tiles: string[], overview?: boolean }`. `tiles` is in ascending string order on the wire, but the client sorts anyway (section 4). Entries that are not strings are skipped. `overview` follows JavaScript truthiness, which is exactly: false when absent, `null`, `false`, `0`, `-0` or `""`, and true for any other value. A body with no `tiles` array has no usable tile list (Errors, below).
+- tile payload (`org.atgeo.tilePayload`) → `{ records: [{ value, uri?, importance? }], ... }`. Only `value`, `uri` and `importance` are kept per record; `publishedAt` and `attribution` are ignored. A record that is not an object, or whose `value` is not an object, is skipped and the tile is still used. A `uri` that is not a string, and an `importance` that is not a number, are absent.
+- `getPlace` → `{ uri, record, importance? }`. `record` must be an object, or the response has no usable body; `importance` as for a tile record; `uri` is not read.
 - `describeService` → `{ did, tilesets: [{ slug, collections: [{ dataset, collection }] }] }`.
 - `describeTileset` → `org.atgeo.defs#tileset`.
 
@@ -36,15 +36,15 @@ For the two describe calls, every field is optional on the way in. A port's type
 
 `value` (a tile record) and `record` (getPlace) are `org.atgeo.place` values and must be surfaced to the caller unmodified: every key, nested value and unknown field as served. Nothing about the schema of a place is assumed beyond what sections 5 and 7 read.
 
-`importance` is a JSON integer on the wire, decoded through a double and range-checked into a signed 64-bit integer, so precision beyond 2^53 is lost exactly as in the reference; a port must not decode the literal exactly, or it would order huge values differently from the other SDKs. A compliant server never sends a non-integer; when one arrives, the reference keeps it as a float and a port whose importance type is integral truncates it toward zero. A number whose magnitude is 2^63 or more is absent (the check is symmetric, so exactly -2^63 is absent too, although a signed 64-bit integer could hold it). Anything that is not a JSON number, including an array or a string holding one, is absent (section 16). None of this fails the tile.
+`importance` is a JSON integer on the wire, decoded through a double and range-checked into a signed 64-bit integer, so precision beyond 2^53 is lost exactly as in the reference; a port must not decode the literal exactly, or it would order huge values differently from the other SDKs. A compliant server never sends a non-integer; when one arrives it is truncated toward zero (`2.9` is 2, `-2.9` is -2, `-0.5` is 0), in the reference and in every port. A number whose magnitude is 2^63 or more is absent (the check is symmetric, so exactly -2^63 is absent too, although a signed 64-bit integer could hold it). Anything that is not a JSON number, including an array or a string holding one, is absent. None of this fails the tile. The same reading applies to `recordCount` in a collection and `count` in a category of a describe call.
 
 ### Errors
 
-A non-2xx response raises the port's `AtgeoError` type with a `code` string, a `message`, and the response's HTTP `status` as an integer, so that a caller can tell a refused request (4xx) from a server failure (5xx) without matching on `code`. If the body is a JSON object whose `error` is a string, that is the code; otherwise the code is `HttpError`. If its `message` is a string, that is the message; otherwise the message is `HTTP {status}`. Each field is judged on its own, and a body that is not a JSON object has neither (section 16). The body is read before the status is checked, so a server that sends an error body with a non-2xx status is always reported with its own code.
+A non-2xx response raises the port's `AtgeoError` type with a `code` string, a `message`, and the response's HTTP `status` as an integer, so that a caller can tell a refused request (4xx) from a server failure (5xx) without matching on `code`. If the body is a JSON object whose `error` is a string, that is the code; otherwise the code is `HttpError`. If its `message` is a string, that is the message; otherwise the message is `HTTP {status}`. Each field is judged on its own, and a body that is not a JSON object has neither. The body is read before the status is checked, so a server that sends an error body with a non-2xx status is always reported with its own code.
 
 Every code other than `HttpError` comes from the server. The lexicons declare which codes each query can return: `BboxTooLarge`, `BboxTooPrecise`, `DatasetNotFound`, `CollectionNotFound`, `InvalidBbox` for getTiles; `PlaceNotFound` for getPlace; `TilesetNotFound` for describeTileset; `InvalidRequest` for any malformed parameter. The list is informative, not closed: a port passes any code through unchanged and never decides what to do by matching on it, so that a code the server adds later is reported, not mishandled.
 
-A 2xx response whose body is not valid JSON, or decodes but has no usable body, raises the port's decoding error, not `AtgeoError`: the platform's JSON decoding error, or a type of the port's own where the platform's would be caught as something else (Kotlin's `SerializationException` is an `IllegalArgumentException`, the type of an argument error), except inside a tile fetch (section 4), where it counts as a failed tile. "No usable body" is the narrow list above: a `getTiles` body with no `tiles` array, a `getPlace` body with no `record` object, a describe body that is not an object. Nothing else about a body's shape is an error. The reference checks none of this (section 16).
+A 2xx response whose body is not valid JSON, or decodes but has no usable body, raises the port's decoding error, not `AtgeoError`: the platform's JSON decoding error, or a type of the port's own where the platform's would be caught as something else (Kotlin's `SerializationException` is an `IllegalArgumentException`, the type of an argument error), except inside a tile fetch (section 4), where it counts as a failed tile. "No usable body" is the narrow list above: a `getTiles` body with no `tiles` array, a `getPlace` body with no `record` object, a describe body that is not an object. Nothing else about a body's shape is an error.
 
 Network failures propagate as the port's HTTP layer's own error type, unwrapped. The transport follows at least same-scheme redirects (the JVM's `HttpURLConnection` does not cross from `http` to `https`), and the response's content type is not checked.
 
@@ -228,9 +228,9 @@ Warm searches: a repeat of the same region within the hour, with every tile stil
 - `point` is the first element with `$type == "community.lexicon.location.geo"` whose `latitude` and `longitude` parse to finite numbers.
 - `bbox` is the first element with `$type == "community.lexicon.location.bbox"` whose `south`, `north`, `east`, `west` all parse to finite numbers; it is stored as `{ south, north, segments: lonSegments(west, east) }`, so a box with `west > east` crosses the antimeridian.
 
-Both may be present. Elements with other `$type`s, and elements whose numbers don't parse, are skipped (a non-parsing geo element does not stop a later geo element from being the point). An element that is not a JSON object is skipped too (section 16 for `null`). Coordinates are not range-checked: a latitude of 95 or a longitude of 200 is kept as parsed and the geometry of section 6 is applied to it as is.
+Both may be present. Elements with other `$type`s, and elements whose numbers don't parse, are skipped (a non-parsing geo element does not stop a later geo element from being the point). An element that is not a JSON object is skipped too, `null` included. Coordinates are not range-checked: a latitude of 95 or a longitude of 200 is kept as parsed and the geometry of section 6 is applied to it as is.
 
-Parsing: the lexicon types these as strings; the reference converts whatever is there to a string and applies JavaScript `parseFloat`, so a JSON number works too. A port must accept a JSON string holding a decimal number (optional sign, optional fraction, optional exponent) and a JSON number. It may reject what `parseFloat` would partially accept (leading whitespace, trailing garbage such as `"1.5abc"`), and a port's own number parser may accept forms `parseFloat` does not (hex floats, a trailing `f`). These margins are a known, documented divergence between the SDKs rather than something to make exact, because garganorn emits none of them; a port lists the forms its parser treats differently in its `CONFORMANCE.md`. `Infinity`, `NaN` and the like are non-finite and are skipped.
+Parsing: the lexicon types these as strings; the reference applies JavaScript `parseFloat` to a JSON string and reads a JSON number as it is, so a number works too. A port must accept a JSON string holding a decimal number (optional sign, optional fraction, optional exponent) and a JSON number. Any other JSON type (`null`, a boolean, an array, an object) is no number, so `latitude: [0.5]` is not a coordinate. It may reject what `parseFloat` would partially accept (leading whitespace, trailing garbage such as `"1.5abc"`), and a port's own number parser may accept forms `parseFloat` does not (hex floats, a trailing `f`). These margins are a known, documented divergence between the SDKs rather than something to make exact, because garganorn emits none of them; a port lists the forms its parser treats differently in its `CONFORMANCE.md`. `Infinity`, `NaN` and the like are non-finite and are skipped.
 
 A longitude bbox element may be given with `west > east`, and `±180` are the same meridian.
 
@@ -326,7 +326,7 @@ textScore(query, value):
   max(0, max over names of scoreName(query, tokens, name))
 ```
 
-Words past the twelfth count only in the whole-query comparison. `variants` must be an array for its names to count; a variant that is not an object (section 16 for `null`), or whose `name` is not a string, is skipped.
+Words past the twelfth count only in the whole-query comparison. `variants` must be an array for its names to count; a variant that is not an object (`null` included), or whose `name` is not a string, is skipped.
 
 A record whose score is below `0.6` is dropped (exactly 0.6 is kept). Without text, the score is null and nothing is dropped.
 
@@ -407,13 +407,33 @@ A port vendors, at a pinned atgeo-sdk-js commit recorded in a `SOURCE` file:
 - `fixtures/normalize.json` (41 cases, exact match),
 - `fixtures/jaro-winkler.json` (33 cases, within 5e-7),
 - `fixtures/ranking-scenarios.json` (12 scenarios, membership),
+- `fixtures/lenient-readers.json` (88 cases, exact match): a response body for each of the five readers of section 1 (`getTiles`, a tile payload, `getPlace`, `describeService`, `describeTileset`) and either what a port's reader keeps of it or `decodingError`. A missing key is an absent field. The expected values are in JSON terms, so a port maps them onto its own types.
 - `test/lexicon/*.json`, for a fake server that validates its own traffic.
+
+### Pinning and the check
+
+A `SOURCE` file records where a vendored directory came from, one line per upstream:
+
+```
+atgeo-sdk-js <40-hex commit> fixtures/
+garganorn <40-hex commit> garganorn/lexicon/
+```
+
+The first field is the repository (`atgeo-sdk-js` or `garganorn`), the second the full commit SHA, and the third the directory in that repository the files were copied from. Blank lines and lines starting with `#` are skipped, and anything after the third field is ignored, so a note or a parenthetical there (Swift's `(from atgeo-sdk-js test/lexicon/SOURCE)`) is fine. The fixtures directory's `SOURCE` has the `atgeo-sdk-js` line. The lexicon copy takes its `garganorn` line from its own `SOURCE` (`lexicon/SOURCE` next to the fixtures, or `test/lexicon/SOURCE` here), or, in a port that keeps both in one directory, from the fixtures' `SOURCE`. A pin is a commit that exists in that repository's history: a SHA that only ever lived on a rebased or deleted branch cannot be checked and fails.
+
+[`scripts/check-fixtures.sh`](../scripts/check-fixtures.sh) holds each vendored directory to its pin. It needs only bash, git and network access, and takes `--fixtures <dir>` (a port's fixtures directory, and the `lexicon/` inside it) or `--lexicon <dir>` (this repository's `test/lexicon`):
+
+- It **fails** if a pinned commit does not exist (or an abbreviated SHA is ambiguous), or if any file differs from the pinned commit's by a single byte, is missing from the copy, or is in the copy but not at the pinned commit. Every file counts, at any depth and of any type, except `SOURCE` itself (and the `lexicon/` directory inside a port's fixtures directory, which is checked against its own pin).
+- It **warns**, with a GitHub `::warning::` annotation and a zero exit status, if the pin is behind: the fixtures differ from the default branch of `atgeo-sdk-js`, a port's lexicons differ from that branch's `test/lexicon/`, or this repository's `test/lexicon/` differs from the default branch of garganorn. A warning is not a failure because a fixture change here would otherwise turn every port's CI red until each had re-vendored. Re-vendor at your leisure, but do: a port on a stale pin passes against a contract the reference no longer has.
+
+Every port's CI runs it, from a copy of the script pinned by commit in the workflow so that a change to the script reaches a port only when that port moves the pin; this repository's CI runs it on `test/lexicon`. To re-pin, copy the files from the new commit, put its full SHA in `SOURCE`, and run the script before pushing.
 
 It also reproduces the worked examples in sections 3 and 6, and ports the behavioural tests in `test/`. The tests that matter most, because they pin behaviour this document could describe wrongly:
 
 - `region.test.ts`: serialization, outward snapping, degenerate spans, circle to bbox, antimeridian splitting, invalid regions.
 - `merge.test.ts` and `distance.test.ts`: dedupe, ordering ties, region filtering for both region kinds, seams at ±180 and the poles, determinism.
 - `client.test.ts`: getPlace cache and network paths, describe calls, result shapes, dataset and collection resolution.
+- `wire.test.ts` and `robustness.test.ts`: the lenient readers against that fixture, and what a search, `getPlace` and the describe calls do with a malformed body (section 1).
 - `transport.test.ts`: failed tiles (each `kind`, with its URL and status, in URL order), typed errors, URL construction.
 - `cache.test.ts`: warm regions, expiry, the `getPlace` cache scan. It has no test of LRU eviction or the cache budget; section 10 is the specification for those.
 - `overview.test.ts`: the overview flag.
@@ -458,13 +478,3 @@ Carried over from the reference as-is, and open for all the SDKs together rather
 - A lower default cache budget on phones. 50 MiB stays, per the maintainer's decision; a port exposes the option and keeps the default. Measured on the Kotlin port, a parsed tile takes 6.9 times its body size on HotSpot and 5.1 times on ART, so a port that caches parsed tiles against a body-size budget holds 250 to 350 MB when full; the Kotlin port caches bodies instead and keeps only the latest search's tiles parsed (section 10), which makes the budget close to its heap cost. The Swift port, measured with its `atgeo-bench`, held 3.7 to 4.3 times the budget the same way (181 to 210 MiB full, on Linux, macOS 14 and macOS 26); caching bodies as the Kotlin port does, the bodies and an index of record-key hashes take 1.0 to 1.4 times, and 1.4 to 2.1 times with the latest search's tiles parsed (Swift PR #10). The JavaScript port has not been measured.
 - Coalescing of duplicate in-flight requests.
 - Restricting tile URLs. The server names the tile URLs and the client fetches them as given, so a compromised server can send a client anywhere. Section 12 covers what the client sends, not where. A port may want to refuse tile URLs that are not `https`, or that are off the server's host; none of the SDKs does yet, and it is a decision for all of them together.
-
-## 16. Known reference deviations
-
-Reference behaviour at `8654ea7` that a port must not reproduce: crashes, wrong counts, and places where the reference is laxer about types than section 1. This section wins over the source. The crashes and wrong counts are to be fixed in the reference, after which this section shrinks.
-
-- A `getTiles` body that decodes but has no `tiles` array (`{}`, `[]`, `{ "tiles": "x" }`) is reported as one failed tile and no places, because the undefined list is treated as a tile URL, and the bad list is cached for an hour. A `null` body throws a bare `TypeError`. Entries of `tiles` that are not strings are counted as failed tiles, reported as `refused` with the non-string value as `url`; a missing list is one refused tile whose `url` is `undefined`, and any other non-array `tiles` is taken whole as one entry, so `"x"` is one refused tile with `url` `"x"` and `"abc"` one with `url` `"abc"`. A port raises its decoding error for a missing list and caches nothing, and skips non-string entries (sections 1 and 4.2).
-- A `null` element in a place's `locations` throws a bare `TypeError` from the region filter and fails the whole search, for a record that reaches that filter; so does a `null` element in `variants` when the search has text. Other non-object elements are skipped harmlessly. A port skips `null` too (sections 5 and 7).
-- A tile record that is a number, a string or an array, or whose `value` is `null` or missing, throws a bare `TypeError` from the dedupe step after the tile was counted as fetched. A `null` record fails its whole tile, since destructuring it throws inside the tile fetch. A `value` that is a scalar does not throw: it has no location and the region filter drops it, but it consumes its dedupe key first, so a later copy with the same `uri` is lost. The bad records are also cached with their tile, so every later search that touches the tile, and every `getPlace` call, throws the same `TypeError` until the tile is evicted. A port skips every such record and keeps the tile (section 4.4).
-- A `uri` that is not a string is used as a dedupe key and surfaced as the hit's `origin` as is; an `importance` that is not a number is surfaced as is; a coordinate given as a one-element array (`latitude: [0.5]`) parses as that element, because the reference stringifies before parsing; `error` and `message` fields of an error body that are not strings are surfaced as is; and a non-2xx body of `null` throws a bare `TypeError`, which in a tile fetch is reported as kind `status`, with its `status`, and that `TypeError` as `error`. A port treats each as absent (sections 1 and 5).
-- A `getPlace` body with no object `record` is returned with `place` missing or non-object, and a `null` body throws a bare `TypeError`. A describe body of any JSON type is returned as is, and a falsy service description (`null`, `false`, `0`, `""`) is fetched again on every call. A port raises its decoding error for a body that is not an object, or a `getPlace` body with no object `record` (section 1).

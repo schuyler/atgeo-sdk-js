@@ -4,10 +4,10 @@ import { normalize } from "./normalize.js";
 import { rank } from "./rank.js";
 import { queryBboxes, validateRegion } from "./region.js";
 import { Transport, checkStatus, mapLimit, type HttpResponse } from "./transport.js";
+import { readPlace, readServiceDescription, readTileList, readTilePayload, readTileset } from "./wire.js";
 import type {
   ClientOptions,
   PlaceRecord,
-  PlaceValue,
   SearchOptions,
   SearchResult,
   ServiceDescription,
@@ -53,8 +53,8 @@ export class AtgeoClient {
         let list = this.tileLists.get(key);
         if (!list) {
           const params: Record<string, string> = collection === undefined ? { dataset, bbox } : { dataset, collection, bbox };
-          const response = await this.transport.xrpc<{ tiles: string[]; overview?: boolean }>("org.atgeo.getTiles", params, signal);
-          list = { tiles: response.tiles, overview: response.overview ?? false };
+          // A body with no usable tile list throws before anything is cached.
+          list = readTileList(await this.transport.xrpc("org.atgeo.getTiles", params, signal));
           this.tileLists.set(key, list);
         }
         return list;
@@ -131,16 +131,7 @@ export class AtgeoClient {
     }
 
     try {
-      const payload: unknown = JSON.parse(text);
-      if (typeof payload !== "object" || payload === null || !Array.isArray((payload as { records?: unknown }).records)) {
-        throw new TypeError("tile payload is not an object with a records array");
-      }
-      const records = (payload as { records: TileRecord[] }).records.map(({ value, uri, importance }) => ({
-        value,
-        uri,
-        importance,
-      }));
-      return { records, size: text.length };
+      return { records: readTilePayload(JSON.parse(text)), size: text.length };
     } catch (error) {
       return fail("decode", error);
     }
@@ -150,10 +141,8 @@ export class AtgeoClient {
     const { origin } = options;
     const cached = this.tiles.find(origin);
     if (cached) return { origin, place: cached.value, importance: cached.importance ?? null };
-    const { record, importance } = await this.transport.xrpc<{ record: PlaceValue; importance?: number }>(
-      "org.atgeo.getPlace",
-      { uri: origin },
-      options.signal,
+    const { record, importance } = readPlace(
+      await this.transport.xrpc("org.atgeo.getPlace", { uri: origin }, options.signal),
     );
     return { origin, place: record, importance: importance ?? null };
   }
@@ -161,14 +150,15 @@ export class AtgeoClient {
   async describeService(options: { signal?: AbortSignal } = {}): Promise<ServiceDescription> {
     let service = this.service.get("");
     if (!service) {
-      service = await this.transport.xrpc<ServiceDescription>("org.atgeo.describeService", {}, options.signal);
+      // A body that is not an object throws before anything is cached.
+      service = readServiceDescription(await this.transport.xrpc("org.atgeo.describeService", {}, options.signal));
       this.service.set("", service);
     }
     return service;
   }
 
-  describeTileset(slug: string, options: { signal?: AbortSignal } = {}): Promise<Tileset> {
-    return this.transport.xrpc<Tileset>("org.atgeo.describeTileset", { slug }, options.signal);
+  async describeTileset(slug: string, options: { signal?: AbortSignal } = {}): Promise<Tileset> {
+    return readTileset(await this.transport.xrpc("org.atgeo.describeTileset", { slug }, options.signal));
   }
 }
 
@@ -176,10 +166,7 @@ export class AtgeoClient {
 // absolute, or that carries credentials. Fetch also accepts schemes other than http and https,
 // which a tile URL may not use. Checked here so every runtime refuses the same URLs, including a
 // browser that would otherwise resolve a relative URL against the page.
-function refuseUrl(url: unknown): TypeError | undefined {
-  // The tile list is unchecked (contract section 16), so an entry may be any JSON value; fetch
-  // would stringify it.
-  if (typeof url !== "string") return new TypeError("tile URL is not a string");
+function refuseUrl(url: string): TypeError | undefined {
   let parsed: URL;
   try {
     parsed = new URL(url);

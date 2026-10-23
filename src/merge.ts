@@ -7,6 +7,7 @@ import {
   type LonSegment,
 } from "./region.js";
 import type { PlaceValue, Region } from "./types.js";
+import { isObject } from "./wire.js";
 
 export interface Locations {
   point: { lat: number; lon: number } | null;
@@ -15,9 +16,11 @@ export interface Locations {
 
 export function locate(value: PlaceValue): Locations {
   const result: Locations = { point: null, bbox: null };
-  const locations = Array.isArray(value.locations) ? (value.locations as Record<string, unknown>[]) : [];
+  const locations: unknown[] = Array.isArray(value.locations) ? value.locations : [];
   for (const loc of locations) {
-    const num = (key: string) => parseFloat(String(loc[key]));
+    if (!isObject(loc)) continue;
+    // A coordinate is a string or a number; anything else, a one-element array included, does not parse.
+    const num = (key: string) => (typeof loc[key] === "string" || typeof loc[key] === "number" ? parseFloat(String(loc[key])) : NaN);
     if (loc.$type === "community.lexicon.location.geo" && !result.point) {
       const lat = num("latitude");
       const lon = num("longitude");
