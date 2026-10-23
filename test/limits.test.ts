@@ -406,6 +406,55 @@ describe("a caller's abort is not a timeout", () => {
     await expect(search(new AtgeoClient({ fetch: tileFetch(stalls) }), controller.signal)).rejects.toBe(reason);
   });
 
+  describe("with a fetch that ignores its signal", () => {
+    const deaf = (() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+    const calls: [string, (client: AtgeoClient, signal: AbortSignal) => Promise<unknown>][] = [
+      ["getPlace", (client, signal) => client.getPlace({ origin: "urn:atgeo:overturemaps.org:place:x", signal })],
+      ["searchPlaces", (client, signal) => search(client, signal)],
+    ];
+
+    it.each(calls)("%s rejects with the caller's reason, not a timeout, when the caller aborts first", async (_name, call) => {
+      const controller = new AbortController();
+      const p = call(new AtgeoClient({ fetch: deaf, requestTimeoutMs: 300 }), controller.signal);
+      setTimeout(() => controller.abort(reason), 30);
+      await expect(p).rejects.toBe(reason);
+    });
+
+    it.each(calls)("%s rejects with the caller's reason for a signal aborted beforehand", async (_name, call) => {
+      const controller = new AbortController();
+      controller.abort(reason);
+      await expect(call(new AtgeoClient({ fetch: deaf, requestTimeoutMs: 300 }), controller.signal)).rejects.toBe(reason);
+    });
+
+    it.each(calls)("%s still times out when the caller aborts only after the timeout", async (_name, call) => {
+      const controller = new AbortController();
+      const p = call(new AtgeoClient({ fetch: deaf, requestTimeoutMs: 20 }), controller.signal);
+      setTimeout(() => controller.abort(reason), 200);
+      const outcome = await p.then(
+        (value) => value,
+        (error) => error,
+      );
+      // searchPlaces reports the timed-out tile; getPlace rejects with the timeout.
+      const timeout = outcome?.tileFailures?.[0]?.error ?? outcome;
+      expect(timeout).toMatchObject({ name: "TimeoutError" });
+    });
+
+    it("cancels the body of a response that arrives after the caller gave up", async () => {
+      let cancelled = false;
+      let answer!: () => void;
+      const late = (() =>
+        new Promise<Response>((resolve) => {
+          answer = () => resolve(new Response(new ReadableStream<Uint8Array>({ pull: () => {}, cancel: () => void (cancelled = true) })));
+        })) as unknown as typeof fetch;
+      const controller = new AbortController();
+      const p = new AtgeoClient({ fetch: late }).getPlace({ origin: "urn:atgeo:overturemaps.org:place:x", signal: controller.signal });
+      setTimeout(() => controller.abort(reason), 10);
+      await expect(p).rejects.toBe(reason);
+      answer();
+      await vi.waitFor(() => expect(cancelled).toBe(true));
+    });
+  });
+
   it("keeps a timeout a timeout when the caller has a signal that never aborts", async () => {
     const controller = new AbortController();
     // A signal that is never aborted must not turn a timeout into an abort.

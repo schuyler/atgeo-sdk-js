@@ -91,8 +91,7 @@ export interface ClientOptions {
   // Called as fetch(url, { signal }). The signal carries both the caller's abort and requestTimeoutMs;
   // honouring it lets the fetch release its connection at once. The limits below apply to whatever
   // Response it returns, so an injected fetch gets them by default. A fetch that ignores the signal
-  // is still cut off at the timeout, but only the caller's abort during the body read, not during
-  // the wait for headers, takes effect.
+  // is still cut off at the timeout and at the caller's abort, which rejects with the caller's reason.
   fetch?: typeof fetch;
   cacheBudgetBytes?: number;
   // The most a response body may hold once decoded (after any gzip), in bytes. A larger body
