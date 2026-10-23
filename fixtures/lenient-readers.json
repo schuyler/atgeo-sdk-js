@@ -1,0 +1,1324 @@
+[
+  {
+    "reader": "getTiles",
+    "name": "strings only, overview true",
+    "body": {
+      "tiles": [
+        "a",
+        "b"
+      ],
+      "overview": true
+    },
+    "result": {
+      "tiles": [
+        "a",
+        "b"
+      ],
+      "overview": true
+    }
+  },
+  {
+    "reader": "getTiles",
+    "name": "empty list",
+    "body": {
+      "tiles": []
+    },
+    "result": {
+      "tiles": [],
+      "overview": false
+    }
+  },
+  {
+    "reader": "getTiles",
+    "name": "overview falsy: absent",
+    "body": {
+      "tiles": [
+        "a"
+      ]
+    },
+    "result": {
+      "tiles": [
+        "a"
+      ],
+      "overview": false
+    }
+  },
+  {
+    "reader": "getTiles",
+    "name": "overview falsy: null",
+    "body": {
+      "tiles": [
+        "a"
+      ],
+      "overview": null
+    },
+    "result": {
+      "tiles": [
+        "a"
+      ],
+      "overview": false
+    }
+  },
+  {
+    "reader": "getTiles",
+    "name": "overview falsy: false",
+    "body": {
+      "tiles": [
+        "a"
+      ],
+      "overview": false
+    },
+    "result": {
+      "tiles": [
+        "a"
+      ],
+      "overview": false
+    }
+  },
+  {
+    "reader": "getTiles",
+    "name": "overview falsy: zero",
+    "body": {
+      "tiles": [
+        "a"
+      ],
+      "overview": 0
+    },
+    "result": {
+      "tiles": [
+        "a"
+      ],
+      "overview": false
+    }
+  },
+  {
+    "reader": "getTiles",
+    "name": "overview falsy: negative zero",
+    "body": {
+      "tiles": [
+        "a"
+      ],
+      "overview": -0.0
+    },
+    "result": {
+      "tiles": [
+        "a"
+      ],
+      "overview": false
+    }
+  },
+  {
+    "reader": "getTiles",
+    "name": "overview falsy: empty string",
+    "body": {
+      "tiles": [
+        "a"
+      ],
+      "overview": ""
+    },
+    "result": {
+      "tiles": [
+        "a"
+      ],
+      "overview": false
+    }
+  },
+  {
+    "reader": "getTiles",
+    "name": "overview truthy: true",
+    "body": {
+      "tiles": [
+        "a"
+      ],
+      "overview": true
+    },
+    "result": {
+      "tiles": [
+        "a"
+      ],
+      "overview": true
+    }
+  },
+  {
+    "reader": "getTiles",
+    "name": "overview truthy: one",
+    "body": {
+      "tiles": [
+        "a"
+      ],
+      "overview": 1
+    },
+    "result": {
+      "tiles": [
+        "a"
+      ],
+      "overview": true
+    }
+  },
+  {
+    "reader": "getTiles",
+    "name": "overview truthy: string",
+    "body": {
+      "tiles": [
+        "a"
+      ],
+      "overview": "no"
+    },
+    "result": {
+      "tiles": [
+        "a"
+      ],
+      "overview": true
+    }
+  },
+  {
+    "reader": "getTiles",
+    "name": "overview truthy: empty array",
+    "body": {
+      "tiles": [
+        "a"
+      ],
+      "overview": []
+    },
+    "result": {
+      "tiles": [
+        "a"
+      ],
+      "overview": true
+    }
+  },
+  {
+    "reader": "getTiles",
+    "name": "overview truthy: empty object",
+    "body": {
+      "tiles": [
+        "a"
+      ],
+      "overview": {}
+    },
+    "result": {
+      "tiles": [
+        "a"
+      ],
+      "overview": true
+    }
+  },
+  {
+    "reader": "getTiles",
+    "name": "non-string entries are skipped",
+    "body": {
+      "tiles": [
+        "a",
+        5,
+        null,
+        [
+          "b"
+        ],
+        {
+          "url": "x"
+        },
+        true,
+        "c"
+      ]
+    },
+    "result": {
+      "tiles": [
+        "a",
+        "c"
+      ],
+      "overview": false
+    }
+  },
+  {
+    "reader": "getTiles",
+    "name": "no usable tile list: empty object",
+    "body": {},
+    "decodingError": true
+  },
+  {
+    "reader": "getTiles",
+    "name": "no usable tile list: empty array",
+    "body": [],
+    "decodingError": true
+  },
+  {
+    "reader": "getTiles",
+    "name": "no usable tile list: null",
+    "body": null,
+    "decodingError": true
+  },
+  {
+    "reader": "getTiles",
+    "name": "no usable tile list: number",
+    "body": 5,
+    "decodingError": true
+  },
+  {
+    "reader": "getTiles",
+    "name": "no usable tile list: string",
+    "body": "x",
+    "decodingError": true
+  },
+  {
+    "reader": "getTiles",
+    "name": "no usable tile list: tiles is a string",
+    "body": {
+      "tiles": "x"
+    },
+    "decodingError": true
+  },
+  {
+    "reader": "getTiles",
+    "name": "no usable tile list: tiles is null",
+    "body": {
+      "tiles": null
+    },
+    "decodingError": true
+  },
+  {
+    "reader": "getTiles",
+    "name": "no usable tile list: tiles is an object",
+    "body": {
+      "tiles": {
+        "0": "a"
+      }
+    },
+    "decodingError": true
+  },
+  {
+    "reader": "tilePayload",
+    "name": "a usable record keeps value, uri and importance",
+    "body": {
+      "records": [
+        {
+          "value": {
+            "a": 1
+          },
+          "uri": "u1",
+          "importance": 3
+        }
+      ],
+      "publishedAt": "x",
+      "attribution": []
+    },
+    "result": [
+      {
+        "value": {
+          "a": 1
+        },
+        "uri": "u1",
+        "importance": 3
+      }
+    ]
+  },
+  {
+    "reader": "tilePayload",
+    "name": "no records",
+    "body": {
+      "records": []
+    },
+    "result": []
+  },
+  {
+    "reader": "tilePayload",
+    "name": "unusable records are skipped and the rest kept",
+    "body": {
+      "records": [
+        null,
+        5,
+        "s",
+        [],
+        true,
+        {},
+        {
+          "value": null
+        },
+        {
+          "value": 5
+        },
+        {
+          "value": "s"
+        },
+        {
+          "value": []
+        },
+        {
+          "value": {
+            "a": 1
+          },
+          "uri": "u1",
+          "importance": 3
+        }
+      ]
+    },
+    "result": [
+      {
+        "value": {
+          "a": 1
+        },
+        "uri": "u1",
+        "importance": 3
+      }
+    ]
+  },
+  {
+    "reader": "tilePayload",
+    "name": "a record keeps unknown value keys as served",
+    "body": {
+      "records": [
+        {
+          "value": {
+            "x": null,
+            "y": [
+              1,
+              {
+                "z": 2
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "result": [
+      {
+        "value": {
+          "x": null,
+          "y": [
+            1,
+            {
+              "z": 2
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "reader": "tilePayload",
+    "name": "non-string uri is absent",
+    "body": {
+      "records": [
+        {
+          "value": {},
+          "uri": 5
+        },
+        {
+          "value": {},
+          "uri": null
+        },
+        {
+          "value": {},
+          "uri": [
+            "u"
+          ]
+        }
+      ]
+    },
+    "result": [
+      {
+        "value": {}
+      },
+      {
+        "value": {}
+      },
+      {
+        "value": {}
+      }
+    ]
+  },
+  {
+    "reader": "tilePayload",
+    "name": "importance absent: string",
+    "body": {
+      "records": [
+        {
+          "value": {},
+          "importance": "7"
+        }
+      ]
+    },
+    "result": [
+      {
+        "value": {}
+      }
+    ]
+  },
+  {
+    "reader": "tilePayload",
+    "name": "importance absent: true",
+    "body": {
+      "records": [
+        {
+          "value": {},
+          "importance": true
+        }
+      ]
+    },
+    "result": [
+      {
+        "value": {}
+      }
+    ]
+  },
+  {
+    "reader": "tilePayload",
+    "name": "importance absent: null",
+    "body": {
+      "records": [
+        {
+          "value": {},
+          "importance": null
+        }
+      ]
+    },
+    "result": [
+      {
+        "value": {}
+      }
+    ]
+  },
+  {
+    "reader": "tilePayload",
+    "name": "importance absent: array",
+    "body": {
+      "records": [
+        {
+          "value": {},
+          "importance": [
+            5
+          ]
+        }
+      ]
+    },
+    "result": [
+      {
+        "value": {}
+      }
+    ]
+  },
+  {
+    "reader": "tilePayload",
+    "name": "importance absent: object",
+    "body": {
+      "records": [
+        {
+          "value": {},
+          "importance": {
+            "n": 5
+          }
+        }
+      ]
+    },
+    "result": [
+      {
+        "value": {}
+      }
+    ]
+  },
+  {
+    "reader": "tilePayload",
+    "name": "importance absent: 1e30",
+    "body": {
+      "records": [
+        {
+          "value": {},
+          "importance": 1e+30
+        }
+      ]
+    },
+    "result": [
+      {
+        "value": {}
+      }
+    ]
+  },
+  {
+    "reader": "tilePayload",
+    "name": "importance absent: 2^63",
+    "body": {
+      "records": [
+        {
+          "value": {},
+          "importance": 9223372036854775808
+        }
+      ]
+    },
+    "result": [
+      {
+        "value": {}
+      }
+    ]
+  },
+  {
+    "reader": "tilePayload",
+    "name": "importance absent: -2^63",
+    "body": {
+      "records": [
+        {
+          "value": {},
+          "importance": -9223372036854775808
+        }
+      ]
+    },
+    "result": [
+      {
+        "value": {}
+      }
+    ]
+  },
+  {
+    "reader": "tilePayload",
+    "name": "importance 0 and negative are kept",
+    "body": {
+      "records": [
+        {
+          "value": {},
+          "importance": 0
+        },
+        {
+          "value": {},
+          "importance": -4
+        }
+      ]
+    },
+    "result": [
+      {
+        "value": {},
+        "importance": 0
+      },
+      {
+        "value": {},
+        "importance": -4
+      }
+    ]
+  },
+  {
+    "reader": "tilePayload",
+    "name": "a fractional importance is truncated toward zero",
+    "body": {
+      "records": [
+        {
+          "value": {},
+          "importance": 2.9
+        },
+        {
+          "value": {},
+          "importance": -2.9
+        },
+        {
+          "value": {},
+          "importance": 0.5
+        },
+        {
+          "value": {},
+          "importance": -0.5
+        },
+        {
+          "value": {},
+          "importance": -0.0
+        }
+      ]
+    },
+    "result": [
+      {
+        "value": {},
+        "importance": 2
+      },
+      {
+        "value": {},
+        "importance": -2
+      },
+      {
+        "value": {},
+        "importance": 0
+      },
+      {
+        "value": {},
+        "importance": 0
+      },
+      {
+        "value": {},
+        "importance": 0
+      }
+    ]
+  },
+  {
+    "reader": "tilePayload",
+    "name": "no records array: empty object",
+    "body": {},
+    "decodingError": true
+  },
+  {
+    "reader": "tilePayload",
+    "name": "no records array: null",
+    "body": null,
+    "decodingError": true
+  },
+  {
+    "reader": "tilePayload",
+    "name": "no records array: empty array",
+    "body": [],
+    "decodingError": true
+  },
+  {
+    "reader": "tilePayload",
+    "name": "no records array: number",
+    "body": 5,
+    "decodingError": true
+  },
+  {
+    "reader": "tilePayload",
+    "name": "no records array: records is an object",
+    "body": {
+      "records": {}
+    },
+    "decodingError": true
+  },
+  {
+    "reader": "tilePayload",
+    "name": "no records array: records is a string",
+    "body": {
+      "records": "x"
+    },
+    "decodingError": true
+  },
+  {
+    "reader": "tilePayload",
+    "name": "no records array: records is null",
+    "body": {
+      "records": null
+    },
+    "decodingError": true
+  },
+  {
+    "reader": "getPlace",
+    "name": "record and importance",
+    "body": {
+      "uri": "x",
+      "record": {
+        "name": "A",
+        "extra": [
+          1
+        ]
+      },
+      "importance": 5
+    },
+    "result": {
+      "record": {
+        "name": "A",
+        "extra": [
+          1
+        ]
+      },
+      "importance": 5
+    }
+  },
+  {
+    "reader": "getPlace",
+    "name": "no importance",
+    "body": {
+      "record": {}
+    },
+    "result": {
+      "record": {}
+    }
+  },
+  {
+    "reader": "getPlace",
+    "name": "a fractional importance is truncated toward zero",
+    "body": {
+      "record": {},
+      "importance": -2.9
+    },
+    "result": {
+      "record": {},
+      "importance": -2
+    }
+  },
+  {
+    "reader": "getPlace",
+    "name": "non-number importance is absent",
+    "body": {
+      "record": {},
+      "importance": "5"
+    },
+    "result": {
+      "record": {}
+    }
+  },
+  {
+    "reader": "getPlace",
+    "name": "out-of-range importance is absent",
+    "body": {
+      "record": {},
+      "importance": 1e+30
+    },
+    "result": {
+      "record": {}
+    }
+  },
+  {
+    "reader": "getPlace",
+    "name": "no usable body: null body",
+    "body": null,
+    "decodingError": true
+  },
+  {
+    "reader": "getPlace",
+    "name": "no usable body: array body",
+    "body": [],
+    "decodingError": true
+  },
+  {
+    "reader": "getPlace",
+    "name": "no usable body: string body",
+    "body": "x",
+    "decodingError": true
+  },
+  {
+    "reader": "getPlace",
+    "name": "no usable body: number body",
+    "body": 5,
+    "decodingError": true
+  },
+  {
+    "reader": "getPlace",
+    "name": "no usable body: no record",
+    "body": {
+      "uri": "x"
+    },
+    "decodingError": true
+  },
+  {
+    "reader": "getPlace",
+    "name": "no usable body: record is null",
+    "body": {
+      "record": null
+    },
+    "decodingError": true
+  },
+  {
+    "reader": "getPlace",
+    "name": "no usable body: record is an array",
+    "body": {
+      "record": []
+    },
+    "decodingError": true
+  },
+  {
+    "reader": "getPlace",
+    "name": "no usable body: record is a string",
+    "body": {
+      "record": "x"
+    },
+    "decodingError": true
+  },
+  {
+    "reader": "getPlace",
+    "name": "no usable body: record is a number",
+    "body": {
+      "record": 5
+    },
+    "decodingError": true
+  },
+  {
+    "reader": "describeService",
+    "name": "a full answer",
+    "body": {
+      "did": "did:web:x",
+      "tilesets": [
+        {
+          "slug": "s",
+          "collections": [
+            {
+              "dataset": "d",
+              "collection": "c"
+            }
+          ]
+        }
+      ],
+      "extra": 1
+    },
+    "result": {
+      "did": "did:web:x",
+      "tilesets": [
+        {
+          "slug": "s",
+          "collections": [
+            {
+              "dataset": "d",
+              "collection": "c"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "reader": "describeService",
+    "name": "an empty object",
+    "body": {},
+    "result": {
+      "tilesets": []
+    }
+  },
+  {
+    "reader": "describeService",
+    "name": "wrong-typed did and tilesets",
+    "body": {
+      "did": 5,
+      "tilesets": "x"
+    },
+    "result": {
+      "tilesets": []
+    }
+  },
+  {
+    "reader": "describeService",
+    "name": "tilesets null",
+    "body": {
+      "tilesets": null
+    },
+    "result": {
+      "tilesets": []
+    }
+  },
+  {
+    "reader": "describeService",
+    "name": "unreadable elements are dropped and fields read on their own",
+    "body": {
+      "tilesets": [
+        null,
+        5,
+        "s",
+        [],
+        {
+          "slug": "a"
+        },
+        {
+          "slug": 5,
+          "collections": [
+            null,
+            {
+              "dataset": "d",
+              "collection": 7
+            },
+            "x",
+            {}
+          ]
+        },
+        {
+          "collections": "x"
+        }
+      ]
+    },
+    "result": {
+      "tilesets": [
+        {
+          "slug": "a",
+          "collections": []
+        },
+        {
+          "collections": [
+            {
+              "dataset": "d"
+            },
+            {}
+          ]
+        },
+        {
+          "collections": []
+        }
+      ]
+    }
+  },
+  {
+    "reader": "describeService",
+    "name": "no usable body: null",
+    "body": null,
+    "decodingError": true
+  },
+  {
+    "reader": "describeService",
+    "name": "no usable body: false",
+    "body": false,
+    "decodingError": true
+  },
+  {
+    "reader": "describeService",
+    "name": "no usable body: zero",
+    "body": 0,
+    "decodingError": true
+  },
+  {
+    "reader": "describeService",
+    "name": "no usable body: empty string",
+    "body": "",
+    "decodingError": true
+  },
+  {
+    "reader": "describeService",
+    "name": "no usable body: true",
+    "body": true,
+    "decodingError": true
+  },
+  {
+    "reader": "describeService",
+    "name": "no usable body: number",
+    "body": 5,
+    "decodingError": true
+  },
+  {
+    "reader": "describeService",
+    "name": "no usable body: string",
+    "body": "x",
+    "decodingError": true
+  },
+  {
+    "reader": "describeService",
+    "name": "no usable body: empty array",
+    "body": [],
+    "decodingError": true
+  },
+  {
+    "reader": "describeTileset",
+    "name": "a full answer",
+    "body": {
+      "slug": "s",
+      "publishedAt": "2026-01-01T00:00:00Z",
+      "extent": {
+        "north": "1",
+        "south": "0",
+        "east": "1",
+        "west": "0"
+      },
+      "collections": [
+        {
+          "dataset": "d",
+          "collection": "c",
+          "release": "r",
+          "source": "src",
+          "licenses": [
+            "l"
+          ],
+          "attribution": "a",
+          "recordCount": 3,
+          "locationFormats": [
+            "geo"
+          ],
+          "containmentTypes": [
+            "t"
+          ],
+          "categories": [
+            {
+              "value": "cafe",
+              "count": 2
+            }
+          ],
+          "attributes": [
+            "x"
+          ]
+        }
+      ],
+      "references": [
+        {
+          "dataset": "d2",
+          "collection": "c2",
+          "licenses": [
+            "l2"
+          ]
+        }
+      ]
+    },
+    "result": {
+      "slug": "s",
+      "publishedAt": "2026-01-01T00:00:00Z",
+      "extent": {
+        "north": "1",
+        "south": "0",
+        "east": "1",
+        "west": "0"
+      },
+      "collections": [
+        {
+          "dataset": "d",
+          "collection": "c",
+          "release": "r",
+          "source": "src",
+          "licenses": [
+            "l"
+          ],
+          "attribution": "a",
+          "recordCount": 3,
+          "locationFormats": [
+            "geo"
+          ],
+          "containmentTypes": [
+            "t"
+          ],
+          "categories": [
+            {
+              "value": "cafe",
+              "count": 2
+            }
+          ],
+          "attributes": [
+            "x"
+          ]
+        }
+      ],
+      "references": [
+        {
+          "dataset": "d2",
+          "collection": "c2",
+          "licenses": [
+            "l2"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "reader": "describeTileset",
+    "name": "an empty object",
+    "body": {},
+    "result": {
+      "collections": []
+    }
+  },
+  {
+    "reader": "describeTileset",
+    "name": "wrong-typed scalars are absent",
+    "body": {
+      "slug": 5,
+      "publishedAt": [],
+      "extent": "x",
+      "collections": "x",
+      "references": {}
+    },
+    "result": {
+      "collections": []
+    }
+  },
+  {
+    "reader": "describeTileset",
+    "name": "extent fields are read on their own",
+    "body": {
+      "extent": {
+        "north": "1",
+        "south": 2,
+        "east": null
+      }
+    },
+    "result": {
+      "collections": [],
+      "extent": {
+        "north": "1"
+      }
+    }
+  },
+  {
+    "reader": "describeTileset",
+    "name": "an extent that is an array is absent",
+    "body": {
+      "extent": [
+        "1"
+      ]
+    },
+    "result": {
+      "collections": []
+    }
+  },
+  {
+    "reader": "describeTileset",
+    "name": "collection fields are read on their own",
+    "body": {
+      "collections": [
+        null,
+        5,
+        {
+          "dataset": "d",
+          "collection": "c",
+          "recordCount": "5",
+          "licenses": [
+            "a",
+            1,
+            null
+          ],
+          "locationFormats": "geo",
+          "categories": [
+            null,
+            {
+              "value": "v",
+              "count": 2
+            },
+            {
+              "value": 1,
+              "count": "x"
+            },
+            "y"
+          ],
+          "attributes": null
+        }
+      ]
+    },
+    "result": {
+      "collections": [
+        {
+          "dataset": "d",
+          "collection": "c",
+          "licenses": [
+            "a"
+          ],
+          "categories": [
+            {
+              "value": "v",
+              "count": 2
+            },
+            {}
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "reader": "describeTileset",
+    "name": "fractional recordCount and count are truncated toward zero",
+    "body": {
+      "collections": [
+        {
+          "dataset": "d",
+          "collection": "c",
+          "recordCount": 2.9,
+          "categories": [
+            {
+              "value": "a",
+              "count": -2.9
+            },
+            {
+              "value": "b",
+              "count": -0.5
+            }
+          ]
+        }
+      ]
+    },
+    "result": {
+      "collections": [
+        {
+          "dataset": "d",
+          "collection": "c",
+          "recordCount": 2,
+          "categories": [
+            {
+              "value": "a",
+              "count": -2
+            },
+            {
+              "value": "b",
+              "count": 0
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "reader": "describeTileset",
+    "name": "recordCount out of range is absent",
+    "body": {
+      "collections": [
+        {
+          "recordCount": 1e+30,
+          "categories": [
+            {
+              "count": -9223372036854775808
+            }
+          ]
+        }
+      ]
+    },
+    "result": {
+      "collections": [
+        {
+          "categories": [
+            {}
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "reader": "describeTileset",
+    "name": "references are an optional list",
+    "body": {
+      "references": [
+        null,
+        {
+          "dataset": "d"
+        },
+        "x"
+      ]
+    },
+    "result": {
+      "collections": [],
+      "references": [
+        {
+          "dataset": "d"
+        }
+      ]
+    }
+  },
+  {
+    "reader": "describeTileset",
+    "name": "references null is absent",
+    "body": {
+      "references": null
+    },
+    "result": {
+      "collections": []
+    }
+  },
+  {
+    "reader": "describeTileset",
+    "name": "no usable body: null",
+    "body": null,
+    "decodingError": true
+  },
+  {
+    "reader": "describeTileset",
+    "name": "no usable body: false",
+    "body": false,
+    "decodingError": true
+  },
+  {
+    "reader": "describeTileset",
+    "name": "no usable body: zero",
+    "body": 0,
+    "decodingError": true
+  },
+  {
+    "reader": "describeTileset",
+    "name": "no usable body: empty string",
+    "body": "",
+    "decodingError": true
+  },
+  {
+    "reader": "describeTileset",
+    "name": "no usable body: number",
+    "body": 5,
+    "decodingError": true
+  },
+  {
+    "reader": "describeTileset",
+    "name": "no usable body: string",
+    "body": "x",
+    "decodingError": true
+  },
+  {
+    "reader": "describeTileset",
+    "name": "no usable body: empty array",
+    "body": [],
+    "decodingError": true
+  }
+]

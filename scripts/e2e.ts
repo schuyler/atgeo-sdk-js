@@ -18,6 +18,7 @@ const served = service.tilesets.find((t) => t.collections.some(wanted));
 assert(served, `${dataset}${collection ? `/${collection}` : ""} not served`);
 log("describeService", `${service.did}, ${service.tilesets.length} tileset(s)`);
 
+assert(served.slug, "the served tileset has no slug");
 const tileset = await client.describeTileset(served.slug);
 assert(tileset.collections.some(wanted), "describeTileset does not list the dataset and collection");
 log("describeTileset", `${tileset.slug}, ${tileset.collections.length} collection(s)`);

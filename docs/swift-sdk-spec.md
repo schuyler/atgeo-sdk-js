@@ -300,7 +300,7 @@ Operate on `Array(a.utf16)` and `Array(b.utf16)`. Not `Array(a)` (grapheme clust
 
 ### Numbers and trigonometry (contract §3, §6)
 
-- `Double(someString)` rejects leading whitespace and trailing text; the contract allows that strictness (§5). It accepts `inf`, `infinity` and `nan` in any case, so check `isFinite` after parsing, as the reference does. Accept `.number` and `.string` JSON values; anything else, an array included, is no location (contract §16).
+- `Double(someString)` rejects leading whitespace and trailing text; the contract allows that strictness (§5). It accepts `inf`, `infinity` and `nan` in any case, so check `isFinite` after parsing, as the reference does. Accept `.number` and `.string` JSON values; anything else, an array included, is no location (contract §5).
 - `round3`: `(x * 1000).rounded() / 1000`. The default rounding rule is `.toNearestOrAwayFromZero`, which agrees with `Math.round` for the non-negative scores it is applied to.
 - Snapping: `(x * 100).rounded()` for the epsilon test, `.rounded(.down)` and `.rounded(.up)` for floor and ceil. Format with `String(format: "%.2f", Double(units) / 100)`, converting before dividing since `units` is an integer, after mapping `-0.0` to `0.0`; `%.2f` prints `-0.00` for negative zero.
 - Use `Foundation.sin`, `cos`, `asin`, `atan2`, `sqrt`. Compare the worked distance tables to 1e-6 relative, containment exactly.

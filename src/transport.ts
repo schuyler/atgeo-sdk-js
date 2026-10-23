@@ -1,3 +1,5 @@
+import { isObject } from "./wire.js";
+
 export class AtgeoError extends Error {
   readonly code: string;
   // The HTTP status, so that a caller can tell a refused request (4xx) from a server failure (5xx)
@@ -22,9 +24,10 @@ export class Transport {
     this.base = server.replace(/\/+$/, "");
   }
 
-  async xrpc<T>(nsid: string, params: Record<string, string>, signal?: AbortSignal): Promise<T> {
+  // The parsed body, unchecked: the caller reads it with one of the readers in wire.ts.
+  async xrpc(nsid: string, params: Record<string, string>, signal?: AbortSignal): Promise<unknown> {
     const query = new URLSearchParams(params).toString();
-    return JSON.parse(await this.get(`${this.base}/xrpc/${nsid}?${query}`, signal)) as T;
+    return JSON.parse(await this.get(`${this.base}/xrpc/${nsid}?${query}`, signal));
   }
 
   // Fetches a URL exactly as given and returns the body text; non-2xx raises AtgeoError.
@@ -50,11 +53,17 @@ export interface HttpResponse {
 // Returns the body of a 2xx; raises AtgeoError for anything else.
 export function checkStatus({ ok, status, text }: HttpResponse): string {
   if (!ok) {
-    let body: { error?: string; message?: string } = {};
+    // Each field is judged on its own, and a body that is not a JSON object has neither.
+    let body: unknown;
     try {
       body = JSON.parse(text);
     } catch {}
-    throw new AtgeoError(body.error ?? "HttpError", body.message ?? `HTTP ${status}`, status);
+    const fields = isObject(body) ? body : {};
+    throw new AtgeoError(
+      typeof fields.error === "string" ? fields.error : "HttpError",
+      typeof fields.message === "string" ? fields.message : `HTTP ${status}`,
+      status,
+    );
   }
   return text;
 }

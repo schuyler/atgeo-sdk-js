@@ -6,14 +6,17 @@ export interface PlaceRecord {
   importance: number | null;
 }
 
+// The describe types read leniently (contract section 1): a field the server omits, or sends as the
+// wrong type, is absent, so each scalar is optional. The lists the lexicons require, `tilesets` and
+// `collections`, are empty when missing, never undefined.
 export interface CollectionRef {
-  dataset: string;
-  collection: string;
+  dataset?: string;
+  collection?: string;
 }
 
 export interface ServiceDescription {
-  did: string;
-  tilesets: { slug: string; collections: CollectionRef[] }[];
+  did?: string;
+  tilesets: { slug?: string; collections: CollectionRef[] }[];
 }
 
 export interface CollectionAttribution extends CollectionRef {
@@ -27,14 +30,14 @@ export interface CollectionInfo extends CollectionAttribution {
   recordCount?: number;
   locationFormats?: string[];
   containmentTypes?: string[];
-  categories?: { value: string; count: number }[];
+  categories?: { value?: string; count?: number }[];
   attributes?: string[];
 }
 
 export interface Tileset {
-  slug: string;
+  slug?: string;
   publishedAt?: string;
-  extent?: { north: string; south: string; east: string; west: string };
+  extent?: { north?: string; south?: string; east?: string; west?: string };
   collections: CollectionInfo[];
   references?: CollectionAttribution[];
 }

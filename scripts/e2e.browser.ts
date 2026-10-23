@@ -19,9 +19,9 @@ test("client works cross-origin against a real garganorn", async () => {
 
   const service = await client.describeService();
   const served = service.tilesets.find((t) => t.collections.some(wanted));
-  expect(served).toBeDefined();
+  expect(served?.slug).toBeTruthy();
 
-  const tileset = await client.describeTileset(served!.slug);
+  const tileset = await client.describeTileset(served!.slug!);
   expect(tileset.collections.some(wanted)).toBe(true);
 
   const nearby = await client.searchPlaces({ dataset, collection, region, sort: "distance" });

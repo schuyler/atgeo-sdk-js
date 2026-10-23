@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TileCache } from "../src/cache.js";
-import { AtgeoClient, AtgeoError } from "../src/index.js";
+import { AtgeoClient, AtgeoError, DecodingError } from "../src/index.js";
 import { DEFAULT_SERVER, fakeServer, overture, place, placeOrigin, point, record } from "./helpers/fakeServer.js";
 
 const url = (n: string) => `https://tiles.example/${n}.json`;
@@ -132,7 +132,6 @@ describe("tile failures", () => {
     ["an array", "[]"],
     ["an object without records", "{}"],
     ["records that is not an array", `{"records":{}}`],
-    ["a null record", `{"records":[null]}`],
   ])("reports %s as decode", async (_name, body) => {
     const server = scripted({ [url("a")]: () => new Response(body) });
     const result = await search(server.fetch);
@@ -196,27 +195,29 @@ describe("tile failures", () => {
     ["null", null],
     ["an array", ["https://tiles.example/a.json"]],
     ["an object", { url: "https://tiles.example/a.json" }],
-  ])("refuses a tile list entry that is %s, with the value as url", async (_name, entry) => {
-    const server = scripted({ [url("a")]: ok }, { tiles: [entry] });
+  ])("skips a tile list entry that is %s", async (_name, entry) => {
+    const server = scripted({ [url("a")]: ok }, { tiles: [entry, url("a")] });
     const result = await search(server.fetch);
-    expect(result.tileFailures).toEqual([{ url: entry, kind: "refused", error: expect.any(TypeError) }]);
-    expect(server.requests.filter((u) => !u.includes("/xrpc/"))).toEqual([]);
+    expect(result.tileFailures).toEqual([]);
+    expect(result.tiles).toEqual({ fetched: 1, failed: 0 });
+    expect(server.requests.filter((u) => !u.includes("/xrpc/"))).toEqual([url("a")]);
   });
 
   it.each([
-    ["a missing list", {}, undefined],
-    ["a string list", { tiles: "x" }, "x"],
-    ["a longer string list", { tiles: "abc" }, "abc"],
-  ])("reports %s as one refused tile (contract section 16)", async (_name, body, entry) => {
+    ["a missing list", {}],
+    ["a string list", { tiles: "x" }],
+    ["a longer string list", { tiles: "abc" }],
+    ["a null list", { tiles: null }],
+  ])("fails the search with a DecodingError on %s", async (_name, body) => {
     const server = scripted({}, body);
-    const result = await search(server.fetch);
-    expect(result.tileFailures).toEqual([{ url: entry, kind: "refused", error: expect.any(TypeError) }]);
+    await expect(search(server.fetch)).rejects.toBeInstanceOf(DecodingError);
   });
 
-  it("reports a non-2xx with a null body as status, with a TypeError (contract section 16)", async () => {
+  it("reports a non-2xx with a null body as status, with an AtgeoError coded HttpError", async () => {
     const server = scripted({ [url("a")]: () => new Response("null", { status: 502 }) });
     const result = await search(server.fetch);
-    expect(result.tileFailures).toEqual([{ url: url("a"), kind: "status", status: 502, error: expect.any(TypeError) }]);
+    expect(result.tileFailures).toEqual([{ url: url("a"), kind: "status", status: 502, error: expect.any(AtgeoError) }]);
+    expect(result.tileFailures[0].error).toMatchObject({ code: "HttpError", message: "HTTP 502", status: 502 });
   });
 
   it("rejects with the JSON error when cancelled while an unparsable tile is in flight", async () => {

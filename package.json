@@ -20,7 +20,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "prepare": "npm run build",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json",
     "test": "vitest run",
     "test:browser": "vitest run --config vitest.browser.config.ts",
     "e2e": "tsx scripts/e2e.ts",
@@ -28,6 +28,7 @@
   },
   "devDependencies": {
     "@atproto/lexicon": "^0.7.16",
+    "@types/node": "^20.19.43",
     "@vitest/browser": "^2.1.9",
     "playwright": "^1.64.0",
     "tsx": "^4.23.15",
