@@ -49,8 +49,11 @@ describe("over real HTTP", () => {
     server = createServer((req, res) => {
       const path = new URL(req.url ?? "/", "http://x").pathname;
       if (path === "/xrpc/org.atgeo.getTiles") {
+        // One region (around 10,10) is answered with the tiles that stall; any other with the rest.
+        const stalling = (new URL(req.url ?? "/", "http://x").searchParams.get("bbox") ?? "").startsWith("10");
+        const names = stalling ? ["stall-headers", "stall-body"] : ["bomb", "ok"];
         res.setHeader("content-type", "application/json");
-        res.end(JSON.stringify({ tiles: ["bomb", "ok", "stall-headers", "stall-body"].map((t) => `${base}/tile/${t}`) }));
+        res.end(JSON.stringify({ tiles: names.map((t) => `${base}/tile/${t}`) }));
       } else if (path === "/tile/bomb") {
         // 8 MiB of spaces: a few KiB on the wire.
         res.writeHead(200, { "content-encoding": "gzip" });
@@ -73,23 +76,33 @@ describe("over real HTTP", () => {
     await new Promise((resolve) => server.close(resolve));
   });
 
-  it("caps decoded bytes, not wire bytes, and times out stalls in the headers and in the body", async () => {
-    const client = new AtgeoClient({ server: base, maxBodyBytes: 1024 * 1024, requestTimeoutMs: 300 });
+  const stallRegion = { bbox: [10, 10, 10.01, 10.01] as [number, number, number, number] };
+
+  it("caps decoded bytes, not wire bytes", async () => {
+    // No short timeout here: gzip, an 8 MiB inflate and a cold connection can be slow on a busy machine.
+    const client = new AtgeoClient({ server: base, maxBodyBytes: 1024 * 1024, requestTimeoutMs: 20_000 });
     const result = await client.searchPlaces({ region });
-    const byUrl: Record<string, TileFailure> = Object.fromEntries(result.tileFailures.map((f) => [f.url.split("/").pop(), f]));
-    expect(Object.keys(byUrl).sort()).toEqual(["bomb", "stall-body", "stall-headers"]);
-    for (const failure of Object.values(byUrl)) expect(failure.kind).toBe("transport");
-    expect(byUrl.bomb.error).toBeInstanceOf(BodyTooLargeError);
-    expect(byUrl["stall-headers"].error).toMatchObject({ name: "TimeoutError" });
-    expect(byUrl["stall-body"].error).toMatchObject({ name: "TimeoutError" });
-    expect(result.tiles).toEqual({ fetched: 1, failed: 3 });
+    expect(result.tileFailures).toEqual([{ url: `${base}/tile/bomb`, kind: "transport", error: expect.any(BodyTooLargeError) }]);
+    expect(result.tiles).toEqual({ fetched: 1, failed: 1 });
     expect(result.places).toHaveLength(1);
+  });
+
+  it("times out stalls in the headers and in the body", async () => {
+    const client = new AtgeoClient({ server: base, requestTimeoutMs: 300 });
+    const result = await client.searchPlaces({ region: stallRegion });
+    const byUrl: Record<string, TileFailure> = Object.fromEntries(result.tileFailures.map((f) => [f.url.split("/").pop(), f]));
+    expect(Object.keys(byUrl).sort()).toEqual(["stall-body", "stall-headers"]);
+    for (const failure of Object.values(byUrl)) {
+      expect(failure.kind).toBe("transport");
+      expect(failure.error).toMatchObject({ name: "TimeoutError" });
+    }
+    expect(result.tiles).toEqual({ fetched: 0, failed: 2 });
   });
 
   it("reports a caller's abort during a stalled body as the caller's abort", async () => {
     const controller = new AbortController();
     const client = new AtgeoClient({ server: base, requestTimeoutMs: 60_000 });
-    const p = client.searchPlaces({ region, signal: controller.signal });
+    const p = client.searchPlaces({ region: stallRegion, signal: controller.signal });
     setTimeout(() => controller.abort(), 150);
     await expect(p).rejects.toMatchObject({ name: "AbortError" });
   });

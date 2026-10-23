@@ -152,6 +152,24 @@ describe("maxBodyBytes", () => {
       expect(result.tileFailures).toEqual([{ url: TILE, kind: "transport", error: expect.any(BodyTooLargeError) }]);
     });
 
+    // A Response with no stream whose arrayBuffer never settles.
+    const stalledWithoutStream = () =>
+      Object.defineProperty(withoutStream(new Response(tileOfSize(500))), "arrayBuffer", { value: () => new Promise(() => {}) });
+
+    it("times out while being read", async () => {
+      const result = await search(new AtgeoClient({ fetch: tileFetch(stalledWithoutStream), requestTimeoutMs: 30 }));
+      expect(result.tileFailures).toEqual([{ url: TILE, kind: "transport", error: expect.anything() }]);
+      expect(result.tileFailures[0].error).toMatchObject({ name: "TimeoutError" });
+    });
+
+    it("rejects with the caller's reason when the caller aborts while it is read", async () => {
+      const reason = new Error("stop");
+      const controller = new AbortController();
+      const p = search(new AtgeoClient({ fetch: tileFetch(stalledWithoutStream), requestTimeoutMs: 60_000 }), controller.signal);
+      setTimeout(() => controller.abort(reason), 20);
+      await expect(p).rejects.toBe(reason);
+    });
+
     it("is an empty body when the Response is genuinely empty, which fails to decode", async () => {
       const result = await search(new AtgeoClient({ fetch: tileFetch(() => new Response(null)) }));
       expect(result.tileFailures.map((f) => f.kind)).toEqual(["decode"]);
@@ -239,6 +257,40 @@ describe("requestTimeoutMs", () => {
     expect(isTimeout(result.tileFailures[0].error)).toBe(true);
   });
 
+  it("cuts off a fetch that ignores its signal while waiting for headers", async () => {
+    const deaf = () => new Promise<Response>(() => {});
+    const result = await search(new AtgeoClient({ fetch: tileFetch(deaf), requestTimeoutMs: 30 }));
+    expect(result.tileFailures).toEqual([{ url: TILE, kind: "transport", error: expect.anything() }]);
+    expect(isTimeout(result.tileFailures[0].error)).toBe(true);
+  });
+
+  it("cancels the body of a response that arrives after the timeout", async () => {
+    let cancelled = false;
+    let answer!: () => void;
+    const late = () =>
+      new Promise<Response>((resolve) => {
+        answer = () =>
+          resolve(new Response(new ReadableStream<Uint8Array>({ pull: () => {}, cancel: () => void (cancelled = true) })));
+      });
+    const result = await search(new AtgeoClient({ fetch: tileFetch(late), requestTimeoutMs: 30 }));
+    expect(isTimeout(result.tileFailures[0].error)).toBe(true);
+    answer();
+    await vi.waitFor(() => expect(cancelled).toBe(true));
+  });
+
+  it("cancels the body of a response that arrives in the same turn as the timeout", async () => {
+    vi.useFakeTimers();
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({ pull: () => {}, cancel: () => void (cancelled = true) });
+    // Resolves just after the timer fires, in the same timer pass.
+    const fetch = tileFetch(() => new Promise<Response>((resolve) => setTimeout(() => resolve(new Response(body)), 30)));
+    const p = search(new AtgeoClient({ fetch, requestTimeoutMs: 30 }));
+    await vi.advanceTimersByTimeAsync(30);
+    const result = await p;
+    expect(isTimeout(result.tileFailures[0].error)).toBe(true);
+    await vi.waitFor(() => expect(cancelled).toBe(true));
+  });
+
   it("does not time out a request that finishes in time", async () => {
     const late = () => new Promise<Response>((resolve) => setTimeout(() => resolve(new Response(tileOfSize(600))), 20));
     const result = await search(new AtgeoClient({ fetch: tileFetch(late), requestTimeoutMs: 2000 }));
@@ -246,14 +298,18 @@ describe("requestTimeoutMs", () => {
   });
 
   it("gives each request its own time", async () => {
-    const late = () => new Promise<Response>((resolve) => setTimeout(() => resolve(new Response(tileOfSize(600))), 60));
-    // getTiles and the tile together take longer than the limit; neither alone does.
+    vi.useFakeTimers();
+    const after = (ms: number, make: () => Response) => new Promise<Response>((resolve) => setTimeout(() => resolve(make()), ms));
+    // getTiles and the tile take 60 ms each: together longer than the 100 ms limit, neither alone.
     const fetch = (async (input: RequestInfo | URL) => {
-      if (new Request(input).url.includes("/xrpc/")) return new Response(JSON.stringify({ tiles: [TILE] }));
-      return late();
+      if (new Request(input).url.includes("/xrpc/")) return after(60, () => new Response(JSON.stringify({ tiles: [TILE] })));
+      return after(60, () => new Response(tileOfSize(600)));
     }) as typeof globalThis.fetch;
-    const result = await search(new AtgeoClient({ fetch, requestTimeoutMs: 100 }));
+    const p = search(new AtgeoClient({ fetch, requestTimeoutMs: 100 }));
+    await vi.advanceTimersByTimeAsync(200);
+    const result = await p;
     expect(result.tileFailures).toEqual([]);
+    expect(result.places).toHaveLength(1);
   });
 
   it("defaults to 30 seconds", async () => {
@@ -340,5 +396,48 @@ describe("a caller's abort is not a timeout", () => {
     const result = await search(new AtgeoClient({ fetch: tileFetch(stalls), requestTimeoutMs: 20 }), controller.signal);
     expect(result.tileFailures[0].error).toMatchObject({ name: "TimeoutError" });
     expect(controller.signal.aborted).toBe(false);
+  });
+});
+
+describe("the calls that are not tile fetches", () => {
+  const origin = "urn:atgeo:overturemaps.org:place:x";
+  const calls: Record<string, (client: AtgeoClient) => Promise<unknown>> = {
+    getPlace: (client) => client.getPlace({ origin }),
+    describeService: (client) => client.describeService(),
+    describeTileset: (client) => client.describeTileset("overture-place"),
+  };
+  const big = () => new Response(new Uint8Array(2000).fill(0x20));
+  const stalledHeaders = (_: unknown, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)));
+  const stalledBody = (_: unknown, init?: RequestInit) =>
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode("{"));
+          init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason));
+        },
+      }),
+    );
+
+  it.each(Object.entries(calls))("%s rejects with the raw BodyTooLargeError for an oversize body", async (_name, call) => {
+    const client = new AtgeoClient({ fetch: (async () => big()) as unknown as typeof fetch, maxBodyBytes: 1000 });
+    await expect(call(client)).rejects.toBeInstanceOf(BodyTooLargeError);
+  });
+
+  it.each(Object.entries(calls))("%s rejects with the raw TimeoutError when the headers stall", async (_name, call) => {
+    const client = new AtgeoClient({ fetch: stalledHeaders as unknown as typeof fetch, requestTimeoutMs: 30 });
+    await expect(call(client)).rejects.toMatchObject({ name: "TimeoutError" });
+  });
+
+  it.each(Object.entries(calls))("%s rejects with the raw TimeoutError when the body stalls", async (_name, call) => {
+    const client = new AtgeoClient({ fetch: stalledBody as unknown as typeof fetch, requestTimeoutMs: 30 });
+    await expect(call(client)).rejects.toMatchObject({ name: "TimeoutError" });
+  });
+
+  it.each(Object.entries(calls))("%s accepts a body of exactly the cap", async (name, call) => {
+    const body = JSON.stringify(name === "getPlace" ? { record: { name: "x" } } : { did: "did:web:x", tilesets: [], slug: "s", collections: [] });
+    const fetch = (async () => new Response(body)) as unknown as typeof globalThis.fetch;
+    await expect(call(new AtgeoClient({ fetch, maxBodyBytes: encoder.encode(body).byteLength }))).resolves.toBeDefined();
+    await expect(call(new AtgeoClient({ fetch, maxBodyBytes: encoder.encode(body).byteLength - 1 }))).rejects.toBeInstanceOf(BodyTooLargeError);
   });
 });

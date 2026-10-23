@@ -78,19 +78,30 @@ export class Transport {
   async fetch(url: string, signal?: AbortSignal): Promise<HttpResponse> {
     const controller = new AbortController();
     let timedOut = false;
+    let expire!: (error: unknown) => void;
+    const expired = new Promise<never>((_, reject) => (expire = reject));
+    expired.catch(() => {});
     const onCallerAbort = () => controller.abort(signal?.reason);
     if (signal?.aborted) controller.abort(signal.reason);
     else signal?.addEventListener("abort", onCallerAbort, { once: true });
     const timer = setTimeout(() => {
       timedOut = true;
-      controller.abort(new DOMException(`request timed out after ${this.requestTimeoutMs} ms`, "TimeoutError"));
+      const error = new DOMException(`request timed out after ${this.requestTimeoutMs} ms`, "TimeoutError");
+      controller.abort(error);
+      expire(error);
     }, this.requestTimeoutMs);
+    let pending: Promise<Response> | undefined;
     try {
-      const response = await this.fetchImpl(url, { signal: controller.signal });
+      pending = Promise.resolve(this.fetchImpl(url, { signal: controller.signal }));
+      // The timeout also ends the wait for headers if a custom fetch ignores its signal. The
+      // caller's own abort does not: that takes effect through the request, as it always has.
+      const response = await Promise.race([pending, expired]);
       if (timedOut) throw controller.signal.reason;
       const text = await readText(response, this.maxBodyBytes, controller.signal);
       return { ok: response.ok, status: response.status, text };
     } catch (error) {
+      // A response that arrives after the timeout is nobody's; let go of its connection.
+      if (timedOut) void pending?.then(discard, () => {});
       // A fetch that ignores the abort reason may reject with a generic AbortError; the caller
       // must not take a timeout for its own cancellation.
       if (timedOut && !signal?.aborted) throw controller.signal.reason;
@@ -100,6 +111,12 @@ export class Transport {
       signal?.removeEventListener("abort", onCallerAbort);
     }
   }
+}
+
+function discard(response: Response): void {
+  try {
+    void response.body?.cancel().catch(() => {});
+  } catch {}
 }
 
 // Reads a response body as UTF-8 text, failing with BodyTooLargeError as soon as more than
