@@ -12,13 +12,14 @@
 # where <repo> is atgeo-sdk-js or garganorn, <commit> is a hex SHA (the full 40 characters; an
 # abbreviation of 7 or more is resolved, and an ambiguous or unknown one fails), and <path> is the
 # directory in that repo the files were copied from (default fixtures/ for atgeo-sdk-js,
-# garganorn/lexicon/ for garganorn). Anything after the third field is for people.
+# garganorn/lexicon/ for garganorn). Anything after the third field, a parenthetical included, is ignored.
 #
 # --fixtures needs an atgeo-sdk-js line in DIR/SOURCE. The lexicon copy in DIR/lexicon needs a
 # garganorn line, from DIR/lexicon/SOURCE if there is one and from DIR/SOURCE if not.
 #
-# Fails (exit 1) if a pinned commit does not exist, or a vendored *.json file differs from the pinned
-# commit's, is missing from the copy, or is not in the pinned commit. Warns (a GitHub ::warning::
+# Fails (exit 1) if a pinned commit does not exist, or a vendored file differs from the pinned commit's,
+# is missing from the copy, or is not in the pinned commit. Every file counts, at any depth and of any
+# type, except SOURCE itself (and, for --fixtures, lexicon/, which is checked on its own). Warns (a GitHub ::warning::
 # annotation under Actions, and still exit 0) if the pin is behind its upstream: the fixtures behind
 # atgeo-sdk-js's default branch, a port's lexicons behind that branch's test/lexicon, or the lexicons
 # given with --lexicon behind garganorn's default branch. Exit 2 is a usage error.
@@ -68,7 +69,7 @@ pin() {
     fi
     echo "$sha ${path%/}"
     return 0
-  done < <(grep -Ev '^[[:space:]]*(#|$)' "$2")
+  done < <(tr -d '\r' <"$2" | grep -Ev '^[[:space:]]*(#|$)')
   return 1
 }
 
@@ -85,60 +86,70 @@ resolve() {
   fi
 }
 
-# tree REPO REV PATH: "<blob id> <name>" for each *.json directly under PATH at REV.
+# tree REPO REV PATH: "<blob id><TAB><path>" for every file under PATH at REV, paths relative to PATH,
+# without the top-level SOURCE.
 tree() {
-  { git -C "$work/$1" ls-tree "$2:$3" 2>/dev/null || true; } \
-    | awk '$2 == "blob" && $4 ~ /\.json$/ { print $3, $4 }' | LC_ALL=C sort -k2
+  local entry meta path mode type id
+  { git -C "$work/$1" ls-tree -r -z "$2:$3" 2>/dev/null || true; } | while IFS= read -r -d '' entry; do
+    meta=${entry%%$'\t'*}
+    path=${entry#*$'\t'}
+    [ "$path" = SOURCE ] && continue
+    read -r mode type id <<<"$meta"
+    if [ "$type" = blob ]; then printf '%s\t%s\n' "$id" "$path"; fi
+  done | LC_ALL=C sort -t $'\t' -k2
 }
 
-# local_ids DIR: the same for the *.json files directly in DIR (the blob id is what git would store).
+# local_ids DIR [SKIP]: the same for every file under DIR (the blob id is what git would store),
+# without the top-level SOURCE and without anything under DIR/SKIP/.
 local_ids() {
-  local f
-  for f in "$1"/*.json; do
-    [ -f "$f" ] || continue
-    echo "$(git hash-object --no-filters --stdin <"$f") ${f##*/}"
-  done | LC_ALL=C sort -k2
+  local f rel
+  while IFS= read -r -d '' f; do
+    rel=${f#"$1"/}
+    [ "$rel" = SOURCE ] && continue
+    case $rel in "${2:-}"/*) [ -n "${2:-}" ] && continue ;; esac
+    printf '%s\t%s\n' "$(git hash-object --no-filters --stdin <"$f")" "$rel"
+  done < <(find "$1" -type f -print0) | LC_ALL=C sort -t $'\t' -k2
 }
 
-has_name() { awk -v n="$2" '$2 == n { f = 1 } END { exit !f }' <<<"$1"; }
+has_path() { P=$2 awk -F '\t' '$2 == ENVIRON["P"] { f = 1 } END { exit !f }' <<<"$1"; }
 
-# compare LABEL DIR REPO COMMIT PATH: every *.json in DIR is the file at REPO's COMMIT, and no file is
-# missing or extra. Returns 1, having reported each problem, if not.
+# compare LABEL DIR REPO COMMIT PATH [SKIP]: every file in DIR (but SOURCE, and SKIP/ if given) is the
+# file at REPO's COMMIT, and none is missing or extra. Returns 1, having reported each problem, if not.
 compare() {
   local label=$1 dir=$2 repo=$3 commit=$4 path=$5 want have n=0 id name short=${4:0:12} before=$failures
   want=$(tree "$repo" "$commit" "$path")
-  if [ -z "$want" ]; then fail "$label: $repo $short has no $path/*.json"; return; fi
-  have=$(local_ids "$dir")
-  while read -r id name; do
+  if [ -z "$want" ]; then fail "$label: $repo $short has no files in $path/"; return; fi
+  have=$(local_ids "$dir" "${6:-}")
+  while IFS=$'\t' read -r id name; do
     n=$((n + 1))
-    if ! has_name "$have" "$name"; then
+    if ! has_path "$have" "$name"; then
       fail "$label: $dir/$name is missing; $repo $short has $path/$name"
-    elif ! grep -qxF "$id $name" <<<"$have"; then
+    elif ! grep -qxF "$id"$'\t'"$name" <<<"$have"; then
       fail "$label: $dir/$name differs from $repo $short $path/$name"
       git -C "$work/$repo" show "$commit:$path/$name" \
         | diff -u --label "$repo@$short:$path/$name" --label "$dir/$name" - "$dir/$name" | head -20 || true
     fi
   done <<<"$want"
-  while read -r id name; do
+  while IFS=$'\t' read -r id name; do
     [ -n "$name" ] || continue
-    has_name "$want" "$name" || fail "$label: $dir/$name is not in $repo $short $path/"
+    has_path "$want" "$name" || fail "$label: $dir/$name is not in $repo $short $path/"
   done <<<"$have"
   [ "$failures" -eq "$before" ] || return 1
   echo "ok: $label: $dir ($n files) vs $repo $short $path/"
 }
 
-# behind LABEL DIR UPSTREAM_REPO UPSTREAM_PATH: DIR is known to match its pin, so if it differs from
-# UPSTREAM_REPO's default branch the pin is behind. Warn, don't fail: a fixture change upstream would
-# otherwise turn every downstream CI red at once.
+# behind LABEL DIR UPSTREAM_REPO UPSTREAM_PATH [SKIP]: DIR is known to match its pin, so if it differs
+# from UPSTREAM_REPO's default branch the pin is behind. Warn, don't fail: a fixture change upstream
+# would otherwise turn every downstream CI red at once.
 behind() {
   local label=$1 dir=$2 up=$3 uppath=$4 head want have
   clone "$up"
   head=$(git -C "$work/$up" rev-parse HEAD)
   want=$(tree "$up" "$head" "$uppath")
-  have=$(local_ids "$dir")
+  have=$(local_ids "$dir" "${5:-}")
   if [ "$want" != "$have" ]; then
     warn "$label: $dir is behind $up $uppath/ at its default branch (${head:0:12}); differing: $(
-      diff <(echo "$want") <(echo "$have") | awk '/^[<>]/ { print $3 }' | sort -u | tr '\n' ' ')"
+      diff <(echo "$want") <(echo "$have") | awk -F '\t' '/^[<>]/ { print $2 }' | sort -u | tr '\n' ' ')"
   fi
 }
 
@@ -162,7 +173,7 @@ check_fixtures() {
   if line=$(pin atgeo-sdk-js "$dir/SOURCE"); then
     read -r commit path <<<"$line"
     if resolve atgeo-sdk-js "$commit"; then
-      if compare fixtures "$dir" atgeo-sdk-js "$full" "$path"; then behind fixtures "$dir" atgeo-sdk-js "$path"; fi
+      if compare fixtures "$dir" atgeo-sdk-js "$full" "$path" lexicon; then behind fixtures "$dir" atgeo-sdk-js "$path" lexicon; fi
     fi
   else
     fail "$dir/SOURCE has no atgeo-sdk-js line"
