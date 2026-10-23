@@ -42,10 +42,20 @@ const atgeo = new AtgeoClient({
   server: "http://localhost:8000",      // default: https://places.atgeo.org
   fetch: myFetch,                       // default: the global fetch
   cacheBudgetBytes: 10 * 1024 * 1024,   // default: 50 MiB
+  maxBodyBytes: 8 * 1024 * 1024,        // default: 32 MiB
+  requestTimeoutMs: 15_000,             // default: 30 s
 });
 ```
 
 Point `server` at your own garganorn to run against your own data; see [Server requirements](#server-requirements). `fetch` is for tests, proxies, or runtimes where you want to supply your own. The budget caps the in-memory tile cache (see [Caching](#caching)).
+
+`maxBodyBytes` and `requestTimeoutMs` limit what a server can make the client do. Tile URLs come from the server, and a small gzip body can decode to gigabytes, so:
+
+- `maxBodyBytes` caps a response body, counted in bytes after any gzip is undone. The client reads the body as a stream and stops, cancelling it, as soon as the chunk that passes the cap arrives, so what it holds grows with the cap (the bytes of one chunk past it at most, and the text decoded from them), never with how large the body claims to be. The largest tiles places.atgeo.org serves are about 2 MB. A body over the cap fails with a `BodyTooLargeError` (exported), which makes a tile a failed tile of kind `transport`.
+- `requestTimeoutMs` is how long one request may take, from sending it to the last byte of the body. A stalled response and a trickled one both run out of it. The error is a `DOMException` named `TimeoutError`, the one `AbortSignal.timeout()` raises, so a tile is a failed tile of kind `transport`. Each request gets its own time, not the search as a whole.
+- Both must be positive integers (`requestTimeoutMs` at most 2147483647), or the constructor throws a `TypeError`. There is no way to turn either off; pass a large number.
+
+They apply to every request, whatever `fetch` you pass in, since they're enforced where the client reads the `Response`: an injected `fetch` gets the 30 s and 32 MiB limits by default. The timeout also reaches your `fetch` as its `signal`, alongside your own `signal` from the call, and a `fetch` that honors it can release its connection at once; one that ignores it is still cut off at the timeout (the wait for headers and the body read both end, and a response that arrives late is cancelled). Your own `signal` works the same way: aborting it rejects the call with your signal's reason, even if your `fetch` ignores `init.signal` (that wait is given up a turn after the abort). A response your `fetch` already has in hand when the abort happens is still read, if its body finishes within that turn, and its own failure (an unparsable body, say) is what you get. A `fetch` that answers after the next timer tick (`setTimeout(0)`) following the abort, or a body that is still arriving then, gets your signal's reason instead (a response that arrives by microtask or `setImmediate` is still read), and so does any body error after your abort, an oversize body (`BodyTooLargeError`) included. A runtime whose `fetch` returns a `Response` without a `body` stream (some React Native versions) is read whole, and the cap is checked after the read, so it still keeps an oversize body from reaching you but can't save the memory it took.
 
 ## API
 
@@ -166,15 +176,16 @@ Returns the tileset's descriptor: `slug`, `collections` (each a `{ dataset, coll
 
 - `AtgeoError` has a `code` string and the HTTP `status`, which tells a request the server refused (4xx) from one it failed to answer (5xx) without matching on codes. A non-2xx response from the server becomes an `AtgeoError` whose `code` and message come from the server's JSON error body (`error`, `message`); if there isn't one, the code is `HttpError`. Apart from `HttpError`, every code comes from the server: for example `PlaceNotFound`, `TilesetNotFound`, `DatasetNotFound`, `CollectionNotFound`, `BboxTooLarge`, or `InvalidRequest` for a malformed parameter. The lexicons in `test/lexicon/` list the codes each method declares.
 - `DecodingError` means the server answered 2xx with JSON that has nothing the client can use: a `getTiles` body with no `tiles` array, a `getPlace` body with no `record` object, or a describe body that isn't an object. It rejects the call, and nothing is cached. The client is otherwise tolerant: it ignores fields it doesn't read, treats a missing or wrong-typed one as absent, and skips a tile record or list entry it can't read instead of failing. A body that isn't JSON at all rejects with the `SyntaxError` from `JSON.parse`, not a `DecodingError`.
+- A body over `maxBodyBytes` and a request past `requestTimeoutMs` reject unwrapped from `getTiles` (so, a search), `getPlace`, `describeService` and `describeTileset`: a `BodyTooLargeError`, or a `TimeoutError` `DOMException`. Neither is an `AtgeoError`, even for a non-2xx: an error body over the cap is a `BodyTooLargeError`, not the `AtgeoError` its status would have made. (For a tile, they are a failed tile of kind `transport`, below.)
 - `searchPlaces` throws `TypeError` for an invalid region (non-finite or out-of-range coordinates, `minLat > maxLat`, negative radius) and for `sort: "similarity"` without text. It throws synchronously, before any request.
 - A failed `getTiles` request rejects the whole search. A failed tile request does not: that tile is skipped, `tiles.failed` counts it, `complete` is `false`, and `tileFailures` says which tile and why. The `kind` is where it went wrong:
   - `refused`: the URL isn't an absolute `http` or `https` URL, or carries credentials (`https://user:pw@host/…`). No request is made.
   - `status`: the tile answered non-2xx. `status` is the HTTP status and `error` the `AtgeoError`.
   - `decode`: the tile answered 2xx with something that isn't a tile: not JSON, or no `records` array. A record in it that isn't usable (not an object, or with no object `value`) is skipped and doesn't fail the tile.
-  - `transport`: `fetch` threw, or the body couldn't be read. `error` is whatever it threw, as is.
+  - `transport`: `fetch` threw, the body couldn't be read, the body was over `maxBodyBytes` (`BodyTooLargeError`), or the request ran past `requestTimeoutMs` (a `TimeoutError`). `error` is whatever it threw, as is.
 
   The kind comes from which step failed, not from the error's type: a custom `fetch` that throws an `AtgeoError` of its own is still `transport`. An entry holds the tile URL and what fetching it produced, never your search text or region, and the SDK doesn't log it or send it anywhere. What you do with it is up to you.
-- Aborting rejects with whatever `fetch` throws, so it only takes effect through a request. A call answered entirely from cache completes normally, even with an already-aborted signal. Network errors from `fetch` propagate as-is.
+- Aborting rejects with your signal's reason, from whatever request was in flight, and never with a timeout: when `requestTimeoutMs` runs out and your signal has not aborted, the request fails with a `TimeoutError` instead (a failed tile, if it was a tile). A call answered entirely from cache completes normally, even with an already-aborted signal. Network errors from `fetch` propagate as-is.
 
 ## Privacy
 

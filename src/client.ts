@@ -27,7 +27,10 @@ export class AtgeoClient {
   private readonly service = new TtlCache<ServiceDescription>(3600_000);
 
   constructor(options: ClientOptions = {}) {
-    this.transport = new Transport(options.server ?? "https://places.atgeo.org", options.fetch ?? ((...a) => fetch(...a)));
+    this.transport = new Transport(options.server ?? "https://places.atgeo.org", options.fetch ?? ((...a) => fetch(...a)), {
+      maxBodyBytes: options.maxBodyBytes,
+      requestTimeoutMs: options.requestTimeoutMs,
+    });
     this.tiles = new TileCache(options.cacheBudgetBytes ?? 50 * 1024 * 1024);
   }
 
