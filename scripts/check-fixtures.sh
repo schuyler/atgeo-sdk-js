@@ -19,10 +19,11 @@
 #
 # Fails (exit 1) if a pinned commit does not exist, or a vendored file differs from the pinned commit's,
 # is missing from the copy, or is not in the pinned commit. Every file counts, at any depth and of any
-# type, except SOURCE itself (and, for --fixtures, lexicon/, which is checked on its own). Warns (a GitHub ::warning::
-# annotation under Actions, and still exit 0) if the pin is behind its upstream: the fixtures behind
-# atgeo-sdk-js's default branch, a port's lexicons behind that branch's test/lexicon, or the lexicons
-# given with --lexicon behind garganorn's default branch. Exit 2 is a usage error.
+# type, except SOURCE itself (and, for --fixtures, lexicon/, which is checked on its own). A symlink,
+# FIFO or other non-regular file never matches anything. File modes are ignored. Warns (a GitHub
+# ::warning:: annotation under Actions, and still exit 0) if the pin is behind its upstream: the
+# fixtures behind atgeo-sdk-js's default branch, a port's lexicons behind that branch's test/lexicon,
+# or the lexicons given with --lexicon behind garganorn's default branch. Exit 2 is a usage error.
 #
 # Needs bash, git and diff, and the network (https://github.com). CHECK_FIXTURES_BASE replaces
 # https://github.com/schuyler, for a mirror.
@@ -54,9 +55,18 @@ trap 'rm -rf "$work"' EXIT
 # clone REPO: a clone with every commit and tree and no blobs (they are fetched when a diff needs
 # one), in $work/REPO. HEAD there is the upstream default branch.
 clone() {
+  local attempt
   [ -d "$work/$1" ] && return 0
-  git clone --quiet --no-checkout --filter=blob:none "$BASE/$1.git" "$work/$1" 2>"$work/clone.err" \
-    || { cat "$work/clone.err" >&2; err "cannot clone $BASE/$1.git"; exit 1; }
+  for attempt in 1 2 3; do
+    rm -rf "${work:?}/$1"
+    if git clone --quiet --no-checkout --filter=blob:none "$BASE/$1.git" "$work/$1" 2>"$work/clone.err"; then
+      return 0
+    fi
+    [ "$attempt" -lt 3 ] && sleep "$attempt"
+  done
+  cat "$work/clone.err" >&2
+  err "cannot clone $BASE/$1.git"
+  exit 1
 }
 
 # pin REPO SOURCEFILE: prints "<commit> <path>" from the first line of SOURCEFILE that names REPO.
@@ -76,9 +86,10 @@ pin() {
 # resolve REPO SHA: sets $full to the full commit SHA. Fails if SHA is not hex, names no commit, or
 # is an abbreviation of more than one.
 resolve() {
-  local repo=$1 sha=$2
+  local repo=$1 sha
+  sha=$(tr '[:upper:]' '[:lower:]' <<<"$2")
   case $repo in atgeo-sdk-js | garganorn) ;; *) fail "SOURCE names '$repo'; expected atgeo-sdk-js or garganorn"; return 1 ;; esac
-  if ! [[ $sha =~ ^[0-9a-f]{7,40}$ ]]; then fail "SOURCE has '$sha' for $repo, which is not a hex commit SHA"; return 1; fi
+  if ! [[ $sha =~ ^[0-9a-f]{7,40}$ ]]; then fail "SOURCE has '$2' for $repo, which is not a hex commit SHA"; return 1; fi
   clone "$repo"
   if ! full=$(git -C "$work/$repo" rev-parse --verify --quiet "$sha^{commit}" 2>/dev/null); then
     fail "$repo commit $sha does not exist, or is ambiguous, on $BASE/$repo.git"
@@ -86,29 +97,33 @@ resolve() {
   fi
 }
 
-# tree REPO REV PATH: "<blob id><TAB><path>" for every file under PATH at REV, paths relative to PATH,
-# without the top-level SOURCE.
+# tree REPO REV PATH [SKIP]: "<blob id><TAB><path>" for every file under PATH at REV, paths relative to
+# PATH, without the top-level SOURCE and without anything under SKIP/.
 tree() {
   local entry meta path mode type id
   { git -C "$work/$1" ls-tree -r -z "$2:$3" 2>/dev/null || true; } | while IFS= read -r -d '' entry; do
     meta=${entry%%$'\t'*}
     path=${entry#*$'\t'}
     [ "$path" = SOURCE ] && continue
+    case $path in "${4:-}"/*) [ -n "${4:-}" ] && continue ;; esac
     read -r mode type id <<<"$meta"
     if [ "$type" = blob ]; then printf '%s\t%s\n' "$id" "$path"; fi
   done | LC_ALL=C sort -t $'\t' -k2
 }
 
-# local_ids DIR [SKIP]: the same for every file under DIR (the blob id is what git would store),
-# without the top-level SOURCE and without anything under DIR/SKIP/.
+# local_ids DIR [SKIP]: the same for everything under DIR that is not a directory (the blob id is what
+# git would store), without the top-level SOURCE and without anything under DIR/SKIP/. A symlink, a
+# FIFO or any other entry that is not a regular file gets the id "non-regular", which matches nothing,
+# so it is always extra (or different, if the pinned commit has a file by that name). Modes are ignored.
 local_ids() {
-  local f rel
+  local f rel id
   while IFS= read -r -d '' f; do
     rel=${f#"$1"/}
     [ "$rel" = SOURCE ] && continue
     case $rel in "${2:-}"/*) [ -n "${2:-}" ] && continue ;; esac
-    printf '%s\t%s\n' "$(git hash-object --no-filters --stdin <"$f")" "$rel"
-  done < <(find "$1" -type f -print0) | LC_ALL=C sort -t $'\t' -k2
+    if [ -f "$f" ] && [ ! -L "$f" ]; then id=$(git hash-object --no-filters --stdin <"$f"); else id=non-regular; fi
+    printf '%s\t%s\n' "$id" "$rel"
+  done < <(find "$1" ! -type d -print0) | LC_ALL=C sort -t $'\t' -k2
 }
 
 has_path() { P=$2 awk -F '\t' '$2 == ENVIRON["P"] { f = 1 } END { exit !f }' <<<"$1"; }
@@ -117,8 +132,8 @@ has_path() { P=$2 awk -F '\t' '$2 == ENVIRON["P"] { f = 1 } END { exit !f }' <<<
 # file at REPO's COMMIT, and none is missing or extra. Returns 1, having reported each problem, if not.
 compare() {
   local label=$1 dir=$2 repo=$3 commit=$4 path=$5 want have n=0 id name short=${4:0:12} before=$failures
-  want=$(tree "$repo" "$commit" "$path")
-  if [ -z "$want" ]; then fail "$label: $repo $short has no files in $path/"; return; fi
+  want=$(tree "$repo" "$commit" "$path" "${6:-}")
+  if [ -z "$want" ]; then fail "$label: $repo $short has no files in $path/"; return 1; fi
   have=$(local_ids "$dir" "${6:-}")
   while IFS=$'\t' read -r id name; do
     n=$((n + 1))
@@ -145,7 +160,7 @@ behind() {
   local label=$1 dir=$2 up=$3 uppath=$4 head want have
   clone "$up"
   head=$(git -C "$work/$up" rev-parse HEAD)
-  want=$(tree "$up" "$head" "$uppath")
+  want=$(tree "$up" "$head" "$uppath" "${5:-}")
   have=$(local_ids "$dir" "${5:-}")
   if [ "$want" != "$have" ]; then
     warn "$label: $dir is behind $up $uppath/ at its default branch (${head:0:12}); differing: $(
@@ -187,8 +202,10 @@ check_fixtures() {
 
 [ $# -eq 2 ] || usage
 case $1 in
-  --fixtures) check_fixtures "${2%/}" ;;
-  --lexicon) check_lexicon "${2%/}" ;;
+  --fixtures | --lexicon)
+    dir=$2
+    while [ "${#dir}" -gt 1 ] && [ "${dir%/}" != "$dir" ]; do dir=${dir%/}; done
+    if [ "$1" = --fixtures ]; then check_fixtures "$dir"; else check_lexicon "$dir"; fi ;;
   *) usage ;;
 esac
 
