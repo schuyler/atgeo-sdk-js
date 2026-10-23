@@ -85,6 +85,19 @@ export interface TileFailure {
 
 export interface ClientOptions {
   server?: string;
+  // Called as fetch(url, { signal }). It must honour the signal, which carries both the caller's
+  // abort and requestTimeoutMs; the limits below apply to whatever Response it returns.
   fetch?: typeof fetch;
   cacheBudgetBytes?: number;
+  // The most a response body may hold once decoded (after any gzip), in bytes. A larger body
+  // fails the request with a BodyTooLargeError, which makes a tile of it a failed tile of kind
+  // "transport", and the read stops as soon as the cap is passed. Default 32 MiB. Must be a
+  // positive integer; the constructor throws a TypeError otherwise.
+  maxBodyBytes?: number;
+  // The most time one request may take, from the call to the last byte of the body, in
+  // milliseconds. A request that overruns it rejects with a DOMException named "TimeoutError", so
+  // a tile is a failed tile of kind "transport". A search cancelled through its signal is not
+  // a timeout: it still rejects with the signal's own reason. Default 30000. Must be a positive
+  // integer no larger than 2147483647; the constructor throws a TypeError otherwise.
+  requestTimeoutMs?: number;
 }

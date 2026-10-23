@@ -42,10 +42,20 @@ const atgeo = new AtgeoClient({
   server: "http://localhost:8000",      // default: https://places.atgeo.org
   fetch: myFetch,                       // default: the global fetch
   cacheBudgetBytes: 10 * 1024 * 1024,   // default: 50 MiB
+  maxBodyBytes: 8 * 1024 * 1024,        // default: 32 MiB
+  requestTimeoutMs: 15_000,             // default: 30 s
 });
 ```
 
 Point `server` at your own garganorn to run against your own data; see [Server requirements](#server-requirements). `fetch` is for tests, proxies, or runtimes where you want to supply your own. The budget caps the in-memory tile cache (see [Caching](#caching)).
+
+`maxBodyBytes` and `requestTimeoutMs` limit what a server can make the client do. Tile URLs come from the server, and a small gzip body can decode to gigabytes, so:
+
+- `maxBodyBytes` caps a response body, counted in bytes after any gzip is undone. The client reads the body as a stream and stops, cancelling it, the moment the cap is passed; it never holds more than the cap. The largest tiles places.atgeo.org serves are about 2 MB. A body over the cap fails with a `BodyTooLargeError` (exported), which makes a tile a failed tile of kind `transport`.
+- `requestTimeoutMs` is how long one request may take, from sending it to the last byte of the body. A stalled response and a trickled one both run out of it. The error is a `DOMException` named `TimeoutError`, the one `AbortSignal.timeout()` raises, so a tile is a failed tile of kind `transport`. Each request gets its own time, not the search as a whole.
+- Both must be positive integers (`requestTimeoutMs` at most 2147483647), or the constructor throws a `TypeError`. There is no way to turn either off; pass a large number.
+
+They apply to every request, whatever `fetch` you pass in, since they're enforced where the client reads the `Response`. The timeout reaches your `fetch` as its `signal`, alongside your own `signal` from the call, so a custom `fetch` has to honor `init.signal` for the timeout to cut short a wait for response headers (the body wait is cut short regardless). A runtime whose `fetch` returns a `Response` without a `body` stream (some React Native versions) is read whole, and the cap is checked after the read, so it still keeps an oversize body from reaching you but can't save the memory it took.
 
 ## API
 
@@ -157,10 +167,10 @@ Returns the tileset's descriptor: `slug`, `collections` (each a `{ dataset, coll
   - `refused`: the URL isn't a string, isn't an absolute `http` or `https` URL, or carries credentials (`https://user:pw@host/…`). No request is made.
   - `status`: the tile answered non-2xx. `status` is the HTTP status and `error` the `AtgeoError`, except that a body of exactly `null` gets you a `TypeError` instead. That's a known wart, not a promise.
   - `decode`: the tile answered 2xx with something that isn't a tile: not JSON, or no `records` array.
-  - `transport`: `fetch` threw, or the body couldn't be read. `error` is whatever it threw, as is.
+  - `transport`: `fetch` threw, the body couldn't be read, the body was over `maxBodyBytes` (`BodyTooLargeError`), or the request ran past `requestTimeoutMs` (a `TimeoutError`). `error` is whatever it threw, as is.
 
   The kind comes from which step failed, not from the error's type: a custom `fetch` that throws an `AtgeoError` of its own is still `transport`. An entry holds the tile URL and what fetching it produced, never your search text or region, and the SDK doesn't log it or send it anywhere. What you do with it is up to you.
-- Aborting rejects with whatever `fetch` throws, so it only takes effect through a request. A call answered entirely from cache completes normally, even with an already-aborted signal. Network errors from `fetch` propagate as-is.
+- Aborting rejects with whatever `fetch` throws, so it only takes effect through a request, and it is always your signal's own reason, never a timeout: when `requestTimeoutMs` runs out and your signal has not aborted, the request fails with a `TimeoutError` instead (a failed tile, if it was a tile). A call answered entirely from cache completes normally, even with an already-aborted signal. Network errors from `fetch` propagate as-is.
 
 ## Privacy
 

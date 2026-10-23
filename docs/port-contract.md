@@ -58,6 +58,8 @@ Options, all optional:
 | HTTP implementation | the platform's | Injected for tests, proxies and custom networking. It must be able to fetch arbitrary absolute URLs, since tile URLs come from the server. |
 | `cacheBudgetBytes` | 50 MiB (52,428,800) | Cap on the in-memory tile cache (section 10). |
 
+A port's default transport may also take limits (section 14). The reference does, as client options: `maxBodyBytes` (32 MiB, 33,554,432, counted on decoded bytes) and `requestTimeoutMs` (30,000, one request from send to last body byte), both positive integers. They are enforced where the reference reads the `Response`, so they apply to an injected `fetch` too.
+
 A client holds three caches (tile lists, tiles, service description) that start empty. There is no persistence. Two clients share nothing.
 
 ## 3. Regions
@@ -430,8 +432,8 @@ A port may:
 - coalesce concurrent identical requests, as long as results are unchanged;
 - throw a cancellation error from a fully cached call (section 11);
 - fail a cancelled search with its cancellation error rather than with the error of the tile that was in flight (section 4.4);
-- time out a request in its transport: a timeout is a network failure, and inside a tile fetch a failed tile. The reference relies on its platform's `fetch` defaults: in Node, undici's (10 seconds to connect, 300 seconds for headers and body); in a browser, whatever the browser imposes.
-- cap the size of a response body in its transport, decoded size included: a larger body is a network failure, and inside a tile fetch a failed tile. Tile URLs come from the server and a small gzip body can decode to gigabytes. The Kotlin port caps at 32 MiB; the largest tiles places.atgeo.org serves are about 2 MB.
+- time out a request in its transport: a timeout is a network failure, and inside a tile fetch a failed tile. The reference gives every request 30 seconds in all, covering the body (`requestTimeoutMs`), and raises a `TimeoutError` `DOMException`; the Kotlin and Rust ports time out a connection after 10 seconds and a stalled read after 30. A caller's cancellation is never reported as a timeout: it surfaces as the cancellation error (section 11), and a timeout while the caller's signal is still live is the network failure.
+- cap the size of a response body in its transport, decoded size included: a larger body is a network failure, and inside a tile fetch a failed tile. Tile URLs come from the server and a small gzip body can decode to gigabytes. The reference, Kotlin and Rust cap at 32 MiB (`maxBodyBytes`); the largest tiles places.atgeo.org serves are about 2 MB. The reference reads the body as a stream and cancels it once the cap is passed. A response with no body stream is read whole and then checked.
 - log each failed tile through the platform's standard logging facility, with no new dependency, at its debug level and never above, carrying only the fields of the tile's `tileFailures` entry, and only for a search that returns a result. The result is the contract's channel for failures; a log is a convenience for a developer who turns it on, and a library that logged a failed tile at a higher level would flood an app that searches on every keystroke over a poor connection.
 - give a hit and a place record accessors that read the place for the app, such as its `name` when that is a string and the location section 5 reads, as long as the place itself is still surfaced as served.
 
