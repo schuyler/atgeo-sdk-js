@@ -100,7 +100,7 @@ interface TileFailure {
 
 interface SearchHit {
   origin: string | null;               // the place's identity: place.origin, else the tile record's uri, else null
-  place: { [key: string]: unknown };   // the record value, exactly as served
+  place: { [key: string]: unknown };   // the record value, exactly as served; frozen and shared with the cache (see below)
   importance: number | null;           // the record's importance, an integer relative to its tileset; null if it has none
   distance: number;                    // meters from the region's center (the circle's center, or the bbox's center) to the nearest point of the place; 0 if the place contains the center
   score: number | null;                // 0 to 1 text similarity; null if no text was given
@@ -117,7 +117,18 @@ Sort modes:
 
 Similarity is compared to three decimal places, so scores that differ only beyond that count as ties. Remaining ties break on `origin` (a hit with no `origin` sorts last), so ordering is deterministic.
 
-`place` is the gazetteer's value untouched. Importance lives on `hit.importance` and identity on `hit.origin`.
+`place` is the gazetteer's value as served, every key and nested value unmodified. Importance lives on `hit.importance` and identity on `hit.origin`.
+
+**`place` is shared with the client's tile cache, so it is frozen.** The object in a hit is the one the cache holds: every later search over the same tile, and `getPlace` from the cache, returns it too. To keep one app's edits from corrupting what the next search sees, the client freezes each place once, when it parses the tile (and a `getPlace` answer from the network, for consistency). Assigning to `hit.place.name`, deleting a key, or defining a property throws a `TypeError` in strict mode (ES modules are strict) and silently does nothing in sloppy mode.
+
+The freeze is shallow. Nested objects and arrays (`locations`, `variants`, `attributes`, `relations`) are not frozen, and they are shared with the cache just the same, so `hit.place.variants.push(...)` goes through and changes what later searches return. Don't. If you want to change a place, copy it first:
+
+```js
+const mine = structuredClone(hit.place); // deep copy, safe to change
+const top = { ...hit.place };            // shallow copy: top-level keys are yours, nested values are still shared
+```
+
+(It's shallow because a deep freeze made parsing a large tile markedly slower, while the shallow one costs nothing measurable.) The declared TypeScript type of `place` is still a mutable `{ [key: string]: unknown }`, so the compiler will not warn you; the runtime will.
 
 #### Overview answers
 
@@ -137,7 +148,7 @@ The guarantee is that the result is deterministic for the server's answers and t
 
 ### `getPlace({ origin }): Promise<PlaceRecord>`
 
-Returns `{ origin, place, importance }`, where `place` is the value as served and `importance` is a number or `null`. Pass the `origin` of a hit. If a cached tile holds the place, no request is made; otherwise the client asks the server (`org.atgeo.getPlace`) directly, with no discovery call first. A place with no origin is identified by its tile record's `uri`, which the cache can resolve; the server answers `PlaceNotFound` for a URI it doesn't serve, and `InvalidRequest` for a string that isn't a URI.
+Returns `{ origin, place, importance }`, where `place` is the value as served (frozen and shared with the cache, like `hit.place`) and `importance` is a number or `null`. Pass the `origin` of a hit. If a cached tile holds the place, no request is made; otherwise the client asks the server (`org.atgeo.getPlace`) directly, with no discovery call first. A place with no origin is identified by its tile record's `uri`, which the cache can resolve; the server answers `PlaceNotFound` for a URI it doesn't serve, and `InvalidRequest` for a string that isn't a URI.
 
 A cache hit returns the copy from the cached tile with the lowest URL, the same rule search uses; a network answer is the server's own copy. They agree when the copies are identical, which for garganorn they are.
 

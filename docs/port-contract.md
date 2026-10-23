@@ -360,11 +360,15 @@ Sort modes:
 | `distance` | distance, specificity, importance, score, origin |
 | `similarity` | score, distance, origin |
 
+`place` on a hit is the record's value, and the record is the one the tile cache holds (sections 4.5 to 4.9 pass it through), so it may be shared with the cache, with later searches and with `getPlace`. A port must either hand the app an immutable view of it or document that the app must not change it; the reference freezes it (section 9).
+
 The sort must be stable: hits that tie on every comparator (only possible when both lack an origin, since dedupe leaves one hit per origin) keep their order from section 4.5. A port that cannot rely on its library sort being stable must add the input index as a final tie-break.
 
 `fixtures/ranking-scenarios.json` must pass: for each scenario, run the records through sections 4.6 to 4.9 (no network) and check that each `expect.top[k].origins` set is a subset of the first `k` hits' origins and each `expect.absent` origin is not in the result at all. The fixture checks membership, not order.
 
 ## 9. The other calls
+
+`place` in a `getPlace` answer may likewise be the cached record's own value, so the rule from section 8 applies: make it immutable or document it. The reference freezes the value once, shallowly, when it parses the tile or the `getPlace` response, so every place it hands out is frozen, whether it came from the cache or the network; nested values stay mutable and shared, and the README says so and gives the copy recipe. A port whose language has value or immutable types needs no such step.
 
 `getPlace(origin)`: search the tile cache for a record whose key (4.6) equals `origin`; if several cached tiles hold one, take the record from the lowest tile URL. The scan does not mark any tile recently used (section 10). On a hit return `{ origin, place: value, importance ?? null }` with no request. On a miss call `getPlace` with `uri = origin` (no `describeService` first) and return `{ origin, place: record, importance ?? null }`. The returned `origin` is the caller's string, not the response's `uri`.
 

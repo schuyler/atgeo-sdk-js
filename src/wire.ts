@@ -69,23 +69,28 @@ export function readTileList(body: unknown): { tiles: string[]; overview: boolea
   return { tiles: body.tiles.filter((t): t is string => typeof t === "string"), overview: Boolean(body.overview) };
 }
 
-/** The usable records of a tile payload: `value` is an object; `uri` and `importance` are absent unless a string and a number.
+// Place values are handed to the app and also held by the tile cache, so they are frozen once, here, after
+// parsing (and after `present`, which deletes keys): the app cannot corrupt the cache by assigning to or
+// deleting from `hit.place`. The freeze is shallow; nested objects and arrays stay shared and mutable.
+const freezePlace = (value: PlaceValue): PlaceValue => Object.freeze(value);
+
+/** The usable records of a tile payload: `value` is an object, frozen; `uri` and `importance` are absent unless a string and a number.
  * A record that is not an object, or has no object `value`, is skipped. */
 export function readTilePayload(body: unknown): TileRecord[] {
   if (!isObject(body) || !Array.isArray(body.records)) return unusable("tile payload has no records array");
   const records: TileRecord[] = [];
   for (const r of body.records) {
     if (!isObject(r) || !isObject(r.value)) continue;
-    records.push(present({ value: r.value, uri: readString(r.uri), importance: readInteger(r.importance) }));
+    records.push(present({ value: freezePlace(r.value), uri: readString(r.uri), importance: readInteger(r.importance) }));
   }
   return records;
 }
 
-/** A getPlace answer's `record` and `importance`. `uri` is not read. */
+/** A getPlace answer's `record` (frozen, like a tile record's value) and `importance`. `uri` is not read. */
 export function readPlace(body: unknown): { record: PlaceValue; importance?: number } {
   if (!isObject(body)) return unusable("getPlace body is not an object");
   if (!isObject(body.record)) return unusable("getPlace body has no record object");
-  return present({ record: body.record, importance: readInteger(body.importance) });
+  return present({ record: freezePlace(body.record), importance: readInteger(body.importance) });
 }
 
 const readCollectionRef = (o: Record<string, unknown>): CollectionRef =>
