@@ -28,6 +28,7 @@
   },
   "devDependencies": {
     "@atproto/lexicon": "^0.7.16",
+    "@types/node": "^20.19.43",
     "@vitest/browser": "^2.1.9",
     "playwright": "^1.64.0",
     "tsx": "^4.23.15",
