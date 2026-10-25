@@ -40,10 +40,10 @@ export function recordKey(r: TileRecord): string | null {
 }
 
 // Keeps the first copy of each key, in the order given. Records without a key can't be told apart, so all pass.
-export function dedupe(records: TileRecord[]): TileRecord[] {
+export function dedupe<T extends { record: TileRecord }>(items: T[]): T[] {
   const seen = new Set<string>();
-  return records.filter((r) => {
-    const key = recordKey(r);
+  return items.filter(({ record }) => {
+    const key = recordKey(record);
     if (key === null) return true;
     if (seen.has(key)) return false;
     seen.add(key);

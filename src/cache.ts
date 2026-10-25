@@ -1,5 +1,5 @@
 import { recordKey } from "./merge.js";
-import type { PlaceValue } from "./types.js";
+import type { Attribution, PlaceValue } from "./types.js";
 
 export interface TileRecord {
   value: PlaceValue;
@@ -7,8 +7,9 @@ export interface TileRecord {
   importance?: number;
 }
 
-interface TileEntry {
+export interface TileEntry {
   records: TileRecord[];
+  attribution?: Attribution[];
   size: number;
 }
 
@@ -40,14 +41,15 @@ export class TileCache {
     }
   }
 
-  find(key: string): TileRecord | undefined {
-    let best: { url: string; record: TileRecord } | undefined;
+  // The record with this key from the lowest-URL tile holding it, and that tile's attribution.
+  find(key: string): { record: TileRecord; attribution?: Attribution[] } | undefined {
+    let best: { url: string; record: TileRecord; attribution?: Attribution[] } | undefined;
     for (const [url, entry] of this.tiles) {
       if (best && url >= best.url) continue;
       const record = entry.records.find((r) => recordKey(r) === key);
-      if (record) best = { url, record };
+      if (record) best = { url, record, attribution: entry.attribution };
     }
-    return best?.record;
+    return best && { record: best.record, attribution: best.attribution };
   }
 }
 

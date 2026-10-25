@@ -1,5 +1,6 @@
 import type { TileRecord } from "./cache.js";
 import type {
+  Attribution,
   CollectionAttribution,
   CollectionInfo,
   CollectionRef,
@@ -14,7 +15,7 @@ import type {
 
 /**
  * A 2xx response that decoded as JSON but holds nothing the client can use: a getTiles body without a
- * `tiles` array, a getPlace body without a `record` object, a describe body that is not an object.
+ * `tiles` array, a getPlace body without a `value` object, a describe body that is not an object.
  * Nothing else about a body's shape is an error. A body that is not JSON at all still surfaces as the
  * `SyntaxError` that `JSON.parse` throws.
  */
@@ -74,23 +75,52 @@ export function readTileList(body: unknown): { tiles: string[]; overview: boolea
 // deleting from `hit.place`. The freeze is shallow; nested objects and arrays stay shared and mutable.
 const freezePlace = (value: PlaceValue): PlaceValue => Object.freeze(value);
 
+/**
+ * An attribution list (contract section 1): absent unless an array. An element is kept only if it is an
+ * object whose `dataset` and `collection` are both strings; each other field is read on its own. Served order
+ * and duplicates are kept.
+ */
+export function readAttributionList(v: unknown): Attribution[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const list: Attribution[] = [];
+  for (const e of v) {
+    if (!isObject(e) || typeof e.dataset !== "string" || typeof e.collection !== "string") continue;
+    list.push(
+      present({
+        dataset: e.dataset,
+        collection: e.collection,
+        release: readString(e.release),
+        source: readString(e.source),
+        licenses: readStrings(e.licenses),
+        attribution: readString(e.attribution),
+      }),
+    );
+  }
+  return list;
+}
+
 /** The usable records of a tile payload: `value` is an object, frozen; `uri` and `importance` are absent unless a string and a number.
- * A record that is not an object, or has no object `value`, is skipped. */
-export function readTilePayload(body: unknown): TileRecord[] {
+ * A record that is not an object, or has no object `value`, is skipped. The payload's `attribution` is read after the records validate. */
+export function readTilePayload(body: unknown): { records: TileRecord[]; attribution?: Attribution[] } {
   if (!isObject(body) || !Array.isArray(body.records)) return unusable("tile payload has no records array");
   const records: TileRecord[] = [];
   for (const r of body.records) {
     if (!isObject(r) || !isObject(r.value)) continue;
     records.push(present({ value: freezePlace(r.value), uri: readString(r.uri), importance: readInteger(r.importance) }));
   }
-  return records;
+  return present({ records, attribution: readAttributionList(body.attribution) });
 }
 
-/** A getPlace answer's `record` (frozen, like a tile record's value) and `importance`. `uri` is not read. */
-export function readPlace(body: unknown): { record: PlaceValue; importance?: number } {
+/** A getPlace answer's `value` (frozen, like a tile record's value), `importance` and `attribution` (empty unless an array).
+ * `uri` and `url` are not read. */
+export function readPlace(body: unknown): { value: PlaceValue; importance?: number; attribution: Attribution[] } {
   if (!isObject(body)) return unusable("getPlace body is not an object");
-  if (!isObject(body.record)) return unusable("getPlace body has no record object");
-  return present({ record: freezePlace(body.record), importance: readInteger(body.importance) });
+  if (!isObject(body.value)) return unusable("getPlace body has no value object");
+  return present({
+    value: freezePlace(body.value),
+    importance: readInteger(body.importance),
+    attribution: readAttributionList(body.attribution) ?? [],
+  });
 }
 
 const readCollectionRef = (o: Record<string, unknown>): CollectionRef =>
@@ -121,6 +151,7 @@ export function readServiceDescription(body: unknown): ServiceDescription {
   if (!isObject(body)) return unusable("describeService body is not an object");
   return present({
     did: readString(body.did),
+    maxTiles: readInteger(body.maxTiles),
     tilesets:
       readObjects(body.tilesets, (t) =>
         present({ slug: readString(t.slug), collections: readObjects(t.collections, readCollectionRef) ?? [] }),
@@ -131,7 +162,7 @@ export function readServiceDescription(body: unknown): ServiceDescription {
 /** A describeTileset answer. `collections` is empty when missing. */
 export function readTileset(body: unknown): Tileset {
   if (!isObject(body)) return unusable("describeTileset body is not an object");
-  const { extent } = body;
+  const { extent, overview } = body;
   return present({
     slug: readString(body.slug),
     publishedAt: readString(body.publishedAt),
@@ -143,6 +174,7 @@ export function readTileset(body: unknown): Tileset {
           west: readString(extent.west),
         })
       : undefined,
+    overview: isObject(overview) ? present({ records: readInteger(overview.records) }) : undefined,
     collections: readObjects(body.collections, readCollectionInfo) ?? [],
     references: readObjects(body.references, readAttribution),
   });

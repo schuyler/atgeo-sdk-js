@@ -46,6 +46,7 @@ export interface FakeTileset {
   slug: string;
   collections: CollectionInfo[];
   references?: Record<string, unknown>[];
+  overview?: { records: number };
   tiles: { url: string; records: TileRecord[] }[];
 }
 
@@ -113,16 +114,18 @@ export function overture(tiles: FakeTileset["tiles"]): FakeTileset {
 const attributionOf = ({ dataset, collection, release, source, licenses, attribution }: CollectionInfo) =>
   wire({ dataset, collection, release, source, licenses, attribution });
 
+// The attribution every tile of the tileset carries, and getPlace answers with: its collections, then its references.
+const attributionList = (tileset: FakeTileset) => [
+  ...tileset.collections.map(attributionOf),
+  ...wire(tileset.references ?? []),
+];
+
 function tileBody(tileset: FakeTileset, records: TileRecord[]) {
-  return wire({
-    publishedAt: PUBLISHED_AT,
-    attribution: [...tileset.collections.map(attributionOf), ...(tileset.references ?? [])],
-    records,
-  });
+  return wire({ publishedAt: PUBLISHED_AT, attribution: attributionList(tileset), records });
 }
 
-const descriptorOf = ({ slug, collections, references }: FakeTileset) =>
-  wire({ slug, collections, ...(references ? { references } : {}) });
+const descriptorOf = ({ slug, collections, references, overview }: FakeTileset) =>
+  wire({ slug, collections, ...(references ? { references } : {}), ...(overview ? { overview } : {}) });
 
 export function fakeServer(options: FakeServerOptions = {}): FakeServer {
   const server = options.server ?? DEFAULT_SERVER;
@@ -171,9 +174,11 @@ export function fakeServer(options: FakeServerOptions = {}): FakeServer {
         const found = tile.records.find((r) => r.value.origin === origin);
         if (found) {
           return answer("org.atgeo.getPlace", {
-            uri: `${server}/${dataset}/${collection}/${rest.join(":")}`,
+            uri: origin,
+            url: `${server}/${dataset}/${collection}/${rest.join(":")}`,
             ...(found.importance === undefined ? {} : { importance: found.importance }),
-            record: found.value,
+            value: found.value,
+            attribution: attributionList(tileset),
           });
         }
       }
@@ -190,6 +195,7 @@ export function fakeServer(options: FakeServerOptions = {}): FakeServer {
         "org.atgeo.describeService": () =>
           answer("org.atgeo.describeService", {
             did,
+            maxTiles: 50,
             tilesets: tilesets.map((t) => ({
               slug: t.slug,
               collections: t.collections.map(({ dataset, collection }) => ({ dataset, collection })),

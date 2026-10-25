@@ -1,4 +1,5 @@
 import { TileCache, TtlCache, type TileRecord } from "./cache.js";
+import { collectionPrefix, copyAttribution, inCollection, mergeAttribution } from "./attribution.js";
 import { dedupe, inRegion, locate } from "./merge.js";
 import { normalize } from "./normalize.js";
 import { rank } from "./rank.js";
@@ -6,6 +7,7 @@ import { queryBboxes, validateRegion } from "./region.js";
 import { Transport, checkStatus, mapLimit, type HttpResponse } from "./transport.js";
 import { readPlace, readServiceDescription, readTileList, readTilePayload, readTileset } from "./wire.js";
 import type {
+  Attribution,
   ClientOptions,
   PlaceRecord,
   SearchOptions,
@@ -16,8 +18,6 @@ import type {
   Tileset,
 } from "./types.js";
 
-const DEFAULT_DATASET = "overturemaps.org";
-const DEFAULT_COLLECTION = "place";
 const MAX_TILES_IN_FLIGHT = 8;
 
 export class AtgeoClient {
@@ -35,6 +35,8 @@ export class AtgeoClient {
   }
 
   searchPlaces(options: SearchOptions): Promise<SearchResult> {
+    // First, before the region and sort checks: a missing dataset is the caller's argument error (contract section 4.1).
+    if (typeof (options as { dataset?: unknown }).dataset !== "string") throw new TypeError("searchPlaces requires a dataset");
     validateRegion(options.region);
     const sort = options.sort ?? "fused";
     const query = normalize(options.text ?? "");
@@ -43,9 +45,7 @@ export class AtgeoClient {
   }
 
   private async search(options: SearchOptions, query: string, sort: NonNullable<SearchOptions["sort"]>): Promise<SearchResult> {
-    const { region, signal } = options;
-    const dataset = options.dataset ?? DEFAULT_DATASET;
-    const collection = options.collection ?? (options.dataset === undefined ? DEFAULT_COLLECTION : undefined);
+    const { region, signal, dataset, collection } = options;
 
     const tileLists = await Promise.all(
       queryBboxes(region).map(async (bbox) => {
@@ -63,14 +63,14 @@ export class AtgeoClient {
     const urls = [...new Set(tileLists.flatMap((l) => l.tiles))].sort();
     const overview = tileLists.some((l) => l.overview);
 
-    const loaded = new Map<string, TileRecord[]>();
+    const loaded = new Map<string, { records: TileRecord[]; attribution?: Attribution[] }>();
     // One slot per URL, so failures come out in URL order whatever order the fetches finish in.
     const failureSlots: (TileFailure | undefined)[] = new Array(urls.length);
     await mapLimit([...urls.keys()], MAX_TILES_IN_FLIGHT, async (index) => {
       const url = urls[index];
       const cached = this.tiles.get(url);
       if (cached) {
-        loaded.set(url, cached.records);
+        loaded.set(url, cached);
         return;
       }
       const outcome = await this.fetchTile(url, signal);
@@ -79,25 +79,34 @@ export class AtgeoClient {
         return;
       }
       // Outside the guarded steps: an error here is the client's own and fails the search.
-      this.tiles.set(url, { records: outcome.records, size: outcome.size });
-      loaded.set(url, outcome.records);
+      this.tiles.set(url, { records: outcome.records, attribution: outcome.attribution, size: outcome.size });
+      loaded.set(url, outcome);
     });
     const tileFailures = failureSlots.filter((f): f is TileFailure => f !== undefined);
     const failed = tileFailures.length;
 
-    const prefix = collection === undefined ? undefined : `urn:atgeo:${dataset}:${collection}:`;
+    // Tiles in URL order, whatever order they arrived in. Only tiles that loaded count.
+    const used = urls.filter((url) => loaded.has(url));
+    const attribution = mergeAttribution(used.map((url) => loaded.get(url)!.attribution));
+    const prefix = collection === undefined ? undefined : collectionPrefix(dataset, collection);
     // dedupe picks a winner before the region filter runs. If copies sharing an
     // origin differ in location (possible only in non-garganorn tilesets) and the
     // winner lies outside the region, the place is dropped though another copy is inside.
-    const records = dedupe(urls.flatMap((url) => loaded.get(url) ?? []))
-      .filter((r) => prefix === undefined || (typeof r.value.origin === "string" && r.value.origin.startsWith(prefix)))
-      .filter((r) => inRegion(locate(r.value), region));
+    const items = dedupe(
+      used.flatMap((url) => {
+        const tile = loaded.get(url)!;
+        return tile.records.map((record) => ({ record, attribution: tile.attribution }));
+      }),
+    )
+      .filter(({ record }) => prefix === undefined || inCollection(record.value, prefix))
+      .filter(({ record }) => inRegion(locate(record.value), region));
     return {
-      places: rank(records, region, query, sort),
+      places: rank(items, region, query, sort),
       complete: failed === 0,
       overview,
       tiles: { fetched: loaded.size, failed },
       tileFailures,
+      attribution,
     };
   }
 
@@ -107,7 +116,7 @@ export class AtgeoClient {
   private async fetchTile(
     url: string,
     signal: AbortSignal | undefined,
-  ): Promise<{ records: TileRecord[]; size: number } | TileFailure> {
+  ): Promise<{ records: TileRecord[]; attribution?: Attribution[]; size: number } | TileFailure> {
     const fail = (kind: TileFailureKind, error: unknown, status?: number): TileFailure => {
       if (signal?.aborted) throw error;
       return status === undefined ? { url, kind, error } : { url, kind, status, error };
@@ -131,7 +140,7 @@ export class AtgeoClient {
     }
 
     try {
-      return { records: readTilePayload(JSON.parse(text)), size: text.length };
+      return { ...readTilePayload(JSON.parse(text)), size: text.length };
     } catch (error) {
       return fail("decode", error);
     }
@@ -140,11 +149,14 @@ export class AtgeoClient {
   async getPlace(options: { origin: string; signal?: AbortSignal }): Promise<PlaceRecord> {
     const { origin } = options;
     const cached = this.tiles.find(origin);
-    if (cached) return { origin, place: cached.value, importance: cached.importance ?? null };
-    const { record, importance } = readPlace(
+    if (cached) {
+      const { record, attribution } = cached;
+      return { origin, place: record.value, importance: record.importance ?? null, attribution: copyAttribution(attribution ?? []) };
+    }
+    const { value, importance, attribution } = readPlace(
       await this.transport.xrpc("org.atgeo.getPlace", { uri: origin }, options.signal),
     );
-    return { origin, place: record, importance: importance ?? null };
+    return { origin, place: value, importance: importance ?? null, attribution };
   }
 
   async describeService(options: { signal?: AbortSignal } = {}): Promise<ServiceDescription> {
