@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { gzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AtgeoClient, BodyTooLargeError, type TileFailure } from "../src/index.js";
-import { DEFAULT_SERVER, place, point, record } from "./helpers/fakeServer.js";
+import { OVERTURE, DEFAULT_SERVER, place, point, record } from "./helpers/fakeServer.js";
 
 // The parts of the limits that need Node: a real server (undici's fetch, real gzip) and listener counts.
 // The rest, which needs only fetch, is in limits.test.ts and also runs in the browser.
@@ -27,7 +27,7 @@ describe("listeners", () => {
     }) as typeof fetch;
   const stalledFetch = (init: RequestInit | undefined) =>
     new Promise<Response>((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)));
-  const search = (client: AtgeoClient, signal?: AbortSignal) => client.searchPlaces({ region, signal });
+  const search = (client: AtgeoClient, signal?: AbortSignal) => client.searchPlaces({ ...OVERTURE, region, signal });
 
   it("leaves no listener on the caller's signal once a request is done", async () => {
     const controller = new AbortController();
@@ -81,7 +81,7 @@ describe("over real HTTP", () => {
   it("caps decoded bytes, not wire bytes", async () => {
     // No short timeout here: gzip, an 8 MiB inflate and a cold connection can be slow on a busy machine.
     const client = new AtgeoClient({ server: base, maxBodyBytes: 1024 * 1024, requestTimeoutMs: 20_000 });
-    const result = await client.searchPlaces({ region });
+    const result = await client.searchPlaces({ ...OVERTURE, region });
     expect(result.tileFailures).toEqual([{ url: `${base}/tile/bomb`, kind: "transport", error: expect.any(BodyTooLargeError) }]);
     expect(result.tiles).toEqual({ fetched: 1, failed: 1 });
     expect(result.places).toHaveLength(1);
@@ -89,7 +89,7 @@ describe("over real HTTP", () => {
 
   it("times out stalls in the headers and in the body", async () => {
     const client = new AtgeoClient({ server: base, requestTimeoutMs: 300 });
-    const result = await client.searchPlaces({ region: stallRegion });
+    const result = await client.searchPlaces({ ...OVERTURE, region: stallRegion });
     const byUrl: Record<string, TileFailure> = Object.fromEntries(result.tileFailures.map((f) => [f.url.split("/").pop(), f]));
     expect(Object.keys(byUrl).sort()).toEqual(["stall-body", "stall-headers"]);
     for (const failure of Object.values(byUrl)) {
@@ -102,7 +102,7 @@ describe("over real HTTP", () => {
   it("reports a caller's abort during a stalled body as the caller's abort", async () => {
     const controller = new AbortController();
     const client = new AtgeoClient({ server: base, requestTimeoutMs: 60_000 });
-    const p = client.searchPlaces({ region: stallRegion, signal: controller.signal });
+    const p = client.searchPlaces({ ...OVERTURE, region: stallRegion, signal: controller.signal });
     setTimeout(() => controller.abort(), 150);
     await expect(p).rejects.toMatchObject({ name: "AbortError" });
   });

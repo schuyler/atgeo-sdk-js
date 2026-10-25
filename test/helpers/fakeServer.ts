@@ -103,6 +103,9 @@ export function record(value: PlaceValue, importance?: number, uri?: string): Ti
   return { value, ...(importance === undefined ? {} : { importance }), ...(uri === undefined ? {} : { uri }) };
 }
 
+// The dataset and collection a search names; searchPlaces has no defaults (contract section 4.1).
+export const OVERTURE = { dataset: "overturemaps.org", collection: "place" } as const;
+
 export function overture(tiles: FakeTileset["tiles"]): FakeTileset {
   return { slug: "overture-place", collections: [{ dataset: "overturemaps.org", collection: "place" }], tiles };
 }

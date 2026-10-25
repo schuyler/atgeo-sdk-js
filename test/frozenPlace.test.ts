@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AtgeoClient } from "../src/index.js";
 import type { PlaceValue } from "../src/index.js";
-import { fakeServer, overture, place, placeOrigin, point, record } from "./helpers/fakeServer.js";
+import { OVERTURE, fakeServer, overture, place, placeOrigin, point, record } from "./helpers/fakeServer.js";
 
 // `place` on a hit or a getPlace answer is the object the tile cache holds, so it is frozen (shallowly)
 // when parsed. Test files are ES modules, so a write to a frozen object throws here, as it does for an app.
@@ -21,7 +21,7 @@ function setup() {
   return { fake, client: new AtgeoClient({ fetch: fake.fetch }) };
 }
 
-const firstHit = async (client: AtgeoClient) => (await client.searchPlaces({ region })).places[0];
+const firstHit = async (client: AtgeoClient) => (await client.searchPlaces({ ...OVERTURE, region })).places[0];
 
 describe("a search hit's place", () => {
   it("is frozen, and assigning, deleting or defining a property throws", async () => {
@@ -118,5 +118,29 @@ describe("getPlace from the network", () => {
     const copy: PlaceValue = structuredClone(fetched);
     copy.name = "Mine";
     expect(copy.name).toBe("Mine");
+  });
+});
+
+describe("a search result's attribution", () => {
+  it("is the app's own: changing it leaves the next search's alone", async () => {
+    const licenses = ["https://l.example/1"];
+    const fake = fakeServer({
+      tilesets: [
+        {
+          ...overture([{ url: tile, records: [record(makeValue(), 5)] }]),
+          collections: [{ dataset: "overturemaps.org", collection: "place", release: "2026-01-01", licenses }],
+        },
+      ],
+    });
+    const client = new AtgeoClient({ fetch: fake.fetch });
+    const r1 = await client.searchPlaces({ ...OVERTURE, region });
+    const original = structuredClone(r1.attribution);
+    expect(original[0].licenses).toEqual(licenses);
+    r1.attribution[0].licenses!.push("https://l.example/changed");
+    r1.attribution[0].release = "changed";
+    r1.attribution.reverse();
+    const r2 = await client.searchPlaces({ ...OVERTURE, region });
+    expect(r2.attribution).toStrictEqual(original);
+    expect(r2.attribution).not.toBe(r1.attribution);
   });
 });
