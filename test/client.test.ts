@@ -95,8 +95,8 @@ describe("getPlace", () => {
     });
   });
 
-  // The cache path of getPlace: the answer carries the attribution of the tile that held the record, as
-  // served (contract section 9). The network path needs the new getPlace shape from the fake (step 4).
+  // getPlace carries attribution as served (contract section 9): from the cache, the attribution of the tile
+  // that held the record; from the network, the response's.
   const REFERENCES = [
     { dataset: "z.example", collection: "c" },
     { dataset: "a.example", collection: "c", release: "1" },
