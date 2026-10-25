@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TileCache } from "../src/cache.js";
 import { AtgeoClient, AtgeoError, DecodingError } from "../src/index.js";
-import { DEFAULT_SERVER, fakeServer, overture, place, placeOrigin, point, record } from "./helpers/fakeServer.js";
+import { DEFAULT_SERVER, OVERTURE, fakeServer, overture, place, placeOrigin, point, record } from "./helpers/fakeServer.js";
 
 const url = (n: string) => `https://tiles.example/${n}.json`;
 const region = { bbox: [-122.42, 37.77, -122.41, 37.78] as [number, number, number, number] };
@@ -21,7 +21,7 @@ function twoTiles(failTiles: string[] = []) {
 describe("failed tiles", () => {
   it("reports a complete search", async () => {
     const server = twoTiles();
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ region });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region });
     expect(result.complete).toBe(true);
     expect(result.tiles).toEqual({ fetched: 2, failed: 0 });
     expect(result.tileFailures).toEqual([]);
@@ -29,7 +29,7 @@ describe("failed tiles", () => {
 
   it("returns surviving results, marked incomplete, when a tile answers non-200", async () => {
     const server = twoTiles([url("b")]);
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ region });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region });
     expect(result.complete).toBe(false);
     expect(result.tiles).toEqual({ fetched: 1, failed: 1 });
     expect(result.places.map((h) => h.origin)).toEqual([placeOrigin("a")]);
@@ -39,7 +39,7 @@ describe("failed tiles", () => {
     const server = twoTiles();
     const flaky: typeof fetch = (input, init) =>
       new Request(input).url === url("a") ? Promise.reject(new TypeError("boom")) : server.fetch(input, init);
-    const result = await new AtgeoClient({ fetch: flaky }).searchPlaces({ region });
+    const result = await new AtgeoClient({ fetch: flaky }).searchPlaces({ ...OVERTURE, region });
     expect(result.complete).toBe(false);
     expect(result.tiles).toEqual({ fetched: 1, failed: 1 });
     expect(result.places.map((h) => h.origin)).toEqual([placeOrigin("b")]);
@@ -47,13 +47,13 @@ describe("failed tiles", () => {
 
   it("does not retry a failed tile", async () => {
     const server = twoTiles([url("b")]);
-    await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ region });
+    await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region });
     expect(server.requests.filter((r) => r.url === url("b"))).toHaveLength(1);
   });
 
   it("reports every tile failed without throwing", async () => {
     const server = twoTiles([url("a"), url("b")]);
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ region });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region });
     expect(result).toMatchObject({ places: [], complete: false, tiles: { fetched: 0, failed: 2 } });
     expect(result.tileFailures.map((f) => f.url)).toEqual([url("a"), url("b")]);
   });
@@ -86,7 +86,7 @@ function scripted(tiles: Record<string, () => Response | Promise<Response>>, get
   return { fetch, requests };
 }
 
-const search = (fetch: typeof globalThis.fetch, signal?: AbortSignal) => new AtgeoClient({ fetch }).searchPlaces({ region, signal });
+const search = (fetch: typeof globalThis.fetch, signal?: AbortSignal) => new AtgeoClient({ fetch }).searchPlaces({ ...OVERTURE, region, signal });
 
 describe("tile failures", () => {
   afterEach(() => {
@@ -257,7 +257,7 @@ describe("tile failures", () => {
 describe("typed server errors", () => {
   it("surfaces BboxTooLarge from getTiles", async () => {
     const server = fakeServer({ tilesFor: () => ({ error: "BboxTooLarge", message: "bbox too large" }) });
-    const p = new AtgeoClient({ fetch: server.fetch }).searchPlaces({ region });
+    const p = new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region });
     await expect(p).rejects.toBeInstanceOf(AtgeoError);
     await expect(p).rejects.toMatchObject({ code: "BboxTooLarge", status: 400 });
   });
@@ -276,7 +276,7 @@ describe("typed server errors", () => {
 
   it("surfaces CollectionNotFound from getTiles", async () => {
     const server = fakeServer();
-    const p = new AtgeoClient({ fetch: server.fetch }).searchPlaces({ collection: "nope", region });
+    const p = new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, collection: "nope", region });
     await expect(p).rejects.toBeInstanceOf(AtgeoError);
     await expect(p).rejects.toMatchObject({ code: "CollectionNotFound" });
   });
@@ -296,13 +296,13 @@ describe("typed server errors", () => {
       tilesets: [overture([{ url: url("a"), records: [record(place("a", "A", [point(15, 175)]))] }])],
       tilesFor: (bbox) => (bbox.startsWith(prefix) ? { error: "BboxTooLarge", message: "too large" } : [url("a")]),
     });
-    const p = new AtgeoClient({ fetch: server.fetch }).searchPlaces({ region: { bbox: [170, 10, -170, 20] } });
+    const p = new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region: { bbox: [170, 10, -170, 20] } });
     await expect(p).rejects.toMatchObject({ code: "BboxTooLarge" });
   });
 
   it("does not subdivide after BboxTooLarge", async () => {
     const server = fakeServer({ tilesFor: () => ({ error: "BboxTooLarge", message: "too large" }) });
-    await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ region }).catch(() => {});
+    await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region }).catch(() => {});
     expect(server.requests).toHaveLength(1);
   });
 });
@@ -310,7 +310,7 @@ describe("typed server errors", () => {
 describe("XRPC URLs", () => {
   it("defaults to places.atgeo.org", async () => {
     const server = twoTiles();
-    await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ region });
+    await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region });
     const u = new URL(server.requests[0].url);
     expect(u.origin + u.pathname).toBe(`${DEFAULT_SERVER}/xrpc/org.atgeo.getTiles`);
     expect(u.searchParams.get("dataset")).toBe("overturemaps.org");
@@ -325,7 +325,7 @@ describe("XRPC URLs", () => {
       tilesets: [overture([{ url: `${base}/tiles/a.json`, records: [record(place("a", "A", [point(37.772, -122.412)]))] }])],
     });
     const client = new AtgeoClient({ server: base, fetch: server.fetch });
-    await client.searchPlaces({ region });
+    await client.searchPlaces({ ...OVERTURE, region });
     await client.describeService();
     await client.describeTileset("overture-place");
     await client.getPlace({ origin: placeOrigin("zzz") }).catch(() => {});

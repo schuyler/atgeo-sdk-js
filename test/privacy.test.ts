@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AtgeoClient } from "../src/index.js";
-import { fakeServer, overture, place, point, record } from "./helpers/fakeServer.js";
+import { OVERTURE, fakeServer, overture, place, point, record } from "./helpers/fakeServer.js";
 
 const TILE = "https://tiles.example/t1.json";
 
@@ -30,6 +30,7 @@ describe("search text stays local", () => {
   it.each(texts)("does not put %j on the wire", async (text) => {
     const { server, client } = setup();
     await client.searchPlaces({
+      ...OVERTURE,
       region: { lat: 37.7749295, lon: -122.4194155, radius: 500 },
       text,
     });
@@ -45,6 +46,7 @@ describe("search text stays local", () => {
   it("issues only getTiles and tile requests", async () => {
     const { server, client } = setup();
     await client.searchPlaces({
+      ...OVERTURE,
       region: { lat: 37.7749295, lon: -122.4194155, radius: 500 },
       text: "Zanzibar Quokka",
     });
@@ -57,7 +59,7 @@ describe("search text stays local", () => {
 
   it("sends no body", async () => {
     const { server, client } = setup();
-    await client.searchPlaces({ region: { bbox: [-122.43, 37.77, -122.41, 37.78] }, text: "Zanzibar Quokka" });
+    await client.searchPlaces({ ...OVERTURE, region: { bbox: [-122.43, 37.77, -122.41, 37.78] }, text: "Zanzibar Quokka" });
     expect(server.requests.length).toBeGreaterThan(0);
     for (const r of server.requests) expect(r.body).toBeNull();
   });
@@ -67,6 +69,7 @@ describe("precise coordinates stay local", () => {
   it("keeps the circle centre off the wire", async () => {
     const { server, client } = setup();
     await client.searchPlaces({
+      ...OVERTURE,
       region: { lat: 37.7749295, lon: -122.4194155, radius: 123.456789 },
       text: "Zanzibar Quokka",
     });
@@ -80,7 +83,7 @@ describe("precise coordinates stay local", () => {
 
   it("keeps full-precision bbox corners off the wire", async () => {
     const { server, client } = setup();
-    await client.searchPlaces({ region: { bbox: [-122.4194155, 37.7749295, -122.4094155, 37.7849295] } });
+    await client.searchPlaces({ ...OVERTURE, region: { bbox: [-122.4194155, 37.7749295, -122.4094155, 37.7849295] } });
     expect(server.requests.length).toBeGreaterThan(0);
     for (const h of wire(server.requests)) {
       for (const needle of ["7749295", "4194155", "4094155", "7849295"]) expect(h).not.toContain(needle);
@@ -103,7 +106,7 @@ describe("failed tiles carry no search text", () => {
       return server.fetch(input, init);
     }) as typeof globalThis.fetch;
     const text = "  ZANZIBÁR   quokka ";
-    const result = await new AtgeoClient({ fetch }).searchPlaces({ region: { lat: 37.7749295, lon: -122.4194155, radius: 500 }, text });
+    const result = await new AtgeoClient({ fetch }).searchPlaces({ ...OVERTURE, region: { lat: 37.7749295, lon: -122.4194155, radius: 500 }, text });
     expect(result.tileFailures.map((f) => f.kind)).toEqual(["status", "decode", "transport", "status"]);
     const haystack = JSON.stringify(
       result.tileFailures.map((f) => [f.url, f.kind, f.status, String(f.error), (f.error as Error).message, (f.error as Error).stack]),

@@ -9,6 +9,22 @@ export interface PlaceRecord {
   // structuredClone(place) (deep) or { ...place } (shallow, nested values still shared).
   place: PlaceValue;
   importance: number | null;
+  // The collections the place's data comes from, as served and in served order (duplicates included); an empty
+  // list when the source has none. A copy: changing it, or an entry's `licenses`, changes nothing cached.
+  attribution: Attribution[];
+}
+
+export interface CollectionKey {
+  dataset: string;
+  collection: string;
+}
+
+// A credit for one collection (org.atgeo.defs#collectionAttribution), read leniently (contract section 1).
+export interface Attribution extends CollectionKey {
+  release?: string;
+  source?: string;
+  licenses?: string[];
+  attribution?: string;
 }
 
 // The describe types read leniently (contract section 1): a field the server omits, or sends as the
@@ -21,6 +37,8 @@ export interface CollectionRef {
 
 export interface ServiceDescription {
   did?: string;
+  // Informational: the server's tile budget.
+  maxTiles?: number;
   tilesets: { slug?: string; collections: CollectionRef[] }[];
 }
 
@@ -45,16 +63,17 @@ export interface Tileset {
   extent?: { north?: string; south?: string; east?: string; west?: string };
   collections: CollectionInfo[];
   references?: CollectionAttribution[];
+  overview?: { records?: number };
 }
 
 export type Region =
   | { lat: number; lon: number; radius: number }
-  | { bbox: [number, number, number, number] };
+  | { bbox: [west: number, south: number, east: number, north: number] };
 
 export type SortMode = "fused" | "distance" | "similarity";
 
 export interface SearchOptions {
-  dataset?: string;
+  dataset: string;
   collection?: string;
   region: Region;
   text?: string;
@@ -64,6 +83,9 @@ export interface SearchOptions {
 
 export interface SearchHit {
   origin: string | null;
+  // The collection the hit belongs to, matched against its tile's attribution (contract section 8); null when
+  // none matches. Always present. A fresh object.
+  collection: CollectionKey | null;
   // The record value as served. It is frozen (shallowly) and is the very object the tile cache holds, shared by
   // every later search over the same tile and by getPlace, so assigning to it, deleting from it or defining a
   // property on it throws a TypeError in strict mode (and does nothing in sloppy mode). Nested objects and
@@ -82,6 +104,9 @@ export interface SearchResult {
   tiles: { fetched: number; failed: number };
   // One entry per failed tile, in tile URL order; empty when complete.
   tileFailures: TileFailure[];
+  // The union of the attribution of every tile the search used, one entry per (dataset, collection), sorted by
+  // dataset then collection. Always a list. A copy: changing it changes nothing cached.
+  attribution: Attribution[];
 }
 
 // refused: not an absolute http(s) URL, or it carries credentials; no request was made.

@@ -1,9 +1,10 @@
+import { collectionOf } from "./attribution.js";
 import type { TileRecord } from "./cache.js";
 import { distanceTo, locate, recordKey, type Locations } from "./merge.js";
 import { normalize } from "./normalize.js";
 import { center } from "./region.js";
 import { jaroWinkler } from "./similarity.js";
-import type { Region, SearchHit, SortMode } from "./types.js";
+import type { Attribution, Region, SearchHit, SortMode } from "./types.js";
 import { isObject } from "./wire.js";
 
 const JW_THRESHOLD = 0.6;
@@ -37,17 +38,18 @@ function specificity({ point, bbox }: Locations): number {
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
 // `query` is already normalized; "" means no text.
-export function rank(records: TileRecord[], region: Region, query: string, sort: SortMode): SearchHit[] {
+export function rank(items: { record: TileRecord; attribution?: Attribution[] }[], region: Region, query: string, sort: SortMode): SearchHit[] {
   const middle = center(region);
   const hits: SearchHit[] = [];
   const area = new Map<SearchHit, number>();
-  for (const record of records) {
+  for (const { record, attribution } of items) {
     const { value } = record;
     const score = query ? textScore(query, value) : null;
     if (score !== null && score < JW_THRESHOLD) continue;
     const locations = locate(value);
     const hit = {
       origin: recordKey(record),
+      collection: collectionOf(value, attribution),
       place: value,
       importance: record.importance ?? null,
       // rank only receives records that passed inRegion, which requires a location.

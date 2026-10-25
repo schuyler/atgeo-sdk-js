@@ -49,10 +49,25 @@ describe("fake server requests", () => {
     expect(body.records).toEqual([{ value: ok, importance: 3 }]);
   });
 
+  it("answers getPlace with exactly uri, url, importance, value and attribution", async () => {
+    const origin = ok.origin as string;
+    const body = await (await get(build([record(ok, 3)]), `/xrpc/org.atgeo.getPlace?uri=${encodeURIComponent(origin)}`)).json();
+    expect(Object.keys(body).sort()).toEqual(["attribution", "importance", "uri", "url", "value"]);
+    expect(body).toMatchObject({ uri: origin, value: ok, importance: 3, attribution: [{ dataset: "overturemaps.org", collection: "place" }] });
+    const bare = await (await get(build([record(ok)]), `/xrpc/org.atgeo.getPlace?uri=${encodeURIComponent(origin)}`)).json();
+    expect(Object.keys(bare).sort()).toEqual(["attribution", "uri", "url", "value"]);
+  });
+
+  it("emits a tileset's overview in its descriptor", async () => {
+    const body = await (await get(build([], { overview: { records: 7 } }), "/xrpc/org.atgeo.describeTileset?slug=overture-place")).json();
+    expect(body.overview).toEqual({ records: 7 });
+  });
+
   it("answers describeService with a did and tilesets", async () => {
     const body = await (await get(build([]), "/xrpc/org.atgeo.describeService")).json();
     expect(body).toEqual({
       did: "did:web:places.atgeo.org",
+      maxTiles: 50,
       tilesets: [{ slug: "overture-place", collections: [{ dataset: "overturemaps.org", collection: "place" }] }],
     });
   });

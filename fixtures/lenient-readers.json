@@ -301,15 +301,18 @@
       "publishedAt": "x",
       "attribution": []
     },
-    "result": [
-      {
-        "value": {
-          "a": 1
-        },
-        "uri": "u1",
-        "importance": 3
-      }
-    ]
+    "result": {
+      "records": [
+        {
+          "value": {
+            "a": 1
+          },
+          "uri": "u1",
+          "importance": 3
+        }
+      ],
+      "attribution": []
+    }
   },
   {
     "reader": "tilePayload",
@@ -317,7 +320,9 @@
     "body": {
       "records": []
     },
-    "result": []
+    "result": {
+      "records": []
+    }
   },
   {
     "reader": "tilePayload",
@@ -351,15 +356,17 @@
         }
       ]
     },
-    "result": [
-      {
-        "value": {
-          "a": 1
-        },
-        "uri": "u1",
-        "importance": 3
-      }
-    ]
+    "result": {
+      "records": [
+        {
+          "value": {
+            "a": 1
+          },
+          "uri": "u1",
+          "importance": 3
+        }
+      ]
+    }
   },
   {
     "reader": "tilePayload",
@@ -379,19 +386,21 @@
         }
       ]
     },
-    "result": [
-      {
-        "value": {
-          "x": null,
-          "y": [
-            1,
-            {
-              "z": 2
-            }
-          ]
+    "result": {
+      "records": [
+        {
+          "value": {
+            "x": null,
+            "y": [
+              1,
+              {
+                "z": 2
+              }
+            ]
+          }
         }
-      }
-    ]
+      ]
+    }
   },
   {
     "reader": "tilePayload",
@@ -414,17 +423,19 @@
         }
       ]
     },
-    "result": [
-      {
-        "value": {}
-      },
-      {
-        "value": {}
-      },
-      {
-        "value": {}
-      }
-    ]
+    "result": {
+      "records": [
+        {
+          "value": {}
+        },
+        {
+          "value": {}
+        },
+        {
+          "value": {}
+        }
+      ]
+    }
   },
   {
     "reader": "tilePayload",
@@ -437,11 +448,13 @@
         }
       ]
     },
-    "result": [
-      {
-        "value": {}
-      }
-    ]
+    "result": {
+      "records": [
+        {
+          "value": {}
+        }
+      ]
+    }
   },
   {
     "reader": "tilePayload",
@@ -454,11 +467,13 @@
         }
       ]
     },
-    "result": [
-      {
-        "value": {}
-      }
-    ]
+    "result": {
+      "records": [
+        {
+          "value": {}
+        }
+      ]
+    }
   },
   {
     "reader": "tilePayload",
@@ -471,11 +486,13 @@
         }
       ]
     },
-    "result": [
-      {
-        "value": {}
-      }
-    ]
+    "result": {
+      "records": [
+        {
+          "value": {}
+        }
+      ]
+    }
   },
   {
     "reader": "tilePayload",
@@ -490,11 +507,13 @@
         }
       ]
     },
-    "result": [
-      {
-        "value": {}
-      }
-    ]
+    "result": {
+      "records": [
+        {
+          "value": {}
+        }
+      ]
+    }
   },
   {
     "reader": "tilePayload",
@@ -509,11 +528,13 @@
         }
       ]
     },
-    "result": [
-      {
-        "value": {}
-      }
-    ]
+    "result": {
+      "records": [
+        {
+          "value": {}
+        }
+      ]
+    }
   },
   {
     "reader": "tilePayload",
@@ -526,11 +547,13 @@
         }
       ]
     },
-    "result": [
-      {
-        "value": {}
-      }
-    ]
+    "result": {
+      "records": [
+        {
+          "value": {}
+        }
+      ]
+    }
   },
   {
     "reader": "tilePayload",
@@ -543,11 +566,13 @@
         }
       ]
     },
-    "result": [
-      {
-        "value": {}
-      }
-    ]
+    "result": {
+      "records": [
+        {
+          "value": {}
+        }
+      ]
+    }
   },
   {
     "reader": "tilePayload",
@@ -560,11 +585,13 @@
         }
       ]
     },
-    "result": [
-      {
-        "value": {}
-      }
-    ]
+    "result": {
+      "records": [
+        {
+          "value": {}
+        }
+      ]
+    }
   },
   {
     "reader": "tilePayload",
@@ -581,16 +608,18 @@
         }
       ]
     },
-    "result": [
-      {
-        "value": {},
-        "importance": 0
-      },
-      {
-        "value": {},
-        "importance": -4
-      }
-    ]
+    "result": {
+      "records": [
+        {
+          "value": {},
+          "importance": 0
+        },
+        {
+          "value": {},
+          "importance": -4
+        }
+      ]
+    }
   },
   {
     "reader": "tilePayload",
@@ -619,28 +648,122 @@
         }
       ]
     },
-    "result": [
-      {
-        "value": {},
-        "importance": 2
-      },
-      {
-        "value": {},
-        "importance": -2
-      },
-      {
-        "value": {},
-        "importance": 0
-      },
-      {
-        "value": {},
-        "importance": 0
-      },
-      {
-        "value": {},
-        "importance": 0
-      }
-    ]
+    "result": {
+      "records": [
+        {
+          "value": {},
+          "importance": 2
+        },
+        {
+          "value": {},
+          "importance": -2
+        },
+        {
+          "value": {},
+          "importance": 0
+        },
+        {
+          "value": {},
+          "importance": 0
+        },
+        {
+          "value": {},
+          "importance": 0
+        }
+      ]
+    }
+  },
+  {
+    "reader": "tilePayload",
+    "name": "attribution entries are read leniently",
+    "body": {
+      "records": [],
+      "attribution": [
+        null,
+        5,
+        "x",
+        [],
+        {},
+        {
+          "dataset": "d"
+        },
+        {
+          "collection": "c"
+        },
+        {
+          "dataset": 1,
+          "collection": "c"
+        },
+        {
+          "dataset": "d",
+          "collection": "c",
+          "release": "r",
+          "source": "s",
+          "licenses": [
+            "l",
+            1,
+            null
+          ],
+          "attribution": "a",
+          "extra": 1
+        },
+        {
+          "dataset": "d",
+          "collection": "c",
+          "release": 5,
+          "licenses": "l"
+        },
+        {
+          "dataset": "a",
+          "collection": "z"
+        }
+      ]
+    },
+    "result": {
+      "records": [],
+      "attribution": [
+        {
+          "dataset": "d",
+          "collection": "c",
+          "release": "r",
+          "source": "s",
+          "licenses": [
+            "l"
+          ],
+          "attribution": "a"
+        },
+        {
+          "dataset": "d",
+          "collection": "c"
+        },
+        {
+          "dataset": "a",
+          "collection": "z"
+        }
+      ]
+    }
+  },
+  {
+    "reader": "tilePayload",
+    "name": "attribution that is not an array is absent: object",
+    "body": {
+      "records": [],
+      "attribution": {}
+    },
+    "result": {
+      "records": []
+    }
+  },
+  {
+    "reader": "tilePayload",
+    "name": "attribution that is not an array is absent: null",
+    "body": {
+      "records": [],
+      "attribution": null
+    },
+    "result": {
+      "records": []
+    }
   },
   {
     "reader": "tilePayload",
@@ -692,10 +815,10 @@
   },
   {
     "reader": "getPlace",
-    "name": "record and importance",
+    "name": "value and importance",
     "body": {
       "uri": "x",
-      "record": {
+      "value": {
         "name": "A",
         "extra": [
           1
@@ -704,57 +827,62 @@
       "importance": 5
     },
     "result": {
-      "record": {
+      "value": {
         "name": "A",
         "extra": [
           1
         ]
       },
-      "importance": 5
+      "importance": 5,
+      "attribution": []
     }
   },
   {
     "reader": "getPlace",
     "name": "no importance",
     "body": {
-      "record": {}
+      "value": {}
     },
     "result": {
-      "record": {}
+      "value": {},
+      "attribution": []
     }
   },
   {
     "reader": "getPlace",
     "name": "a fractional importance is truncated toward zero",
     "body": {
-      "record": {},
+      "value": {},
       "importance": -2.9
     },
     "result": {
-      "record": {},
-      "importance": -2
+      "value": {},
+      "importance": -2,
+      "attribution": []
     }
   },
   {
     "reader": "getPlace",
     "name": "non-number importance is absent",
     "body": {
-      "record": {},
+      "value": {},
       "importance": "5"
     },
     "result": {
-      "record": {}
+      "value": {},
+      "attribution": []
     }
   },
   {
     "reader": "getPlace",
     "name": "out-of-range importance is absent",
     "body": {
-      "record": {},
+      "value": {},
       "importance": 1e+30
     },
     "result": {
-      "record": {}
+      "value": {},
+      "attribution": []
     }
   },
   {
@@ -783,7 +911,7 @@
   },
   {
     "reader": "getPlace",
-    "name": "no usable body: no record",
+    "name": "no usable body: no value",
     "body": {
       "uri": "x"
     },
@@ -791,33 +919,165 @@
   },
   {
     "reader": "getPlace",
-    "name": "no usable body: record is null",
+    "name": "no usable body: value is null",
     "body": {
-      "record": null
+      "value": null
     },
     "decodingError": true
   },
   {
     "reader": "getPlace",
-    "name": "no usable body: record is an array",
+    "name": "no usable body: value is an array",
     "body": {
-      "record": []
+      "value": []
     },
     "decodingError": true
   },
   {
     "reader": "getPlace",
-    "name": "no usable body: record is a string",
+    "name": "no usable body: value is a string",
     "body": {
-      "record": "x"
+      "value": "x"
     },
     "decodingError": true
   },
   {
     "reader": "getPlace",
-    "name": "no usable body: record is a number",
+    "name": "no usable body: value is a number",
     "body": {
-      "record": 5
+      "value": 5
+    },
+    "decodingError": true
+  },
+  {
+    "reader": "getPlace",
+    "name": "the full answer",
+    "body": {
+      "uri": "urn:atgeo:d:c:1",
+      "url": "https://x.example/d/c/1",
+      "importance": 5,
+      "value": {
+        "name": "A",
+        "extra": [
+          1
+        ]
+      },
+      "attribution": [
+        {
+          "dataset": "d",
+          "collection": "c",
+          "licenses": [
+            "l"
+          ]
+        }
+      ]
+    },
+    "result": {
+      "value": {
+        "name": "A",
+        "extra": [
+          1
+        ]
+      },
+      "importance": 5,
+      "attribution": [
+        {
+          "dataset": "d",
+          "collection": "c",
+          "licenses": [
+            "l"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "reader": "getPlace",
+    "name": "attribution is read leniently",
+    "body": {
+      "value": {},
+      "attribution": [
+        null,
+        {
+          "dataset": "d"
+        },
+        {
+          "dataset": "d",
+          "collection": "c",
+          "licenses": "l"
+        }
+      ]
+    },
+    "result": {
+      "value": {},
+      "attribution": [
+        {
+          "dataset": "d",
+          "collection": "c"
+        }
+      ]
+    }
+  },
+  {
+    "reader": "getPlace",
+    "name": "attribution that is not an array is empty",
+    "body": {
+      "value": {},
+      "attribution": "x"
+    },
+    "result": {
+      "value": {},
+      "attribution": []
+    }
+  },
+  {
+    "reader": "getPlace",
+    "name": "attribution keeps served order and duplicates",
+    "body": {
+      "value": {},
+      "attribution": [
+        {
+          "dataset": "z",
+          "collection": "c"
+        },
+        {
+          "dataset": "a",
+          "collection": "c",
+          "release": "1"
+        },
+        {
+          "dataset": "a",
+          "collection": "c",
+          "release": "2"
+        }
+      ]
+    },
+    "result": {
+      "value": {},
+      "attribution": [
+        {
+          "dataset": "z",
+          "collection": "c"
+        },
+        {
+          "dataset": "a",
+          "collection": "c",
+          "release": "1"
+        },
+        {
+          "dataset": "a",
+          "collection": "c",
+          "release": "2"
+        }
+      ]
+    }
+  },
+  {
+    "reader": "getPlace",
+    "name": "no usable body: the earlier shape, record and no value",
+    "body": {
+      "uri": "x",
+      "record": {}
     },
     "decodingError": true
   },
@@ -837,7 +1097,8 @@
           ]
         }
       ],
-      "extra": 1
+      "extra": 1,
+      "maxTiles": 50
     },
     "result": {
       "did": "did:web:x",
@@ -851,7 +1112,8 @@
             }
           ]
         }
-      ]
+      ],
+      "maxTiles": 50
     }
   },
   {
@@ -930,6 +1192,48 @@
           "collections": []
         }
       ]
+    }
+  },
+  {
+    "reader": "describeService",
+    "name": "a fractional maxTiles is truncated toward zero",
+    "body": {
+      "maxTiles": 50.9
+    },
+    "result": {
+      "tilesets": [],
+      "maxTiles": 50
+    }
+  },
+  {
+    "reader": "describeService",
+    "name": "a maxTiles that is not a number is absent",
+    "body": {
+      "maxTiles": "50"
+    },
+    "result": {
+      "tilesets": []
+    }
+  },
+  {
+    "reader": "describeService",
+    "name": "maxTiles out of range is absent",
+    "body": {
+      "maxTiles": 1e+30
+    },
+    "result": {
+      "tilesets": []
+    }
+  },
+  {
+    "reader": "describeService",
+    "name": "a negative maxTiles is kept",
+    "body": {
+      "maxTiles": -5
+    },
+    "result": {
+      "tilesets": [],
+      "maxTiles": -5
     }
   },
   {
@@ -1028,7 +1332,10 @@
             "l2"
           ]
         }
-      ]
+      ],
+      "overview": {
+        "records": 10000
+      }
     },
     "result": {
       "slug": "s",
@@ -1075,7 +1382,10 @@
             "l2"
           ]
         }
-      ]
+      ],
+      "overview": {
+        "records": 10000
+      }
     }
   },
   {
@@ -1274,6 +1584,61 @@
     "name": "references null is absent",
     "body": {
       "references": null
+    },
+    "result": {
+      "collections": []
+    }
+  },
+  {
+    "reader": "describeTileset",
+    "name": "an overview's records is read as an integer and unknown fields are ignored",
+    "body": {
+      "overview": {
+        "records": 2.9,
+        "zooms": [
+          1
+        ]
+      }
+    },
+    "result": {
+      "collections": [],
+      "overview": {
+        "records": 2
+      }
+    }
+  },
+  {
+    "reader": "describeTileset",
+    "name": "an overview with unreadable records is an empty overview",
+    "body": {
+      "overview": {
+        "records": "10"
+      }
+    },
+    "result": {
+      "collections": [],
+      "overview": {}
+    }
+  },
+  {
+    "reader": "describeTileset",
+    "name": "an overview that is not an object is absent",
+    "body": {
+      "overview": [
+        {
+          "records": 1
+        }
+      ]
+    },
+    "result": {
+      "collections": []
+    }
+  },
+  {
+    "reader": "describeTileset",
+    "name": "an overview that is null is absent",
+    "body": {
+      "overview": null
     },
     "result": {
       "collections": []

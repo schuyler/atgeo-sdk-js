@@ -7,6 +7,8 @@ import { fakeServer, overture, record } from "./helpers/fakeServer.js";
 interface Scenario {
   name: string;
   description: string;
+  dataset: string;
+  collection: string;
   region: Region;
   text?: string;
   sort?: SortMode;
@@ -26,6 +28,8 @@ describe("ranking scenarios", () => {
       ],
     });
     const { places } = await new AtgeoClient({ fetch }).searchPlaces({
+      dataset: s.dataset,
+      collection: s.collection,
       region: s.region,
       text: s.text,
       sort: s.sort,

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AtgeoClient, BodyTooLargeError } from "../src/index.js";
-import { DEFAULT_SERVER, place, point, record } from "./helpers/fakeServer.js";
+import { DEFAULT_SERVER, OVERTURE, place, point, record } from "./helpers/fakeServer.js";
 
 const region = { bbox: [-122.42, 37.77, -122.41, 37.78] as [number, number, number, number] };
 const TILE = "https://tiles.example/a.json";
@@ -48,7 +48,7 @@ const bodyOf = (bytes: Uint8Array, chunkSize: number) =>
     },
   });
 
-const search = (client: AtgeoClient, signal?: AbortSignal) => client.searchPlaces({ region, signal });
+const search = (client: AtgeoClient, signal?: AbortSignal) => client.searchPlaces({ ...OVERTURE, region, signal });
 
 describe("maxBodyBytes", () => {
   it("fails a body over the cap as a transport failure, with BodyTooLargeError", async () => {
@@ -604,7 +604,7 @@ describe("the calls that are not tile fetches", () => {
   });
 
   it.each(Object.entries(calls))("%s accepts a body of exactly the cap", async (name, call) => {
-    const body = JSON.stringify(name === "getPlace" ? { record: { name: "x" } } : { did: "did:web:x", tilesets: [], slug: "s", collections: [] });
+    const body = JSON.stringify(name === "getPlace" ? { value: { name: "x" } } : { did: "did:web:x", tilesets: [], slug: "s", collections: [] });
     const fetch = (async () => new Response(body)) as unknown as typeof globalThis.fetch;
     await expect(call(new AtgeoClient({ fetch, maxBodyBytes: encoder.encode(body).byteLength }))).resolves.toBeDefined();
     await expect(call(new AtgeoClient({ fetch, maxBodyBytes: encoder.encode(body).byteLength - 1 }))).rejects.toBeInstanceOf(BodyTooLargeError);
