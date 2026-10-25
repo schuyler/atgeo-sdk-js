@@ -604,7 +604,7 @@ describe("the calls that are not tile fetches", () => {
   });
 
   it.each(Object.entries(calls))("%s accepts a body of exactly the cap", async (name, call) => {
-    const body = JSON.stringify(name === "getPlace" ? { record: { name: "x" } } : { did: "did:web:x", tilesets: [], slug: "s", collections: [] });
+    const body = JSON.stringify(name === "getPlace" ? { value: { name: "x" } } : { did: "did:web:x", tilesets: [], slug: "s", collections: [] });
     const fetch = (async () => new Response(body)) as unknown as typeof globalThis.fetch;
     await expect(call(new AtgeoClient({ fetch, maxBodyBytes: encoder.encode(body).byteLength }))).resolves.toBeDefined();
     await expect(call(new AtgeoClient({ fetch, maxBodyBytes: encoder.encode(body).byteLength - 1 }))).rejects.toBeInstanceOf(BodyTooLargeError);

@@ -212,19 +212,27 @@ describe("getPlace body", () => {
     ["null", null],
     ["an array", []],
     ["an empty object", {}],
-    ["a null record", { record: null }],
-    ["an array record", { record: [] }],
-    ["a string record", { record: "x" }],
+    ["a null value", { value: null }],
+    ["an array value", { value: [] }],
+    ["a string value", { value: "x" }],
+    ["the earlier shape, record and no value", { uri: "x", record: { name: "X" } }],
   ])("rejects with a DecodingError on %s", async (_name, body) => {
     await expect(get(body)).rejects.toBeInstanceOf(DecodingError);
   });
 
-  it("returns the record as served, with an importance that is not a number as null", async () => {
-    expect(await get({ uri: 5, record: { name: "X", extra: { n: [1] } }, importance: "high" })).toEqual({
+  it("returns the value as served, with an importance that is not a number as null", async () => {
+    expect(await get({ uri: 5, value: { name: "X", extra: { n: [1] } }, importance: "high" })).toEqual({
       origin,
       place: { name: "X", extra: { n: [1] } },
       importance: null,
+      attribution: [],
     });
+  });
+
+  it("succeeds on the new-shape body and returns its attribution as served", async () => {
+    const attribution = [{ dataset: "d", collection: "c", licenses: ["l"] }];
+    const body = { uri: origin, url: "https://x.example/p", importance: 3, value: { name: "X" }, attribution };
+    expect(await get(body)).toStrictEqual({ origin, place: { name: "X" }, importance: 3, attribution });
   });
 });
 

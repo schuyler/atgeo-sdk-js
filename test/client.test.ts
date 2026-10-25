@@ -47,7 +47,12 @@ describe("getPlace", () => {
 
   it("returns the value unmodified with importance beside it", async () => {
     const { client } = setup();
-    expect(await client.getPlace({ origin })).toEqual({ origin, place: value, importance: 80 });
+    expect(await client.getPlace({ origin })).toEqual({
+      origin,
+      place: value,
+      importance: 80,
+      attribution: [{ dataset: "overturemaps.org", collection: "place" }],
+    });
   });
 
   it("returns a null importance when the server gives none", async () => {
@@ -120,6 +125,13 @@ describe("getPlace", () => {
     expect(answer.attribution).toStrictEqual(SERVED);
   });
 
+  it("returns the response's attribution from the network in served order, duplicates included, unsorted", async () => {
+    const { fake, client } = withReferences();
+    const answer = await client.getPlace({ origin });
+    expect(fake.requests.some((r) => r.url.includes("org.atgeo.getPlace"))).toBe(true);
+    expect(answer.attribution).toStrictEqual(SERVED);
+  });
+
   it("changing a getPlace answer's attribution changes nothing cached", async () => {
     const { fake, client } = withReferences();
     const first = await client.searchPlaces({ ...OVERTURE, region: { bbox: [-122.40, 37.79, -122.39, 37.80] } });
@@ -155,6 +167,7 @@ describe("describeService and describeTileset", () => {
     const service = await new AtgeoClient({ fetch: fake().fetch }).describeService();
     expect(service).toEqual({
       did: "did:web:places.atgeo.org",
+      maxTiles: 50,
       tilesets: [
         { slug: "overture-place", collections: [{ dataset: "overturemaps.org", collection: "place" }] },
         { slug: "osm", collections: [{ dataset: "openstreetmap.org", collection: "way" }] },
@@ -169,6 +182,14 @@ describe("describeService and describeTileset", () => {
     expect(tileset).toEqual({ slug: "osm", collections: OSM.collections, references: OSM.references });
     const slug: string | undefined = tileset.slug;
     expect(slug).toBe("osm");
+  });
+
+  it("describeTileset passes the overview through", async () => {
+    const withOverview: FakeTileset = { ...OSM, overview: { records: 1234 } };
+    const client = new AtgeoClient({ fetch: fakeServer({ tilesets: [withOverview] }).fetch });
+    const tileset = await client.describeTileset("osm");
+    expect(tileset.overview).toStrictEqual({ records: 1234 });
+    expect(tileset).toStrictEqual({ slug: "osm", collections: OSM.collections, references: OSM.references, overview: { records: 1234 } });
   });
 
   it("describeTileset asks the server each time", async () => {
