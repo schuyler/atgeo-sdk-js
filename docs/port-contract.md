@@ -2,7 +2,7 @@
 
 What a port of `@atgeo/client` to another language must do to be the same client. The port specs ([swift-sdk-spec.md](swift-sdk-spec.md), [kotlin-sdk-spec.md](kotlin-sdk-spec.md), [python-sdk-spec.md](python-sdk-spec.md), [rust-sdk-spec.md](rust-sdk-spec.md)) describe each port's API, packaging and idioms, and point here for behaviour, so that the SDKs can't drift apart on what a search returns.
 
-The reference is the TypeScript source in `src/` at the commit this document was written against (`8654ea7`). Where this document and the source disagree, the source wins and this document has a bug. The fixtures in `fixtures/` and the lexicons in `test/lexicon/` are the executable half of this contract; see [Conformance](#conformance).
+The reference is the TypeScript source in `src/` at the commit this document was written against, the squash merge of schuyler/atgeo-sdk-js#43 (its SHA is recorded here by the follow-up commit; until then, take the merge commit of the PR that closed #43). Where this document and the source disagree, the source wins and this document has a bug. The fixtures in `fixtures/` and the lexicons in `test/lexicon/` are the executable half of this contract; see [Conformance](#conformance).
 
 "Must" marks behaviour a port has to reproduce. "Should" marks the reference behaviour where a port may do better, as long as the observable results stay the same. "May" marks a deliberate freedom.
 
@@ -27,16 +27,18 @@ Query values must be percent-encoded so the server decodes them to the exact str
 Responses are JSON. The schemas are the lexicons in `test/lexicon/`; the ones a port reads are:
 
 - `getTiles` → `{ tiles: string[], overview?: boolean }`. `tiles` is in ascending string order on the wire, but the client sorts anyway (section 4). Entries that are not strings are skipped. `overview` follows JavaScript truthiness, which is exactly: false when absent, `null`, `false`, `0`, `-0` or `""`, and true for any other value. A body with no `tiles` array has no usable tile list (Errors, below).
-- tile payload (`org.atgeo.tilePayload`) → `{ records: [{ value, uri?, importance? }], ... }`. Only `value`, `uri` and `importance` are kept per record; `publishedAt` and `attribution` are ignored. A record that is not an object, or whose `value` is not an object, is skipped and the tile is still used. A `uri` that is not a string, and an `importance` that is not a number, are absent.
-- `getPlace` → `{ uri, record, importance? }`. `record` must be an object, or the response has no usable body; `importance` as for a tile record; `uri` is not read.
-- `describeService` → `{ did, tilesets: [{ slug, collections: [{ dataset, collection }] }] }`.
-- `describeTileset` → `org.atgeo.defs#tileset`.
+- tile payload (`org.atgeo.tilePayload`) → `{ records: [{ value, uri?, importance? }], attribution?, publishedAt? }`. Only `value`, `uri` and `importance` are kept per record. Of the payload, `attribution` is kept (below) and `publishedAt` is ignored. A record that is not an object, or whose `value` is not an object, is skipped and the tile is still used. A `uri` that is not a string, and an `importance` that is not a number, are absent.
+- `getPlace` → `{ uri, url, importance?, value, attribution }`. `value` must be an object, or the response has no usable body. `importance` is read as for a tile record and `attribution` as below. `uri` and `url` are not read.
+- `describeService` → `{ did, maxTiles?, tilesets: [{ slug, collections: [{ dataset, collection }] }] }`.
+- `describeTileset` → `org.atgeo.defs#tileset`, which has an optional `overview: { records }`.
 
 For the two describe calls, every field is optional on the way in. A port's typed representation treats a missing field, or one of the wrong type, as absent; a list the lexicon requires (`tilesets`, and `collections` inside a tileset) that is missing or not an array as empty, and an optional list as absent; an array element that cannot be read as dropped; and unknown fields as ignored. The lexicons say what a compliant server sends; the client must not fail because the server sends more, less, or a different type in a field the app may not even read.
 
-`value` (a tile record) and `record` (getPlace) are `org.atgeo.place` values and must be surfaced to the caller unmodified: every key, nested value and unknown field as served. Nothing about the schema of a place is assumed beyond what sections 5 and 7 read.
+An `attribution` list, in a tile payload or a `getPlace` response, holds `org.atgeo.defs#collectionAttribution` entries. In a tile payload it is optional: absent unless it is an array. In `getPlace`, which requires it, it is empty unless it is an array. An element is kept only if it is an object whose `dataset` and `collection` are both strings. Anything else is dropped, since an entry without both can't be credited to a collection. In a kept entry, `release`, `source` and `attribution` are strings or absent, and `licenses` is the string elements of an array, or absent. Each field is read on its own, and other fields are ignored. Entries keep their served order, duplicates included. A search merges them (section 4.10); `getPlace` surfaces them as read (section 9).
 
-`importance` is a JSON integer on the wire, decoded through a double and range-checked into a signed 64-bit integer, so precision beyond 2^53 is lost exactly as in the reference; a port must not decode the literal exactly, or it would order huge values differently from the other SDKs. A compliant server never sends a non-integer; when one arrives it is truncated toward zero (`2.9` is 2, `-2.9` is -2, `-0.5` is 0), in the reference and in every port. A number whose magnitude is 2^63 or more is absent (the check is symmetric, so exactly -2^63 is absent too, although a signed 64-bit integer could hold it). Anything that is not a JSON number, including an array or a string holding one, is absent. None of this fails the tile. The same reading applies to `recordCount` in a collection and `count` in a category of a describe call.
+`value`, in a tile record and in a `getPlace` response, is an `org.atgeo.place` value and must be surfaced to the caller unmodified: every key, nested value and unknown field as served. Nothing about the schema of a place is assumed beyond what sections 5 and 7 read.
+
+`importance` is a JSON integer on the wire, decoded through a double and range-checked into a signed 64-bit integer, so precision beyond 2^53 is lost exactly as in the reference; a port must not decode the literal exactly, or it would order huge values differently from the other SDKs. A compliant server never sends a non-integer; when one arrives it is truncated toward zero (`2.9` is 2, `-2.9` is -2, `-0.5` is 0), in the reference and in every port. A number whose magnitude is 2^63 or more is absent (the check is symmetric, so exactly -2^63 is absent too, although a signed 64-bit integer could hold it). Anything that is not a JSON number, including an array or a string holding one, is absent. None of this fails the tile. The same reading applies to `recordCount` in a collection, `count` in a category, `maxTiles` in describeService, and `records` in a tileset's `overview`.
 
 ### Errors
 
@@ -44,7 +46,7 @@ A non-2xx response raises the port's `AtgeoError` type with a `code` string, a `
 
 Every code other than `HttpError` comes from the server. The lexicons declare which codes each query can return: `BboxTooLarge`, `BboxTooPrecise`, `DatasetNotFound`, `CollectionNotFound`, `InvalidBbox` for getTiles; `PlaceNotFound` for getPlace; `TilesetNotFound` for describeTileset; `InvalidRequest` for any malformed parameter. The list is informative, not closed: a port passes any code through unchanged and never decides what to do by matching on it, so that a code the server adds later is reported, not mishandled.
 
-A 2xx response whose body is not valid JSON, or decodes but has no usable body, raises the port's decoding error, not `AtgeoError`: the platform's JSON decoding error, or a type of the port's own where the platform's would be caught as something else (Kotlin's `SerializationException` is an `IllegalArgumentException`, the type of an argument error), except inside a tile fetch (section 4), where it counts as a failed tile. "No usable body" is the narrow list above: a `getTiles` body with no `tiles` array, a `getPlace` body with no `record` object, a describe body that is not an object. Nothing else about a body's shape is an error.
+A 2xx response whose body is not valid JSON, or decodes but has no usable body, raises the port's decoding error, not `AtgeoError`: the platform's JSON decoding error, or a type of the port's own where the platform's would be caught as something else (Kotlin's `SerializationException` is an `IllegalArgumentException`, the type of an argument error), except inside a tile fetch (section 4), where it counts as a failed tile. "No usable body" is the narrow list above: a `getTiles` body with no `tiles` array, a `getPlace` body with no `value` object, a describe body that is not an object. A `getPlace` body in the earlier shape, with `record` and no `value`, has no usable body. Nothing else about a body's shape is an error.
 
 Network failures propagate as the port's HTTP layer's own error type, unwrapped. The transport follows at least same-scheme redirects (the JVM's `HttpURLConnection` does not cross from `http` to `https`), and the response's content type is not checked.
 
@@ -64,12 +66,13 @@ A client holds three caches (tile lists, tiles, service description) that start 
 
 ## 3. Regions
 
-A region is a circle `{ lat, lon, radius }` (radius in metres) or a bounding box `[minLon, minLat, maxLon, maxLat]` in degrees.
+A region is a circle `{ lat, lon, radius }` (radius in metres) or a bounding box `[west, south, east, north]` in degrees. The port specs and READMEs use those names. Below, `minLon`, `minLat`, `maxLon` and `maxLat` name the same four values in the same order, which is also the order of the `getTiles` bbox string.
 
 ### Validation
 
 `searchPlaces` must reject, before any network activity and with the port's argument-error type (not `AtgeoError`), checking in this order so that the error for a call with two faults is the same everywhere:
 
+- a search with no `dataset` (section 4.1);
 - a bbox where any longitude is non-finite or `|lon| > 180`, any latitude is non-finite or `|lat| > 90`, or `minLat > maxLat`;
 - a circle where `lat` or `lon` fails the same checks, or `radius` is non-finite or negative;
 - `sort = similarity` when the normalized text (section 7) is empty.
@@ -146,16 +149,13 @@ The snapped box must contain the caller's region. The precise coordinates must n
 
 ## 4. The search pipeline
 
-`searchPlaces(region, text?, dataset?, collection?, sort?)` runs these steps in order.
+`searchPlaces(region, dataset, text?, collection?, sort?)` runs these steps in order. In the TypeScript options object, order doesn't matter.
 
 ### 4.1 Resolve dataset and collection
 
-| `dataset` | `collection` | searched |
-|---|---|---|
-| absent | absent | `overturemaps.org` / `place` |
-| absent | given | `overturemaps.org` / that collection |
-| given | absent | the whole dataset, no collection filter |
-| given | given | that collection |
+`dataset` is required and has no default. A search without one is an argument error, raised before any request (section 3), in the port's idiom: a required parameter, a non-optional type, or a check that throws the port's argument-error type. A dynamically typed port treats a `dataset` that is not a string as missing. An empty string is a string and goes to the server, which answers for itself. With a `collection` the search covers that collection. Without one it covers the whole dataset, with no collection filter. A `collection` given without a `dataset` is the same argument error.
+
+A dataset-only search merges every tileset the server serves for the dataset and ranks them together by importance (section 8). That is sound: the atgeo spec defines importance as comparable across the tilesets one producer builds from one dataset (garganorn `docs/atgeo-spec.md`, "Importance"; schuyler/garganorn#14).
 
 The `collection` query parameter is sent only when the search has a collection.
 
@@ -176,7 +176,7 @@ Take the union of every list's `tiles`, remove duplicates, and sort ascending by
 For each URL in that order, with at most 8 fetches in flight:
 
 - A tile in the tile cache is used without a request, and is marked recently used. Whether a port consults the cache when a worker reaches the URL (the reference) or for every URL before fetching begins affects only the order in which recency is touched, which nothing here pins.
-- Otherwise fetch the URL exactly as given. On a 2xx with a body that decodes to a payload with a `records` array, keep `{ value, uri?, importance? }` per usable record (section 1: a record that is not an object, or has no object `value`, is skipped, and skipping never fails the tile), store the tile in the cache with its size (section 10), and use it. A tile whose every record was skipped is still a used tile with no records.
+- Otherwise fetch the URL exactly as given. On a 2xx with a body that decodes to a payload with a `records` array, keep `{ value, uri?, importance? }` per usable record (section 1: a record that is not an object, or has no object `value`, is skipped, and skipping never fails the tile) and the payload's `attribution` (section 1), store the tile in the cache with its size and attribution (section 10), and use it. The attribution is read inside the guarded decode step, and a malformed `attribution` never fails a tile, since reading it only drops entries. A tile whose every record was skipped is still a used tile with no records.
 - Any other outcome (non-2xx, network error, undecodable body, a payload that is not an object, `records` absent or not an array) marks the tile failed. So does a tile URL that is not an absolute `http` or `https` URL, or that carries credentials (a non-empty username or password once parsed, by WHATWG or by any parser the port's transports use: `https://user:pw@host/…`, `https://user@host/…`, and on the JVM `https://h\@x/…`, whose `h\` `java.net.URL` reads as a user), which the reference refuses with its own check before any request. (The Fetch standard's `Request` refuses credentials, and in Node a relative URL, but accepts `data:` and `blob:` URLs and, in a browser, resolves a relative URL against the page, so `fetch` alone is not the rule.) An empty userinfo (`https://@host/…`) carries no credentials and the reference fetches it; a port may refuse it instead, since a compliant server never sends one, and says so in its `CONFORMANCE.md`. Likewise a port may refuse a URL with an `@` anywhere before its first `/`, `?` or `#` even where a backslash ends the authority first (`https://h\@x/y`, which WHATWG reads as host `h`), because an app's transport may parse the backslash as part of a user name and send credentials to `x`. It is skipped, not retried, and the search continues.
 - If the search was cancelled, a tile failure is not swallowed. The reference rethrows the tile's own error, so a search aborted while a tile with an unparsable body was in flight fails with the JSON error, not the cancellation error; a port may fail with its cancellation error instead (section 14). A search that fails, cancelled or otherwise, has no result, so its tiles are never reported as failed.
 
@@ -217,9 +217,19 @@ Keep records for which `inRegion(locate(value), region)` holds (sections 5 and 6
 
 ### 4.9 Rank
 
-Section 8. The result is `{ places, complete, overview, tiles: { fetched, failed }, tileFailures: [{ url, kind, status?, error }] }`. Each port spells `tileFailures` and `kind`'s values in its language's style and says so in its spec.
+Section 8. The result is `{ places, complete, overview, tiles: { fetched, failed }, tileFailures: [{ url, kind, status?, error }], attribution }`. Each port spells `tileFailures` and `kind`'s values in its language's style and says so in its spec.
 
 Warm searches: a repeat of the same region within the hour, with every tile still cached, makes no request at all. Changing only `text` or `sort` reuses everything.
+
+### 4.10 Attribution
+
+The result's `attribution` credits every collection whose data the search's tiles hold. It is built from every tile the search used (4.4), from the cache or the network, whether or not any of the tile's records survived 4.6 to 4.9. A failed tile contributes nothing, even if its body carries a readable `attribution`. Walk the used tiles in URL order (4.3), and each tile's entries in served order, and keep the first entry for each `(dataset, collection)` pair, compared as exact strings (no case folding). Key the pair as a tuple, not a joined string: `a|b` with `c` and `a` with `b|c` are different pairs, and so are `a:b` with `c` and `a` with `b:c`. Then sort by `dataset`, then `collection`, each in the ordinal order of 4.3. `attribution` is always present on a result, never absent or null. It is an empty list when no tile was used, or when no used tile has an attribution (a tile without one counts as an empty list).
+
+Reference entries are included: a tileset's entries for collections it doesn't carry but whose data its records include. A hit's `within` relations carry a containing division's name, so an app that shows the hit shows that collection's data too. A tile's entries don't say which are references, and the client doesn't ask.
+
+When two tiles' entries for one pair differ (a release, say), the lowest tile URL wins, the same rule as record dedupe. A duplicate pair within one tile: the first wins.
+
+Each entry is surfaced with the fields section 1 kept. The app may change what it is given without changing the cache: a port either hands out immutable values or copies them.
 
 ## 5. Reading a place's location
 
@@ -339,6 +349,7 @@ For each surviving record build a hit:
 | Field | Value |
 |---|---|
 | `origin` | the record key (section 4.6), or null |
+| `collection` | a new object holding exactly `{ dataset, collection }` (no other field of the entry, and not the entry itself) of the first entry, in served order, of the `attribution` of the tile the record came from (the tile whose copy 4.6 kept). The entry is the first one for which `value.origin` is a string starting with `urn:atgeo:{dataset}:{collection}:`, the test of 4.7. It is null when no entry matches, when the tile has no attribution, or when `value.origin` is not a string (a record keyed by its `uri`). The origin is never split. A tile without an attribution counts as an empty list here. `collection` is always present on a hit: an object or null, never absent. |
 | `place` | `value`, untouched |
 | `importance` | the record's `importance`, or null |
 | `distance` | `distanceTo(locate(value), centre)` in metres; never null here, since the region filter already required a location |
@@ -349,7 +360,7 @@ Internally each hit also carries `specificity`: 0 for a hit with a point or no b
 Comparators, each returning negative when `a` sorts first:
 
 - `byScore`: `round3(b.score ?? 0) - round3(a.score ?? 0)`, with `round3(x) = round(x * 1000) / 1000`, round half away from zero (scores are non-negative). Best first; scores that differ only past the third decimal tie.
-- `byImportance`: `(b.importance ?? 0) - (a.importance ?? 0)`. Larger first. A null importance sorts as 0: above negatives, tied with 0.
+- `byImportance`: `(b.importance ?? 0) - (a.importance ?? 0)`. Larger first. A null importance sorts as 0: above negatives, tied with 0. Importance is comparable across one producer's tilesets for one dataset (section 4.1), which makes this comparator sound for a dataset-only search.
 - `byDistance`: `a.distance - b.distance`. Nearest first.
 - `bySpecificity`: `a.specificity - b.specificity`. Smaller first.
 - `byOrigin`: equal origins tie; a null origin sorts after any string; otherwise ordinal string comparison.
@@ -366,17 +377,21 @@ Sort modes:
 
 The sort must be stable: hits that tie on every comparator (only possible when both lack an origin, since dedupe leaves one hit per origin) keep their order from section 4.5. A port that cannot rely on its library sort being stable must add the input index as a final tie-break.
 
-`fixtures/ranking-scenarios.json` must pass: for each scenario, run the records through sections 4.6 to 4.9 (no network) and check that each `expect.top[k].origins` set is a subset of the first `k` hits' origins and each `expect.absent` origin is not in the result at all. The fixture checks membership, not order.
+`fixtures/ranking-scenarios.json` must pass: for each scenario, run the records through sections 4.6 to 4.9 as a search of the scenario's `dataset` and `collection` (no network) and check that each `expect.top[k].origins` set is a subset of the first `k` hits' origins and each `expect.absent` origin is not in the result at all. The fixture checks membership, not order.
 
 ## 9. The other calls
 
+The SDK's `origin` is the wire's record key: the `uri` parameter of `getPlace`, which its response echoes as `uri`. The SDK's `place` is the wire's `value`, in a tile record and in a `getPlace` response alike.
+
 `place` in a `getPlace` answer may likewise be the cached record's own value, so the rule from section 8 applies: make it immutable or document it. The reference freezes the value once, shallowly, when it parses the tile or the `getPlace` response, so every place it hands out is frozen, whether it came from the cache or the network; nested values stay mutable and shared, and the README says so and gives the copy recipe. A port whose language has value or immutable types needs no such step.
 
-`getPlace(origin)`: search the tile cache for a record whose key (4.6) equals `origin`; if several cached tiles hold one, take the record from the lowest tile URL. The scan does not mark any tile recently used (section 10). On a hit return `{ origin, place: value, importance ?? null }` with no request. On a miss call `getPlace` with `uri = origin` (no `describeService` first) and return `{ origin, place: record, importance ?? null }`. The returned `origin` is the caller's string, not the response's `uri`.
+`getPlace(origin)`: search the tile cache for a record whose key (4.6) equals `origin`; if several cached tiles hold one, take the record from the lowest tile URL. The scan does not mark any tile recently used (section 10). On a hit return `{ origin, place: value, importance ?? null, attribution }` with no request, where `attribution` is the source tile's `attribution` as read (section 1), or empty when the tile has none (absent, or not an array). That tile is the lowest-URL one holding the record. On a miss call `getPlace` with `uri = origin` (no `describeService` first) and return `{ origin, place: value, importance ?? null, attribution }`, where `attribution` is the response's `attribution` as read (section 1). Neither is merged or sorted: it keeps served order, duplicates included. On both paths `attribution` is always a list, never absent or null. The returned `origin` is the caller's string, not the response's `uri`. For garganorn the two paths agree, since `getPlace` answers with the attribution of the place's tileset, which is the list every tile of that tileset carries.
 
-`describeService()`: cached for one hour; otherwise one request. Returned as decoded, leniently (section 1).
+`attribution` in a `getPlace` answer, from the cache or the network, and in a search result (4.10) is the app's own. A port either hands out immutable values or copies them, so an app that changes an entry or its `licenses` list changes neither the cached tile nor a later search's or `getPlace`'s answer. The reference copies each entry and its `licenses` array per answer.
 
-`describeTileset(slug)`: never cached; one request per call. Returned as decoded, leniently (section 1).
+`describeService()`: cached for one hour; otherwise one request. Returned as decoded, leniently (section 1). That includes `maxTiles`, the server's tile budget. It is informational: tile zooms are adaptive, so a client can't tell from it whether a box fits.
+
+`describeTileset(slug)`: never cached; one request per call. Returned as decoded, leniently (section 1), including `overview`. It is absent when the tileset has no overview band, or when the field is not an object. When present it is an object whose `records`, the number of records in the band, is read as in section 1 and is absent when unreadable. Unknown fields in it are ignored.
 
 ## 10. Caching
 
@@ -384,7 +399,7 @@ Three caches, all in memory, none persisted, none shared between clients.
 
 - Tile lists: key from 4.2, value `{ tiles, overview }`, expires 3,600,000 ms after being set, by wall-clock time: an entry is fresh while `now < set + 3,600,000` and a miss from exactly that instant on. Entries need not be evicted on expiry, but a port may prune them.
 - Service description: one entry, same one-hour expiry.
-- Tiles: keyed by URL, LRU, capped by `cacheBudgetBytes`. A tile's size is the length of its response body; the reference counts UTF-16 code units of the text, a port counts bytes. Reading a tile by URL during a search marks it most recently used; the `getPlace` scan (section 9) does not. Inserting a tile adds its size and then evicts least recently used tiles until the total is within budget (a single tile larger than the budget evicts every other tile and then itself, so the cache never exceeds the budget after an insert). Replacing a URL subtracts the old size first. A port may hold each tile's body and parse it again when it is read, and may keep the parsed records of some tiles outside the budget as a memo, because a parsed tile can take several times its body size in memory; what is fetched, and when, and the recency order must be exactly as without the memo.
+- Tiles: keyed by URL, each holding its usable records and its `attribution` (section 1), so a warm search (4.10) and the `getPlace` scan (section 9) have it without a request. LRU, capped by `cacheBudgetBytes`. A tile's size is the length of its response body; the reference counts UTF-16 code units of the text, a port counts bytes. Reading a tile by URL during a search marks it most recently used; the `getPlace` scan (section 9) does not. Inserting a tile adds its size and then evicts least recently used tiles until the total is within budget (a single tile larger than the budget evicts every other tile and then itself, so the cache never exceeds the budget after an insert). Replacing a URL subtracts the old size first. A port may hold each tile's body and parse it again when it is read, and may keep the parsed records of some tiles outside the budget as a memo, because a parsed tile can take several times its body size in memory; what is fetched, and when, and the recency order must be exactly as without the memo. A port that holds bodies and parses them again parses the attribution again too. A tile's size is still its body length; the attribution is part of the body.
 
 Expiry tests set the clock, so a port must take its time source from somewhere a test can control.
 
@@ -410,9 +425,27 @@ A port vendors, at a pinned atgeo-sdk-js commit recorded in a `SOURCE` file:
 
 - `fixtures/normalize.json` (41 cases, exact match),
 - `fixtures/jaro-winkler.json` (33 cases, within 5e-7),
-- `fixtures/ranking-scenarios.json` (12 scenarios, membership),
-- `fixtures/lenient-readers.json` (88 cases, exact match): a response body for each of the five readers of section 1 (`getTiles`, a tile payload, `getPlace`, `describeService`, `describeTileset`) and either what a port's reader keeps of it or `decodingError`. A missing key is an absent field. The expected values are in JSON terms, so a port maps them onto its own types.
+- `fixtures/ranking-scenarios.json` (12 scenarios, membership). Each scenario names the `dataset` and `collection` it is a search of, and the runner passes them (section 8).
+- `fixtures/lenient-readers.json` (104 cases, exact match): a response body for each of the five readers of section 1 (`getTiles`, a tile payload, `getPlace`, `describeService`, `describeTileset`) and either what a port's reader keeps of it or `decodingError`. A missing key is an absent field. The expected values are in JSON terms, so a port maps them onto its own types. The `tilePayload` result is an object, `{ "records": [...], "attribution": [...] }`, where `attribution` is a missing key when the reader leaves it absent (section 1). Earlier revisions of this fixture gave a bare array of records, so a port's runner has one mapping function to change. The `getPlace` bodies and results use `value` and `attribution` (every non-error result has an `attribution` list), and the describe cases cover `maxTiles` and `overview`.
+- `fixtures/attribution-scenarios.json` (12 scenarios, exact match): `SearchResult.attribution` and `SearchHit.collection` (sections 4.10 and 8), described below.
 - `test/lexicon/*.json`, for a fake server that validates its own traffic.
+
+### The attribution scenarios
+
+Each scenario is `{ name, description, dataset, collection?, region, tiles: [{ url, body?, status? }], expect: { attribution, hits: [{ origin, collection }] } }`. The tile bodies need not validate against the lexicons, so the runner uses a raw server, not a validating fake. The reference's `test/attribution.test.ts` runs it like this, and a port's runner does the same:
+
+- A fresh client per scenario. Scenarios reuse tile URLs (`a.json`, `b.json`) with different bodies, and the tile-list cache key is `{dataset}|{collection}|{bbox}`, so a shared client would serve one scenario's cached lists and tiles to the next.
+- The base server is `https://places.atgeo.org`. The raw server routes `https://places.atgeo.org/xrpc/org.atgeo.getTiles` (any query) separately from the absolute tile URLs, which it matches exactly. It answers every `getTiles` call with `{ "tiles": [the scenario's tile URLs, in listed order] }`. The listed order is deliberately not sorted, which exercises 4.3.
+- Each tile is served with its `body` verbatim and its `status` (default 200). A tile with a `status` and no `body` gets the default error body `{"error":"InternalServerError","message":"upstream error"}`, which makes a `status: 500` tile a failed tile of kind `status`. A 200 tile whose body is not a usable payload is a failed tile of kind `decode`.
+- The search has no text and the default sort. It passes the scenario's `dataset`, its `collection` when it has one, and its `region`.
+- `result.attribution` must deep-equal `expect.attribution`, in order, with a field the scenario leaves out being a missing key in the result.
+- The hits are compared as a multiset of `(origin, collection)` pairs, order-insensitive, against `expect.hits`. Every hit must carry the `collection` key: a null is `null`, never a missing key. Each `collection` is compared with strict equality, so a port that hands back the whole entry, with its `release` or `licenses`, fails. The scenarios' entries carry those extra fields on purpose.
+
+Three things the fixtures do not pin:
+
+- **Ordinal order above U+FFFF.** The sort in 4.10 uses the comparator of 4.3, which compares UTF-16 code units. No fixture has a name outside the basic multilingual plane, so nothing here fails a port that sorts differently. Python, Rust and Swift compare strings by code point or byte by default, which differs from UTF-16 order above U+FFFF. A port must use its 4.3 comparator for the attribution sort too.
+- **Tile arrival order.** A fixture is data, and cannot say which tile arrives first. The union and the dedupe of 4.10 follow tile URL order whatever order the tiles arrive in, so each port needs a test of its own that delays the lowest URL's response and checks the result is unchanged. The reference's is `attribution.test.ts`, "attribution scenarios, tiles arriving in reverse URL order": it reruns every scenario with more than one tile, delaying each response so the highest URL arrives first, and checks the same attribution and hits.
+- **Cache and copy behaviour.** Warm searches, `getPlace` from the cache and the copy rule of section 9 are tested in `cache.test.ts`, `client.test.ts` and `frozenPlace.test.ts`; a port needs equivalents.
 
 ### Pinning and the check
 
@@ -436,11 +469,13 @@ It also reproduces the worked examples in sections 3 and 6, and ports the behavi
 
 - `region.test.ts`: serialization, outward snapping, degenerate spans, circle to bbox, antimeridian splitting, invalid regions.
 - `merge.test.ts` and `distance.test.ts`: dedupe, ordering ties, region filtering for both region kinds, seams at ±180 and the poles, determinism.
-- `client.test.ts`: getPlace cache and network paths, describe calls, result shapes, dataset and collection resolution.
+- `client.test.ts`: getPlace cache and network paths, describe calls, result shapes, the required dataset, attribution and hit collections.
+- `attribution.test.ts`: the attribution scenarios fixture, and the same scenarios with tiles arriving in reverse URL order.
 - `wire.test.ts` and `robustness.test.ts`: the lenient readers against that fixture, and what a search, `getPlace` and the describe calls do with a malformed body (section 1).
 - `transport.test.ts`: failed tiles (each `kind`, with its URL and status, in URL order), typed errors, URL construction.
-- `cache.test.ts`: warm regions, expiry, the `getPlace` cache scan. It has no test of LRU eviction or the cache budget; section 10 is the specification for those.
+- `cache.test.ts`: warm regions, expiry, the `getPlace` cache scan, and the attribution a warm search and a cached `getPlace` return. It has no test of LRU eviction or the cache budget; section 10 is the specification for those.
 - `overview.test.ts`: the overview flag.
+- `frozenPlace.test.ts`: what an app can and can't change in a place or an attribution list it was handed (sections 8 and 9).
 - `privacy.test.ts`: section 12.
 
 The fake server should validate every request and response it handles against the lexicons where a lexicon validator exists for the language. Where none does, it must at least check the request parameter names, that `bbox` matches `^-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d$`, and that its own responses carry the required fields. It must capture every request's URL for the privacy tests, and the method, headers and body where the port's transport seam carries them (a seam that carries only a URL fixes those by construction), and must be able to go offline (every request fails) and to fail named tiles.

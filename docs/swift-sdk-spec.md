@@ -45,7 +45,7 @@ Names follow the Swift API Design Guidelines, so one method differs from the oth
 
 | JS / Kotlin | Swift |
 |---|---|
-| `searchPlaces(options)` | `searchPlaces(region:text:dataset:collection:sort:)` |
+| `searchPlaces(options)` | `searchPlaces(region:dataset:text:collection:sort:)` |
 | `getPlace({ origin })` | `place(origin:)` |
 | `describeService()` | `describeService()` |
 | `describeTileset(slug)` | `describeTileset(_ slug:)` |
@@ -65,8 +65,8 @@ public actor AtgeoClient {
 
     public func searchPlaces(
         region: Region,
+        dataset: String,
         text: String? = nil,
-        dataset: String? = nil,
         collection: String? = nil,
         sort: SortMode = .fused
     ) async throws -> SearchResult
@@ -83,8 +83,8 @@ Why an actor: the three caches are mutable state shared by every call, and calle
 public enum Region: Sendable, Hashable {
     /// Radius in metres.
     case circle(lat: Double, lon: Double, radius: Double)
-    /// Degrees. minLon > maxLon crosses the antimeridian.
-    case bbox(minLon: Double, minLat: Double, maxLon: Double, maxLat: Double)
+    /// Degrees. west > east crosses the antimeridian.
+    case bbox(west: Double, south: Double, east: Double, north: Double)
 }
 
 public enum SortMode: String, Sendable, CaseIterable { case fused, distance, similarity }
@@ -196,7 +196,7 @@ public enum AtgeoArgumentError: Error, Sendable, Equatable {
 
 `AtgeoArgumentError` is a separate type rather than more `AtgeoError` codes so that the `code` namespace stays the server's. The JS client throws `TypeError` for the same reason.
 
-Network failures throw `URLError` (or whatever the injected transport throws) unwrapped. A 2xx body that is not JSON, or has no usable body in the contract's narrow sense (§1: no `tiles` array, no `record` object, a describe body that is not an object), throws `DecodingError` unwrapped; nothing else about a body's shape throws. For tiles, either counts as a failed tile. Cancellation throws `CancellationError` or `URLError(.cancelled)`, whichever reached the call first; callers should test `Task.isCancelled` rather than match the error.
+Network failures throw `URLError` (or whatever the injected transport throws) unwrapped. A 2xx body that is not JSON, or has no usable body in the contract's narrow sense (§1: no `tiles` array, no `value` object, a describe body that is not an object), throws `DecodingError` unwrapped; nothing else about a body's shape throws. For tiles, either counts as a failed tile. Cancellation throws `CancellationError` or `URLError(.cancelled)`, whichever reached the call first; callers should test `Task.isCancelled` rather than match the error.
 
 ## 4. Transport
 

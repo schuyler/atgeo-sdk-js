@@ -117,30 +117,30 @@ impl<T: HttpTransport> AtgeoClient<T> {
 pub enum Region {
     /// Radius in metres.
     Circle { lat: f64, lon: f64, radius: f64 },
-    /// Degrees. min_lon > max_lon crosses the antimeridian.
-    Bbox { min_lon: f64, min_lat: f64, max_lon: f64, max_lat: f64 },
+    /// Degrees. west > east crosses the antimeridian.
+    Bbox { west: f64, south: f64, east: f64, north: f64 },
 }
 impl Region {
     pub const fn circle(lat: f64, lon: f64, radius: f64) -> Self;
-    pub const fn bbox(min_lon: f64, min_lat: f64, max_lon: f64, max_lat: f64) -> Self;
+    pub const fn bbox(west: f64, south: f64, east: f64, north: f64) -> Self;
 }
 
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum SortMode { #[default] Fused, Distance, Similarity }
 
-#[derive(Clone, Debug, Default)]
-pub struct SearchOptions { /* text, dataset, collection: Option<String>; sort: SortMode */ }
+#[derive(Clone, Debug)]
+pub struct SearchOptions { /* dataset: String; text, collection: Option<String>; sort: SortMode */ }
 impl SearchOptions {
-    pub fn new() -> Self;
+    /// `dataset` is required and has no default.
+    pub fn new(dataset: impl Into<String>) -> Self;
     pub fn text(self, text: impl Into<String>) -> Self;
-    pub fn dataset(self, dataset: impl Into<String>) -> Self;
     pub fn collection(self, collection: impl Into<String>) -> Self;
     pub fn sort(self, sort: SortMode) -> Self;
 }
 ```
 
-A call reads `client.search_places(Region::circle(39.9526, -75.1652, 1000.0), SearchOptions::new().text("Starbux")).await?`. `Region` does not validate on construction: `Region::circle(f64::NAN, 0.0, 10.0)` builds, and `search_places` rejects it (Errors, below), so that the contract's order of checks (§3) holds whichever fault a call has. `SearchOptions` keeps its fields private behind setters, so that an option added later breaks nobody.
+A call reads `client.search_places(Region::circle(39.9526, -75.1652, 1000.0), SearchOptions::new("overturemaps.org").text("Starbux")).await?`. `Region` does not validate on construction: `Region::circle(f64::NAN, 0.0, 10.0)` builds, and `search_places` rejects it (Errors, below), so that the contract's order of checks (§3) holds whichever fault a call has. `SearchOptions` keeps its fields private behind setters, so that an option added later breaks nobody.
 
 ```rust
 pub type Place = Arc<serde_json::Map<String, serde_json::Value>>;
