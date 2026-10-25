@@ -180,7 +180,7 @@ describe("getPlace cache scan", () => {
     expect(found.place.name).toBe("Shared in other");
   });
 
-  it("takes the attribution of the lowest-URL tile, as served, though a higher one was cached first", async () => {
+  it("takes the attribution of the lowest-URL tile, as served, though higher ones were cached before and after it", async () => {
     const references = [
       { dataset: "z.example", collection: "c" },
       { dataset: "a.example", collection: "c", release: "1" },
@@ -196,12 +196,20 @@ describe("getPlace cache scan", () => {
           references: [{ dataset: "b.example", collection: "c" }],
           tiles: [{ url: url("b"), records: [copy()] }],
         },
+        {
+          slug: "overture-place-c",
+          collections: [{ dataset: "overturemaps.org", collection: "place" }],
+          references: [{ dataset: "c.example", collection: "c" }],
+          tiles: [{ url: url("c"), records: [copy()] }],
+        },
       ],
-      tilesFor: (bbox) => [bbox.startsWith("-122") ? url("a") : url("b")],
+      tilesFor: (bbox) => [bbox.startsWith("-122") ? url("a") : bbox.startsWith("-100") ? url("b") : url("c")],
     });
     const client = new AtgeoClient({ fetch: server.fetch });
+    // b, then a, then c: the lowest URL is neither the first nor the last cached.
     await client.searchPlaces({ ...OVERTURE, region: { bbox: [-100.5, 10.5, -100.4, 10.6] } });
     await client.searchPlaces({ ...OVERTURE, region });
+    await client.searchPlaces({ ...OVERTURE, region: { bbox: [-90.5, 10.5, -90.4, 10.6] } });
     server.goOffline();
     const answer = await client.getPlace({ origin: placeOrigin("x") });
     expect(answer.attribution).toStrictEqual([{ dataset: "overturemaps.org", collection: "place" }, ...references]);

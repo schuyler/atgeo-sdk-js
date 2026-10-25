@@ -389,6 +389,13 @@ describe("datasets and collections", () => {
     expect(fake.requests).toHaveLength(0);
   });
 
+  it.each([["null", null], ["a number", 5]])("treats a dataset that is %s as missing when a collection is named", (_name, dataset) => {
+    const { fake, client } = setup();
+    expect(() => client.searchPlaces({ dataset, collection: "place", region } as never)).toThrow(TypeError);
+    expect(() => client.searchPlaces({ dataset, collection: "place", region } as never)).toThrow(/dataset/);
+    expect(fake.requests).toHaveLength(0);
+  });
+
   // Guard: an empty dataset is a string and goes to the server, which is the authority on what exists.
   it("sends an empty dataset to the server", async () => {
     const { fake, client } = setup();
