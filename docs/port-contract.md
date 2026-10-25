@@ -2,7 +2,7 @@
 
 What a port of `@atgeo/client` to another language must do to be the same client. The port specs ([swift-sdk-spec.md](swift-sdk-spec.md), [kotlin-sdk-spec.md](kotlin-sdk-spec.md), [python-sdk-spec.md](python-sdk-spec.md), [rust-sdk-spec.md](rust-sdk-spec.md)) describe each port's API, packaging and idioms, and point here for behaviour, so that the SDKs can't drift apart on what a search returns.
 
-The reference is the TypeScript source in `src/` at the commit this document was written against, the squash merge of schuyler/atgeo-sdk-js#43 (its SHA is recorded here by the follow-up commit; until then, take the merge commit of the PR that closed #43). Where this document and the source disagree, the source wins and this document has a bug. The fixtures in `fixtures/` and the lexicons in `test/lexicon/` are the executable half of this contract; see [Conformance](#conformance).
+The reference is the TypeScript source in `src/` at the commit this document was written against, the squash merge of schuyler/atgeo-sdk-js#43 (`89539c49e014deb49464b278af2b7bc6f9df09fc`). Where this document and the source disagree, the source wins and this document has a bug. The fixtures in `fixtures/` and the lexicons in `test/lexicon/` are the executable half of this contract; see [Conformance](#conformance).
 
 "Must" marks behaviour a port has to reproduce. "Should" marks the reference behaviour where a port may do better, as long as the observable results stay the same. "May" marks a deliberate freedom.
 
