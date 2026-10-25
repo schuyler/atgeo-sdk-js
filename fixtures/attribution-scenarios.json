@@ -854,7 +854,7 @@
   },
   {
     "name": "a collection-filtered search whose tile lacks the pair",
-    "description": "A search of openstreetmap.org/way passes the filter on its origin prefix, but the tile lists only node, so the hit's collection is null.",
+    "description": "A search of openstreetmap.org/way passes the filter on its origin prefix, but the tile lists only node, so the hit's collection is null. A record with no origin whose uri looks like a way URN is not in the collection, so it is dropped by the filter (the filter tests value.origin only).",
     "dataset": "openstreetmap.org",
     "collection": "way",
     "region": {
@@ -876,6 +876,20 @@
                 "$type": "org.atgeo.place",
                 "origin": "urn:atgeo:openstreetmap.org:way:2",
                 "name": "W",
+                "locations": [
+                  {
+                    "$type": "community.lexicon.location.geo",
+                    "latitude": "37.770000",
+                    "longitude": "-122.415000"
+                  }
+                ]
+              }
+            },
+            {
+              "uri": "urn:atgeo:openstreetmap.org:way:77",
+              "value": {
+                "$type": "org.atgeo.place",
+                "name": "Keyed by uri",
                 "locations": [
                   {
                     "$type": "community.lexicon.location.geo",
