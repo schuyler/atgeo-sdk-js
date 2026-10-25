@@ -712,6 +712,10 @@
           "collection": "c",
           "release": 5,
           "licenses": "l"
+        },
+        {
+          "dataset": "a",
+          "collection": "z"
         }
       ]
     },
@@ -731,6 +735,10 @@
         {
           "dataset": "d",
           "collection": "c"
+        },
+        {
+          "dataset": "a",
+          "collection": "z"
         }
       ]
     }

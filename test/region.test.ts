@@ -275,6 +275,9 @@ describe("invalid regions", () => {
     const { server, client } = setup();
     expect(() =>
       client.searchPlaces({ ...OVERTURE, region: { bbox: [0, 0, 1, 1] }, sort: "similarity" }),
+    ).toThrow(TypeError);
+    expect(() =>
+      client.searchPlaces({ ...OVERTURE, region: { bbox: [0, 0, 1, 1] }, sort: "similarity" }),
     ).toThrow(/similarity/);
     expect(server.requests).toHaveLength(0);
   });

@@ -95,7 +95,7 @@
   },
   {
     "name": "deduped by pair, lowest tile URL wins",
-    "description": "Tiles are listed b then a and both carry the same pair with different releases; the lowest URL (a) wins. Entries only in b are still included.",
+    "description": "Tiles are listed b then a and both carry the same pair with different releases; the lowest URL (a) wins. Entries only in b are still included. The losing b entry also has a licenses field the winner lacks; it must not be filled in.",
     "dataset": "x.org",
     "region": {
       "bbox": [
@@ -115,7 +115,10 @@
             {
               "dataset": "x.org",
               "collection": "c",
-              "release": "from-b"
+              "release": "from-b",
+              "licenses": [
+                "l-b-only"
+              ]
             },
             {
               "dataset": "y.org",
@@ -738,7 +741,7 @@
   },
   {
     "name": "a duplicate pair within one tile: the first wins",
-    "description": "Two entries for one pair differ in release; the first in served order is kept.",
+    "description": "Two entries for one pair differ in release; the first in served order is kept. The second entry also has a licenses field the first lacks; it must not be filled in.",
     "dataset": "x.org",
     "region": {
       "bbox": [
@@ -763,7 +766,10 @@
             {
               "dataset": "x.org",
               "collection": "c",
-              "release": "2"
+              "release": "2",
+              "licenses": [
+                "l-second-only"
+              ]
             }
           ]
         }
