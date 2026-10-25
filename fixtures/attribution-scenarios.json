@@ -409,7 +409,7 @@
   },
   {
     "name": "the collection is a prefix match, not a split",
-    "description": "Dataset-only search. way must not match wayside, an origin with no entry gets null, and a uri-keyed record with no origin gets null even though its uri looks like a way URN.",
+    "description": "Dataset-only search. way must not match wayside, an origin with no entry gets null, and a uri-keyed record with no origin gets null even though its uri looks like a way URN. An origin that merely contains a way prefix after another prefix gets null (startsWith, not includes).",
     "dataset": "openstreetmap.org",
     "region": {
       "bbox": [
@@ -480,6 +480,20 @@
                   }
                 ]
               }
+            },
+            {
+              "value": {
+                "$type": "org.atgeo.place",
+                "origin": "urn:atgeo:example.org:urn:atgeo:openstreetmap.org:way:5",
+                "name": "Embedded",
+                "locations": [
+                  {
+                    "$type": "community.lexicon.location.geo",
+                    "latitude": "37.770000",
+                    "longitude": "-122.415000"
+                  }
+                ]
+              }
             }
           ],
           "attribution": [
@@ -539,6 +553,10 @@
         },
         {
           "origin": "urn:atgeo:openstreetmap.org:way:77",
+          "collection": null
+        },
+        {
+          "origin": "urn:atgeo:example.org:urn:atgeo:openstreetmap.org:way:5",
           "collection": null
         }
       ]
@@ -854,7 +872,7 @@
   },
   {
     "name": "a collection-filtered search whose tile lacks the pair",
-    "description": "A search of openstreetmap.org/way passes the filter on its origin prefix, but the tile lists only node, so the hit's collection is null. A record with no origin whose uri looks like a way URN is not in the collection, so it is dropped by the filter (the filter tests value.origin only).",
+    "description": "A search of openstreetmap.org/way passes the filter on its origin prefix, but the tile lists only node, so the hit's collection is null. A record with no origin whose uri looks like a way URN is not in the collection, so it is dropped by the filter (the filter tests value.origin only). An origin that contains but does not start with the way prefix is dropped by the filter.",
     "dataset": "openstreetmap.org",
     "collection": "way",
     "region": {
@@ -890,6 +908,20 @@
               "value": {
                 "$type": "org.atgeo.place",
                 "name": "Keyed by uri",
+                "locations": [
+                  {
+                    "$type": "community.lexicon.location.geo",
+                    "latitude": "37.770000",
+                    "longitude": "-122.415000"
+                  }
+                ]
+              }
+            },
+            {
+              "value": {
+                "$type": "org.atgeo.place",
+                "origin": "urn:atgeo:example.org:urn:atgeo:openstreetmap.org:way:5",
+                "name": "Embedded",
                 "locations": [
                   {
                     "$type": "community.lexicon.location.geo",

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AtgeoClient, BodyTooLargeError } from "../src/index.js";
-import { OVERTURE, DEFAULT_SERVER, place, point, record } from "./helpers/fakeServer.js";
+import { DEFAULT_SERVER, OVERTURE, place, point, record } from "./helpers/fakeServer.js";
 
 const region = { bbox: [-122.42, 37.77, -122.41, 37.78] as [number, number, number, number] };
 const TILE = "https://tiles.example/a.json";

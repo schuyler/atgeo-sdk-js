@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { gzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AtgeoClient, BodyTooLargeError, type TileFailure } from "../src/index.js";
-import { OVERTURE, DEFAULT_SERVER, place, point, record } from "./helpers/fakeServer.js";
+import { DEFAULT_SERVER, OVERTURE, place, point, record } from "./helpers/fakeServer.js";
 
 // The parts of the limits that need Node: a real server (undici's fetch, real gzip) and listener counts.
 // The rest, which needs only fetch, is in limits.test.ts and also runs in the browser.

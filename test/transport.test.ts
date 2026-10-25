@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TileCache } from "../src/cache.js";
 import { AtgeoClient, AtgeoError, DecodingError } from "../src/index.js";
-import { OVERTURE, DEFAULT_SERVER, fakeServer, overture, place, placeOrigin, point, record } from "./helpers/fakeServer.js";
+import { DEFAULT_SERVER, OVERTURE, fakeServer, overture, place, placeOrigin, point, record } from "./helpers/fakeServer.js";
 
 const url = (n: string) => `https://tiles.example/${n}.json`;
 const region = { bbox: [-122.42, 37.77, -122.41, 37.78] as [number, number, number, number] };
