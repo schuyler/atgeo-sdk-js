@@ -87,3 +87,41 @@ describe("attribution scenarios, tiles arriving in reverse URL order", () => {
     expect(got.map(pairKey).sort()).toEqual(s.expect.hits.map(pairKey).sort());
   });
 });
+
+// No fixture scenario has hits from two tiles whose attributions differ, so these pin that each hit
+// is matched against its own tile's attribution (contract section 8), with and without text.
+describe("a hit's collection comes from its own tile", () => {
+  const place = (origin: string, name: string) => ({
+    value: {
+      $type: "org.atgeo.place",
+      origin,
+      name,
+      locations: [{ $type: "community.lexicon.location.geo", latitude: "37.770000", longitude: "-122.415000" }],
+    },
+  });
+  const s: Scenario = {
+    name: "two tiles, two collections",
+    description: "",
+    dataset: "d",
+    region: { bbox: [-122.42, 37.76, -122.41, 37.78] },
+    tiles: [
+      { url: `${SERVER}/tiles/a.json`, body: { records: [place("urn:atgeo:d:c1:1", "Zzzzqqq")], attribution: [{ dataset: "d", collection: "c1" }] } },
+      { url: `${SERVER}/tiles/b.json`, body: { records: [place("urn:atgeo:d:c2:2", "Cafe")], attribution: [{ dataset: "d", collection: "c2" }] } },
+    ],
+    expect: { attribution: [], hits: [] },
+  };
+
+  it("gives each hit the collection of its own tile, not of the first tile used", async () => {
+    const result = await new AtgeoClient({ fetch: serverFor(s) }).searchPlaces({ dataset: "d", region: s.region });
+    const byOrigin = Object.fromEntries(result.places.map((h) => [h.origin, h.collection]));
+    expect(byOrigin).toStrictEqual({
+      "urn:atgeo:d:c1:1": { dataset: "d", collection: "c1" },
+      "urn:atgeo:d:c2:2": { dataset: "d", collection: "c2" },
+    });
+  });
+
+  it("keeps each surviving hit with its own tile when the text drops another record", async () => {
+    const result = await new AtgeoClient({ fetch: serverFor(s) }).searchPlaces({ dataset: "d", region: s.region, text: "Cafe" });
+    expect(result.places.map((h) => [h.origin, h.collection])).toStrictEqual([["urn:atgeo:d:c2:2", { dataset: "d", collection: "c2" }]]);
+  });
+});
