@@ -134,7 +134,7 @@ interface SearchHit {
 }
 ```
 
-When `text` is given, places scoring below 0.6 are dropped. The rest rank in two tiers, whatever the sort mode: a place whose name has every word of the query as the start of one of its words (apostrophes ignored, other punctuation splitting words, so `mcdonalds` finds `McDonald's` and `st louis` finds `St. Louis`) comes before one that matches only fuzzily. Within a tier, the sort mode decides.
+When `text` is given, places scoring below 0.6 are dropped. The rest rank in two tiers, whatever the sort mode: a place with a name (its own or a variant) that has every word of the query as the start of one of its words (apostrophes ignored, other punctuation splitting words, so `mcdonalds` finds `McDonald's` and `st louis` finds `St. Louis`) comes before one that matches only fuzzily. Within a tier, the sort mode decides.
 
 Sort modes:
 
@@ -171,7 +171,7 @@ When a region is too large for the server's regular tile budget and the collecti
 
 `overview` and `complete` are independent. `complete` says whether every tile the server named loaded; `overview` says whether the server named a thin set of tiles to begin with. An overview search whose tiles all loaded is `overview: true, complete: true`. If either half of an antimeridian-crossing search gets an overview answer, `overview` is `true`.
 
-With `text`, an overview answer keeps only the places whose words match the query exactly (tier 1): fuzzy matches are dropped, since the coarse set can't hold the place you meant. If `overview` is `true`, don't treat the results as exhaustive. Show something like "zoom in for more" and search a smaller region to get the full set. Collections without an overview always give `overview: false`. The SDK reads the flag from the `getTiles` response only; it doesn't guess from tile URLs.
+With `text`, an overview answer keeps only the places that match every query word (tier 1): fuzzy matches are dropped, since the coarse set can't hold the place you meant. If `overview` is `true`, don't treat the results as exhaustive. Show something like "zoom in for more" and search a smaller region to get the full set. Collections without an overview always give `overview: false`. The SDK reads the flag from the `getTiles` response only; it doesn't guess from tile URLs.
 
 #### Places that appear in more than one tile
 
@@ -249,7 +249,7 @@ There are more scripts in `package.json`, including a browser smoke test and an 
 - `lenient-readers.json` is a response body for each reader of the wire protocol (`getTiles`, a tile payload, `getPlace`, `describeService`, `describeTileset`) with what the reader keeps of it, or that it throws `DecodingError`. It pins what a port does with a missing, wrong-typed or unusable field. A tile payload's result is `{ records, attribution? }`, not a bare list.
 - `attribution-scenarios.json` is a set of tiles served by a raw server, with the `attribution` and each hit's `collection` a search over them must give.
 - `match-tiers.json` is a query, a place and the match tier (1 or 2) a port must give it.
-- `ranking-scenarios.json` describes regions, text, and records, and asserts which places land in the top K. It checks membership, not exact order, since the weights are likely to change. Each scenario names the `dataset` and `collection` it searches. Each record is `{ value, importance }`: `value` is an `org.atgeo.place` with an `origin`, and `importance` is an integer, as on the wire. The expectations name places by `origin`.
+- `ranking-scenarios.json` describes regions, text, and records, and asserts which places land in the top K. It checks membership, not exact order, since the weights are likely to change. Each scenario names the `dataset` and `collection` it searches, and `"overview": true` makes the fake server answer `getTiles` with an overview. Each record is `{ value, importance }`: `value` is an `org.atgeo.place` with an `origin`, and `importance` is an integer, as on the wire. The expectations name places by `origin`.
 
 `docs/port-contract.md` is the language-neutral statement of what this client does, written for ports; `docs/swift-sdk-spec.md` and `docs/kotlin-sdk-spec.md` are the specifications for the Swift and Kotlin ports, `docs/python-sdk-spec.md` for the Python port, and `docs/rust-sdk-spec.md` the proposed one for Rust.
 

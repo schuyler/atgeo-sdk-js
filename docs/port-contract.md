@@ -56,7 +56,7 @@ Each contract concept is raised as these types. A port must use its column; a ca
 |---|---|---|---|---|---|
 | Server non-2xx | `AtgeoError` | `AtgeoError` | `AtgeoException` | `Error::Atgeo(AtgeoError)` | `AtgeoError` |
 | Bad argument | `TypeError` | `AtgeoArgumentError` | `IllegalArgumentException` | `Error::InvalidArgument(ArgumentError)` | `ValueError`; `TypeError` for a missing or non-string `dataset` or a region of the wrong type |
-| Unusable 2xx body | `DecodingError` for no usable body; `SyntaxError` for a body that is not JSON | `DecodingError` (Foundation's, `.dataCorrupted`) | `AtgeoDecodingException` (an `IOException`) | `Error::Decoding(DecodingError)` | `AtgeoDecodingError` |
+| Unusable 2xx body | `DecodingError` for no usable body; `SyntaxError` for a body that is not JSON | `DecodingError` (the standard library's, `.dataCorrupted`) | `AtgeoDecodingException` (an `IOException`) | `Error::Decoding(DecodingError)` | `AtgeoDecodingError` |
 | Network | whatever `fetch` raised, unwrapped; `BodyTooLargeError` or a `TimeoutError` `DOMException` from the transport's limits | the transport's error, `URLError` by default | `IOException`; `SocketTimeoutException` for a timeout | `Error::Transport(BoxError)` | whatever the transport raised; `BodyError` and `RedirectError` (both `OSError`) from the default transports |
 | Cancellation | the signal's reason | `CancellationError` or `URLError(.cancelled)` | `CancellationException` | none: dropping the future cancels the call | `asyncio.CancelledError` (async client); `KeyboardInterrupt` (blocking client) |
 
