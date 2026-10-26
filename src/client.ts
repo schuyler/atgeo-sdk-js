@@ -151,7 +151,13 @@ export class AtgeoClient {
     const cached = this.tiles.find(origin);
     if (cached) {
       const { record, attribution } = cached;
-      return { origin, place: record.value, importance: record.importance ?? null, attribution: copyAttribution(attribution ?? []), ...describe(record.value, locate(record.value)) };
+      return {
+        origin,
+        place: record.value,
+        importance: record.importance ?? null,
+        attribution: copyAttribution(attribution ?? []),
+        ...describe(record.value, locate(record.value)),
+      };
     }
     const { value, importance, attribution } = readPlace(
       await this.transport.xrpc("org.atgeo.getPlace", { uri: origin }, options.signal),
