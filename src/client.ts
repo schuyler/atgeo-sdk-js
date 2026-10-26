@@ -1,6 +1,6 @@
 import { TileCache, TtlCache, type TileRecord } from "./cache.js";
 import { collectionPrefix, copyAttribution, inCollection, mergeAttribution } from "./attribution.js";
-import { dedupe, inRegion, locate } from "./merge.js";
+import { dedupe, describe, inRegion, locate } from "./merge.js";
 import { normalize } from "./normalize.js";
 import { rank } from "./rank.js";
 import { queryBboxes, validateRegion } from "./region.js";
@@ -101,7 +101,7 @@ export class AtgeoClient {
       .filter(({ record }) => prefix === undefined || inCollection(record.value, prefix))
       .filter(({ record }) => inRegion(locate(record.value), region));
     return {
-      places: rank(items, region, query, sort),
+      places: rank(items, region, query, sort, overview),
       complete: failed === 0,
       overview,
       tiles: { fetched: loaded.size, failed },
@@ -151,12 +151,12 @@ export class AtgeoClient {
     const cached = this.tiles.find(origin);
     if (cached) {
       const { record, attribution } = cached;
-      return { origin, place: record.value, importance: record.importance ?? null, attribution: copyAttribution(attribution ?? []) };
+      return { origin, place: record.value, importance: record.importance ?? null, attribution: copyAttribution(attribution ?? []), ...describe(record.value, locate(record.value)) };
     }
     const { value, importance, attribution } = readPlace(
       await this.transport.xrpc("org.atgeo.getPlace", { uri: origin }, options.signal),
     );
-    return { origin, place: value, importance: importance ?? null, attribution };
+    return { origin, place: value, importance: importance ?? null, attribution, ...describe(value, locate(value)) };
   }
 
   async describeService(options: { signal?: AbortSignal } = {}): Promise<ServiceDescription> {

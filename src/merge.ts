@@ -6,12 +6,12 @@ import {
   lonSegmentsOverlap,
   type LonSegment,
 } from "./region.js";
-import type { PlaceValue, Region } from "./types.js";
+import type { PlaceLocation, PlaceValue, Region } from "./types.js";
 import { isObject } from "./wire.js";
 
 export interface Locations {
   point: { lat: number; lon: number } | null;
-  bbox: { south: number; north: number; segments: LonSegment[] } | null;
+  bbox: { south: number; north: number; west: number; east: number; segments: LonSegment[] } | null;
 }
 
 export function locate(value: PlaceValue): Locations {
@@ -28,11 +28,21 @@ export function locate(value: PlaceValue): Locations {
     } else if (loc.$type === "community.lexicon.location.bbox" && !result.bbox) {
       const [south, north, west, east] = [num("south"), num("north"), num("west"), num("east")];
       if ([south, north, west, east].every(Number.isFinite)) {
-        result.bbox = { south, north, segments: lonSegments(west, east) };
+        result.bbox = { south, north, west, east, segments: lonSegments(west, east) };
       }
     }
   }
   return result;
+}
+
+// The name and location accessors of a hit or place record (contract section 8). The bbox keeps west and
+// east as given, so west > east marks a box across the antimeridian.
+export function describe(value: PlaceValue, { point, bbox }: Locations): { name: string | null; location: PlaceLocation } {
+  const location: PlaceLocation = Object.freeze({
+    point: point && Object.freeze({ lat: point.lat, lon: point.lon }),
+    bbox: bbox && Object.freeze({ south: bbox.south, west: bbox.west, north: bbox.north, east: bbox.east }),
+  });
+  return { name: typeof value.name === "string" ? value.name : null, location };
 }
 
 export function recordKey(r: TileRecord): string | null {
