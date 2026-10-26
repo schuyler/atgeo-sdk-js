@@ -50,6 +50,8 @@ describe("getPlace", () => {
     expect(await client.getPlace({ origin })).toEqual({
       origin,
       place: value,
+      name: "Ferry Building",
+      location: { point: { lat: 37.7955, lon: -122.3937 }, bbox: null },
       importance: 80,
       attribution: [{ dataset: "overturemaps.org", collection: "place" }],
     });
@@ -90,6 +92,8 @@ describe("getPlace", () => {
     expect(await client.getPlace({ origin: places[0].origin as string })).toEqual({
       origin: "https://example.org/r/u",
       place: uriOnly,
+      name: "By uri",
+      location: { point: { lat: 37.775, lon: -122.415 }, bbox: null },
       importance: 4,
       attribution: [{ dataset: "overturemaps.org", collection: "place" }],
     });

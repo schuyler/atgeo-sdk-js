@@ -12,6 +12,7 @@ interface Scenario {
   region: Region;
   text?: string;
   sort?: SortMode;
+  overview?: boolean;
   records: { value: PlaceValue; importance: number }[];
   expect: { top: { k: number; origins: string[] }[]; absent?: string[] };
 }
@@ -21,6 +22,7 @@ const scenarios = fixture as unknown as Scenario[];
 describe("ranking scenarios", () => {
   it.each(scenarios)("$name", async (s) => {
     const { fetch } = fakeServer({
+      ...(s.overview ? { tilesFor: () => ({ tiles: ["https://places.atgeo.org/tiles/t0.json"], overview: true }) } : {}),
       tilesets: [
         overture([
           { url: "https://places.atgeo.org/tiles/t0.json", records: s.records.map((r) => record(r.value, r.importance)) },
