@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import fixture from "../fixtures/match-tiers.json" with { type: "json" };
+import loneSurrogates from "../fixtures/match-tiers-lone-surrogates.json" with { type: "json" };
 import { normalize } from "../src/normalize.js";
 import { matchTier } from "../src/rank.js";
 import type { PlaceValue } from "../src/index.js";
@@ -11,7 +12,7 @@ interface Case {
   tier: 1 | 2;
 }
 
-const cases = fixture as unknown as Case[];
+const cases = [...(fixture as unknown as Case[]), ...(loneSurrogates as unknown as Case[])];
 
 describe("match tiers", () => {
   it.each(cases)("$name", ({ query, place, tier }) => {

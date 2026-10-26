@@ -382,6 +382,8 @@ Prefix means a prefix in UTF-16 code units, as in Jaro-Winkler. A port must not 
 
 `fixtures/match-tiers.json` must pass exactly. Each case is `{ name, query, place: { name, variants? }, tier }`, with raw strings. A runner normalizes `query` (section 7), builds the place value from `place` (`variants` is a list of `{ name }`), calls the port's internal tier function on the normalized query and that place, and compares the result with `tier`.
 
+`fixtures/match-tiers-lone-surrogates.json` has the same shape. Its strings hold lone surrogates, which is where a code-point prefix and a code-unit prefix disagree: a high surrogate on its own is a code-unit prefix of the astral character it would pair into. A port whose string type can hold a lone surrogate (JavaScript, Python, Kotlin) must pass it. A port whose string type cannot (Rust, Swift) vendors it, does not run it, and says so in its `CONFORMANCE.md`; such a port turns a lone surrogate escape into U+FFFD when it reads a body, so the case cannot reach its tier function.
+
 ## 8. Ranking
 
 For each surviving record build a hit:
@@ -474,6 +476,7 @@ A port vendors, at a pinned atgeo-sdk-js commit recorded in a `SOURCE` file:
 - `fixtures/jaro-winkler.json` (33 cases, within 5e-7),
 - `fixtures/ranking-scenarios.json` (19 scenarios, membership). Each scenario names the `dataset` and `collection` it is a search of, and the runner passes them (section 8).
 - `fixtures/match-tiers.json` (36 cases, exact match): the tier of section 7 for a query and a place, described there.
+- `fixtures/match-tiers-lone-surrogates.json` (4 cases, exact match, run only where a string can hold a lone surrogate): the same, for queries and names with lone surrogates.
 - `fixtures/lenient-readers.json` (104 cases, exact match): a response body for each of the five readers of section 1 (`getTiles`, a tile payload, `getPlace`, `describeService`, `describeTileset`) and either what a port's reader keeps of it or `decodingError`. A missing key is an absent field. The expected values are in JSON terms, so a port maps them onto its own types. The `tilePayload` result is an object, `{ "records": [...], "attribution": [...] }`, where `attribution` is a missing key when the reader leaves it absent (section 1). Earlier revisions of this fixture gave a bare array of records, so a port's runner has one mapping function to change. The `getPlace` bodies and results use `value` and `attribution` (every non-error result has an `attribution` list), and the describe cases cover `maxTiles` and `overview`.
 - `fixtures/attribution-scenarios.json` (12 scenarios, exact match): `SearchResult.attribution` and `SearchHit.collection` (sections 4.10 and 8), described below.
 - `test/lexicon/*.json`, for a fake server that validates its own traffic.
