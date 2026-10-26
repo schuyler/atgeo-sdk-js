@@ -1,5 +1,12 @@
 export type PlaceValue = { [key: string]: unknown };
 
+// Where a place is, as its first usable geo point and first usable bbox (contract section 5), in the lexicon's
+// field names. A box with west > east crosses the antimeridian. Frozen, with its point and bbox.
+export type PlaceLocation = {
+  point: { lat: number; lon: number } | null;
+  bbox: { south: number; west: number; north: number; east: number } | null;
+};
+
 export interface PlaceRecord {
   origin: string;
   // The record value as served. It is frozen (shallowly) and may be the very object the tile cache holds, so
@@ -12,6 +19,9 @@ export interface PlaceRecord {
   // The collections the place's data comes from, as served and in served order (duplicates included); an empty
   // list when the source has none. A copy: changing it, or an entry's `licenses`, changes nothing cached.
   attribution: Attribution[];
+  // The place's `name` when it is a string, else null.
+  name: string | null;
+  location: PlaceLocation;
 }
 
 export interface CollectionKey {
@@ -95,6 +105,9 @@ export interface SearchHit {
   importance: number | null;
   distance: number;
   score: number | null;
+  // The place's `name` when it is a string, else null.
+  name: string | null;
+  location: PlaceLocation;
 }
 
 export interface SearchResult {

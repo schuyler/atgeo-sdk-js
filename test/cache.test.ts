@@ -155,6 +155,8 @@ describe("getPlace cache scan", () => {
     expect(found).toEqual({
       origin: placeOrigin("a"),
       place: place("a", "Alpha", [point(37.772, -122.412)]),
+      name: "Alpha",
+      location: { point: { lat: 37.772, lon: -122.412 }, bbox: null },
       importance: 3,
       attribution: [{ dataset: "overturemaps.org", collection: "place" }],
     });
@@ -237,6 +239,8 @@ describe("getPlace cache scan", () => {
     expect(await client.getPlace({ origin: placeOrigin("x") })).toStrictEqual({
       origin: placeOrigin("x"),
       place: value,
+      name: "Plain",
+      location: { point: { lat: 37.775, lon: -122.415 }, bbox: null },
       importance: 3,
       attribution: [],
     });

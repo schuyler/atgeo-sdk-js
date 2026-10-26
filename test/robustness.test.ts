@@ -224,6 +224,8 @@ describe("getPlace body", () => {
     expect(await get({ uri: 5, value: { name: "X", extra: { n: [1] } }, importance: "high" })).toEqual({
       origin,
       place: { name: "X", extra: { n: [1] } },
+      name: "X",
+      location: { point: null, bbox: null },
       importance: null,
       attribution: [],
     });
@@ -232,7 +234,14 @@ describe("getPlace body", () => {
   it("succeeds on the new-shape body and returns its attribution as served", async () => {
     const attribution = [{ dataset: "d", collection: "c", licenses: ["l"] }];
     const body = { uri: origin, url: "https://x.example/p", importance: 3, value: { name: "X" }, attribution };
-    expect(await get(body)).toStrictEqual({ origin, place: { name: "X" }, importance: 3, attribution });
+    expect(await get(body)).toStrictEqual({
+      origin,
+      place: { name: "X" },
+      name: "X",
+      location: { point: null, bbox: null },
+      importance: 3,
+      attribution,
+    });
   });
 });
 

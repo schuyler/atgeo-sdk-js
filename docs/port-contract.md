@@ -50,6 +50,18 @@ A 2xx response whose body is not valid JSON, or decodes but has no usable body, 
 
 Network failures propagate as the port's HTTP layer's own error type, unwrapped. The transport follows at least same-scheme redirects (the JVM's `HttpURLConnection` does not cross from `http` to `https`), and the response's content type is not checked.
 
+Each contract concept is raised as these types. A port must use its column; a caller catches by type, not by message.
+
+| Concept | JS | Swift | Kotlin | Rust | Python |
+|---|---|---|---|---|---|
+| Server non-2xx | `AtgeoError` | `AtgeoError` | `AtgeoException` | `Error::Atgeo(AtgeoError)` | `AtgeoError` |
+| Bad argument | `TypeError` | `AtgeoArgumentError` | `IllegalArgumentException` | `Error::InvalidArgument(ArgumentError)` | `ValueError`; `TypeError` for a missing or non-string `dataset` or a region of the wrong type |
+| Unusable 2xx body | `DecodingError` for no usable body; `SyntaxError` for a body that is not JSON | `DecodingError` (the standard library's, `.dataCorrupted`) | `AtgeoDecodingException` (an `IOException`) | `Error::Decoding(DecodingError)` | `AtgeoDecodingError` |
+| Network | whatever `fetch` raised, unwrapped; `BodyTooLargeError` or a `TimeoutError` `DOMException` from the transport's limits | the transport's error, `URLError` by default | `IOException`; `SocketTimeoutException` for a timeout | `Error::Transport(BoxError)` | whatever the transport raised; `BodyError` and `RedirectError` (both `OSError`) from the default transports |
+| Cancellation | the signal's reason | `CancellationError` or `URLError(.cancelled)` | `CancellationException` | none: dropping the future cancels the call | `asyncio.CancelledError` (async client); `KeyboardInterrupt` (blocking client) |
+
+A new port fills in a column of this table, with its own types, before it ships, and says in its spec where a cell has more than one type.
+
 ## 2. Client construction
 
 Options, all optional:
@@ -236,7 +248,7 @@ Each entry is surfaced with the fields section 1 kept. The app may change what i
 `locate(value)` returns `{ point?, bbox? }` from `value.locations`, which must be an array for anything to be found:
 
 - `point` is the first element with `$type == "community.lexicon.location.geo"` whose `latitude` and `longitude` parse to finite numbers.
-- `bbox` is the first element with `$type == "community.lexicon.location.bbox"` whose `south`, `north`, `east`, `west` all parse to finite numbers; it is stored as `{ south, north, segments: lonSegments(west, east) }`, so a box with `west > east` crosses the antimeridian.
+- `bbox` is the first element with `$type == "community.lexicon.location.bbox"` whose `south`, `north`, `east`, `west` all parse to finite numbers; it is stored as `{ south, north, west, east, segments: lonSegments(west, east) }`, so a box with `west > east` crosses the antimeridian. The parsed `west` and `east` are kept, as parsed, so that a hit's `location.bbox` can report the box in the lexicon's names (section 8).
 
 Both may be present. Elements with other `$type`s, and elements whose numbers don't parse, are skipped (a non-parsing geo element does not stop a later geo element from being the point). An element that is not a JSON object is skipped too, `null` included. Coordinates are not range-checked: a latitude of 95 or a longitude of 200 is kept as parsed and the geometry of section 6 is applied to it as is.
 
@@ -342,6 +354,34 @@ A record whose score is below `0.6` is dropped (exactly 0.6 is kept). Without te
 
 Examples with the reference: for query `Starbux`, `Starbucks` scores `0.9048`, `Star Bakery` `0.8740`, `Stardust Bar` `0.8530`, and `Home Depot` is dropped. For `Munich`, a place named `München` with variant `Munich` scores `1`.
 
+### Match tier
+
+A record that cleared the threshold has a match tier: 1 if the text matches one of its names word for word (each query word begins a word of that name), 2 if it matches only fuzzily. Ranking sorts by tier first (section 8). The tier is computed only for records that scored at least 0.6, and only when there is text.
+
+```
+fold(s):
+  remove U+0027, U+2019 and U+02BC from s
+  replace each run of scalars whose general category is P* (Pc Pd Ps Pe Pi Pf Po) with one U+0020
+  split on U+0020 and drop the empty strings
+
+queryTokens = concatenation of fold(w) for w in the first 12 space-separated words of the normalized query
+
+tier(query, value):
+  if queryTokens is empty: 1
+  for each name in names (the list textScore uses):
+    nameTokens = fold(name)
+    if every q in queryTokens is a prefix of some n in nameTokens: return 1
+  return 2
+```
+
+Apostrophes are removed, not split on, so `mcdonalds` matches `McDonald's`. Other punctuation splits, so `st louis` matches `St. Louis`, `saint germain` matches `Saint-Germain`, and `at&t` folds to `at t` on both sides. A symbol (general category S*, such as `+` or `$`) is not punctuation and does not split. The same fold applies to the query and to every name.
+
+A word that folds to nothing still uses its slot among the twelve. A query whose tokens all fold away (`&`) has no tokens, so every hit is tier 1. All tokens must prefix words of one name; tokens may not be spread over a name and a variant.
+
+Prefix means a prefix in UTF-16 code units, as in Jaro-Winkler. A port must not use a grapheme-wise `hasPrefix` (Swift's `String.hasPrefix`): the query `क` is a prefix of the name `कि` (U+0915 U+093F, where U+093F is a spacing mark that normalization keeps), and the fixture pins that.
+
+`fixtures/match-tiers.json` must pass exactly. Each case is `{ name, query, place: { name, variants? }, tier }`, with raw strings. A runner normalizes `query` (section 7), builds the place value from `place` (`variants` is a list of `{ name }`), calls the port's internal tier function on the normalized query and that place, and compares the result with `tier`.
+
 ## 8. Ranking
 
 For each surviving record build a hit:
@@ -354,11 +394,16 @@ For each surviving record build a hit:
 | `importance` | the record's `importance`, or null |
 | `distance` | `distanceTo(locate(value), centre)` in metres; never null here, since the region filter already required a location |
 | `score` | `textScore`, or null without text |
+| `name` | `value.name` when that is a string, else null |
+| `location` | `{ point, bbox }` as section 5 reads it, in the lexicon's field names: `point` is `{ lat, lon }` or null, `bbox` is `{ south, west, north, east }` or null. A box with `west > east` is kept as it is read and crosses the antimeridian. |
 
-Internally each hit also carries `specificity`: 0 for a hit with a point or no bbox, else the box's relative spherical area `(sin north - sin south) · Σ(hi - lo)` over its segments, in radians. It is not part of the result.
+Before the hits are sorted, with text and a result `overview` of true (4.2: true if either half's list is an overview), every hit with tier 2 is removed. This holds in every sort mode. The overview answer is the OR across tile lists, so in an antimeridian-split search where either half is an overview, fuzzy hits are dropped from both halves. Without text, or without `overview`, nothing is removed.
+
+Internally each hit also carries `specificity`: 0 for a hit with a point or no bbox, else the box's relative spherical area `(sin north - sin south) · Σ(hi - lo)` over its segments, in radians. It also carries `tier`: 1 or 2 with text, null without (section 7). Neither is part of the result.
 
 Comparators, each returning negative when `a` sorts first:
 
+- `byTier`: `a.tier - b.tier`, where null ties with null. Exact matches first.
 - `byScore`: `round3(b.score ?? 0) - round3(a.score ?? 0)`, with `round3(x) = round(x * 1000) / 1000`, round half away from zero (scores are non-negative). Best first; scores that differ only past the third decimal tie.
 - `byImportance`: `(b.importance ?? 0) - (a.importance ?? 0)`. Larger first. A null importance sorts as 0: above negatives, tied with 0. Importance is comparable across one producer's tilesets for one dataset (section 4.1), which makes this comparator sound for a dataset-only search.
 - `byDistance`: `a.distance - b.distance`. Nearest first.
@@ -369,15 +414,17 @@ Sort modes:
 
 | Mode | Order |
 |---|---|
-| `fused` (default) | score, importance, distance, origin |
-| `distance` | distance, specificity, importance, score, origin |
-| `similarity` | score, distance, origin |
+| `fused` (default) | tier, score, importance, distance, origin |
+| `distance` | tier, distance, specificity, importance, score, origin |
+| `similarity` | tier, score, distance, origin |
 
-`place` on a hit is the record's value, and the record is the one the tile cache holds (sections 4.5 to 4.9 pass it through), so it may be shared with the cache, with later searches and with `getPlace`. A port must either hand the app an immutable view of it or document that the app must not change it; the reference freezes it (section 9).
+Tier comes first in every mode: exact matches nearest-first, then fuzzy matches nearest-first, in `distance`. Without text every tier is null, so the order without text is unchanged.
+
+`place` on a hit is the record's value, and the record is the one the tile cache holds (sections 4.5 to 4.9 pass it through), so it may be shared with the cache, with later searches and with `getPlace`. A port must either hand the app an immutable view of it or document that the app must not change it; the reference freezes it (section 9). The same holds for `location`: a port that hands out mutable values freezes or copies it, with its `point` and `bbox`, as for `place`. The reference freezes all three.
 
 The sort must be stable: hits that tie on every comparator (only possible when both lack an origin, since dedupe leaves one hit per origin) keep their order from section 4.5. A port that cannot rely on its library sort being stable must add the input index as a final tie-break.
 
-`fixtures/ranking-scenarios.json` must pass: for each scenario, run the records through sections 4.6 to 4.9 as a search of the scenario's `dataset` and `collection` (no network) and check that each `expect.top[k].origins` set is a subset of the first `k` hits' origins and each `expect.absent` origin is not in the result at all. The fixture checks membership, not order.
+`fixtures/ranking-scenarios.json` must pass: for each scenario, run the records through sections 4.6 to 4.9 as a search of the scenario's `dataset` and `collection` (no network) and check that each `expect.top[k].origins` set is a subset of the first `k` hits' origins and each `expect.absent` origin is not in the result at all. The fixture checks membership, not order. A scenario may carry `"overview": true`, which the runner's fake server returns from `getTiles`, so that the overview drop is exercised.
 
 ## 9. The other calls
 
@@ -385,7 +432,7 @@ The SDK's `origin` is the wire's record key: the `uri` parameter of `getPlace`, 
 
 `place` in a `getPlace` answer may likewise be the cached record's own value, so the rule from section 8 applies: make it immutable or document it. The reference freezes the value once, shallowly, when it parses the tile or the `getPlace` response, so every place it hands out is frozen, whether it came from the cache or the network; nested values stay mutable and shared, and the README says so and gives the copy recipe. A port whose language has value or immutable types needs no such step.
 
-`getPlace(origin)`: search the tile cache for a record whose key (4.6) equals `origin`; if several cached tiles hold one, take the record from the lowest tile URL. The scan does not mark any tile recently used (section 10). On a hit return `{ origin, place: value, importance ?? null, attribution }` with no request, where `attribution` is the source tile's `attribution` as read (section 1), or empty when the tile has none (absent, or not an array). That tile is the lowest-URL one holding the record. On a miss call `getPlace` with `uri = origin` (no `describeService` first) and return `{ origin, place: value, importance ?? null, attribution }`, where `attribution` is the response's `attribution` as read (section 1). Neither is merged or sorted: it keeps served order, duplicates included. On both paths `attribution` is always a list, never absent or null. The returned `origin` is the caller's string, not the response's `uri`. For garganorn the two paths agree, since `getPlace` answers with the attribution of the place's tileset, which is the list every tile of that tileset carries.
+`getPlace(origin)`: search the tile cache for a record whose key (4.6) equals `origin`; if several cached tiles hold one, take the record from the lowest tile URL. The scan does not mark any tile recently used (section 10). On a hit return `{ origin, place: value, name, location, importance ?? null, attribution }` with no request, where `attribution` is the source tile's `attribution` as read (section 1), or empty when the tile has none (absent, or not an array). That tile is the lowest-URL one holding the record. On a miss call `getPlace` with `uri = origin` (no `describeService` first) and return `{ origin, place: value, name, location, importance ?? null, attribution }`, where `attribution` is the response's `attribution` as read (section 1). Neither is merged or sorted: it keeps served order, duplicates included. On both paths `name` and `location` are built from `value` as for a hit (section 8), and `attribution` is always a list, never absent or null. The returned `origin` is the caller's string, not the response's `uri`. For garganorn the two paths agree, since `getPlace` answers with the attribution of the place's tileset, which is the list every tile of that tileset carries.
 
 `attribution` in a `getPlace` answer, from the cache or the network, and in a search result (4.10) is the app's own. A port either hands out immutable values or copies them, so an app that changes an entry or its `licenses` list changes neither the cached tile nor a later search's or `getPlace`'s answer. The reference copies each entry and its `licenses` array per answer.
 
@@ -425,7 +472,8 @@ A port vendors, at a pinned atgeo-sdk-js commit recorded in a `SOURCE` file:
 
 - `fixtures/normalize.json` (41 cases, exact match),
 - `fixtures/jaro-winkler.json` (33 cases, within 5e-7),
-- `fixtures/ranking-scenarios.json` (12 scenarios, membership). Each scenario names the `dataset` and `collection` it is a search of, and the runner passes them (section 8).
+- `fixtures/ranking-scenarios.json` (19 scenarios, membership). Each scenario names the `dataset` and `collection` it is a search of, and the runner passes them (section 8).
+- `fixtures/match-tiers.json` (36 cases, exact match): the tier of section 7 for a query and a place, described there.
 - `fixtures/lenient-readers.json` (104 cases, exact match): a response body for each of the five readers of section 1 (`getTiles`, a tile payload, `getPlace`, `describeService`, `describeTileset`) and either what a port's reader keeps of it or `decodingError`. A missing key is an absent field. The expected values are in JSON terms, so a port maps them onto its own types. The `tilePayload` result is an object, `{ "records": [...], "attribution": [...] }`, where `attribution` is a missing key when the reader leaves it absent (section 1). Earlier revisions of this fixture gave a bare array of records, so a port's runner has one mapping function to change. The `getPlace` bodies and results use `value` and `attribution` (every non-error result has an `attribution` list), and the describe cases cover `maxTiles` and `overview`.
 - `fixtures/attribution-scenarios.json` (12 scenarios, exact match): `SearchResult.attribution` and `SearchHit.collection` (sections 4.10 and 8), described below.
 - `test/lexicon/*.json`, for a fake server that validates its own traffic.
@@ -475,6 +523,7 @@ It also reproduces the worked examples in sections 3 and 6, and ports the behavi
 - `transport.test.ts`: failed tiles (each `kind`, with its URL and status, in URL order), typed errors, URL construction.
 - `cache.test.ts`: warm regions, expiry, the `getPlace` cache scan, and the attribution a warm search and a cached `getPlace` return. It has no test of LRU eviction or the cache budget; section 10 is the specification for those.
 - `overview.test.ts`: the overview flag.
+- `matchTiers.test.ts` and `accessors.test.ts`: the match tier fixture, and `name` and `location` on hits and places (sections 7 to 9).
 - `frozenPlace.test.ts`: what an app can and can't change in a place or an attribution list it was handed (sections 8 and 9).
 - `privacy.test.ts`: section 12.
 
@@ -494,7 +543,6 @@ A port may:
 - time out a request in its transport: a timeout is a network failure, and inside a tile fetch a failed tile. The reference gives every request 30 seconds in all, covering the body (`requestTimeoutMs`), and raises a `TimeoutError` `DOMException`; the Kotlin port and Rust's reqwest transport time out a connection after 10 seconds and a stalled read after 30, Rust's ureq transport adds 120 seconds for the whole call, and the Python port's `Urllib3Transport` 120 seconds (`total_timeout`) plus up to one read timeout (the Python port's aiohttp transport has no total), and the Swift port keeps `URLSession`'s default 60-second request timeout, which restarts whenever data arrives. A caller's cancellation is never reported as a timeout: it surfaces as the cancellation error (section 11), and a timeout while the caller's signal is still live is the network failure.
 - cap the size of a response body in its transport, decoded size included: a larger body is a network failure, and inside a tile fetch a failed tile. Tile URLs come from the server and a small gzip body can decode to gigabytes. Every port's default transport caps at 32 MiB (the reference, Kotlin, Rust and Swift as `maxBodyBytes` / `max_body_bytes` / `defaultMaxBodyBytes`, Python as `DEFAULT_MAX_BODY_BYTES`); the largest tiles places.atgeo.org serves are about 2 MB. The reference reads the body as a stream and cancels it once the cap is passed. A response with no body stream is read whole and then checked.
 - log each failed tile through the platform's standard logging facility, with no new dependency, at its debug level and never above, carrying only the fields of the tile's `tileFailures` entry, and only for a search that returns a result. The result is the contract's channel for failures; a log is a convenience for a developer who turns it on, and a library that logged a failed tile at a higher level would flood an app that searches on every keystroke over a poor connection.
-- give a hit and a place record accessors that read the place for the app, such as its `name` when that is a string and the location section 5 reads, as long as the place itself is still surfaced as served.
 
 A port must not:
 

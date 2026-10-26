@@ -18,15 +18,15 @@ const { places, complete, attribution } = await atgeo.searchPlaces({
   text: "Starbux",
 });
 
-for (const { origin, place, collection, distance, score } of places) {
-  console.log(place.name, Math.round(distance), score?.toFixed(2), origin, collection?.collection);
+for (const { origin, name, collection, distance, score } of places) {
+  console.log(name, Math.round(distance), score?.toFixed(2), origin, collection?.collection);
 }
 
 // show this wherever you show the places
 console.log(attribution.map((a) => a.attribution ?? `${a.dataset}/${a.collection}`));
 ```
 
-Misspellings are fine; matching is fuzzy, and that finds the Starbucks around Philadelphia's City Hall. The public server at places.atgeo.org has a limited dataset for now, mostly the east coast, so a search elsewhere may come back empty. `attribution` is who you owe credit for the data; see [Attribution](#attribution). If `complete` is `false`, some tiles failed to load and the results are partial. If `overview` is `true`, the region was too big to search in full and you got only its most important places; see [Overview answers](#overview-answers).
+Misspellings are fine; matching is fuzzy (words that match exactly rank first), and that finds the Starbucks around Philadelphia's City Hall. The public server at places.atgeo.org has a limited dataset for now, mostly the east coast, so a search elsewhere may come back empty. `attribution` is who you owe credit for the data; see [Attribution](#attribution). If `complete` is `false`, some tiles failed to load and the results are partial. If `overview` is `true`, the region was too big to search in full and you got only its most important places; see [Overview answers](#overview-answers).
 
 ## Installation
 
@@ -125,6 +125,8 @@ interface Attribution {
 interface SearchHit {
   origin: string | null;               // the place's identity: place.origin, else the tile record's uri, else null
   collection: { dataset: string; collection: string } | null; // the collection the place came from, or null; see Attribution below
+  name: string | null;                 // place.name when it is a string, else null
+  location: PlaceLocation;             // where the place is: { point: { lat, lon } | null, bbox: { south, west, north, east } | null }; frozen. A bbox with west > east crosses the antimeridian
   place: { [key: string]: unknown };   // the record value, exactly as served; frozen and shared with the cache (see below)
   importance: number | null;           // the record's importance, an integer, comparable across one producer's tilesets of a dataset; null if it has none
   distance: number;                    // meters from the region's center (the circle's center, or the bbox's center) to the nearest point of the place; 0 if the place contains the center
@@ -132,17 +134,17 @@ interface SearchHit {
 }
 ```
 
-When `text` is given, places scoring below 0.6 are dropped.
+When `text` is given, places scoring below 0.6 are dropped. The rest rank in two tiers, whatever the sort mode: a place with a name (its own or a variant) that has every word of the query as the start of one of its words (apostrophes ignored, other punctuation splitting words, so `mcdonalds` finds `McDonald's` and `st louis` finds `St. Louis`) comes before one that matches only fuzzily. Within a tier, the sort mode decides.
 
 Sort modes:
 
-- `fused` orders by text similarity (best first), breaking near-ties by the hit's `importance`, then by distance. Without text, that means importance, then distance. This is the one you usually want.
-- `distance` orders nearest first, then smaller place first (so the most specific of the places containing the center leads), then by importance, then similarity. Text still filters out poor matches.
-- `similarity` orders by text similarity, then nearest first. It throws without `text`.
+- `fused` orders by tier, then text similarity (best first), breaking near-ties by the hit's `importance`, then by distance. Without text, that means importance, then distance. This is the one you usually want.
+- `distance` orders by tier, then nearest first, then smaller place first (so the most specific of the places containing the center leads), then by importance, then similarity. Text still filters out poor matches.
+- `similarity` orders by tier, then text similarity, then nearest first. It throws without `text`.
 
 Similarity is compared to three decimal places, so scores that differ only beyond that count as ties. Remaining ties break on `origin` (a hit with no `origin` sorts last), so ordering is deterministic.
 
-`place` is the gazetteer's value as served, every key and nested value unmodified. Importance lives on `hit.importance` and identity on `hit.origin`.
+`place` is the gazetteer's value as served, every key and nested value unmodified. Importance lives on `hit.importance`, identity on `hit.origin`, and the name and location the client reads are on `hit.name` and `hit.location`.
 
 **`place` is shared with the client's tile cache, so it is frozen.** The object in a hit is the one the cache holds: every later search over the same tile, and `getPlace` from the cache, returns it too. To keep one app's edits from corrupting what the next search sees, the client freezes each place once, when it parses the tile (and a `getPlace` answer from the network, for consistency). Assigning to `hit.place.name`, deleting a key, or defining a property throws a `TypeError` in strict mode (ES modules are strict) and silently does nothing in sloppy mode.
 
@@ -169,7 +171,7 @@ When a region is too large for the server's regular tile budget and the collecti
 
 `overview` and `complete` are independent. `complete` says whether every tile the server named loaded; `overview` says whether the server named a thin set of tiles to begin with. An overview search whose tiles all loaded is `overview: true, complete: true`. If either half of an antimeridian-crossing search gets an overview answer, `overview` is `true`.
 
-If `overview` is `true`, don't treat the results as exhaustive. Show something like "zoom in for more" and search a smaller region to get the full set. Collections without an overview always give `overview: false`. The SDK reads the flag from the `getTiles` response only; it doesn't guess from tile URLs.
+With `text`, an overview answer keeps only the places that match every query word (tier 1): fuzzy matches are dropped, since the coarse set can't hold the place you meant. If `overview` is `true`, don't treat the results as exhaustive. Show something like "zoom in for more" and search a smaller region to get the full set. Collections without an overview always give `overview: false`. The SDK reads the flag from the `getTiles` response only; it doesn't guess from tile URLs.
 
 #### Places that appear in more than one tile
 
@@ -181,7 +183,7 @@ The guarantee is that the result is deterministic for the server's answers and t
 
 ### `getPlace({ origin }): Promise<PlaceRecord>`
 
-Returns `{ origin, place, importance, attribution }`, where `place` is the value as served (frozen and shared with the cache, like `hit.place`), `importance` is a number or `null`, and `attribution` is a list of the same entries `result.attribution` holds, as served: in the server's order, duplicates and all, never undefined (empty if there are none). It's a copy. Pass the `origin` of a hit. If a cached tile holds the place, no request is made; otherwise the client asks the server (`org.atgeo.getPlace`) directly, with no discovery call first. A place with no origin is identified by its tile record's `uri`, which the cache can resolve; the server answers `PlaceNotFound` for a URI it doesn't serve, and `InvalidRequest` for a string that isn't a URI.
+Returns `{ origin, place, name, location, importance, attribution }`, where `name` and `location` are as on a hit, `place` is the value as served (frozen and shared with the cache, like `hit.place`), `importance` is a number or `null`, and `attribution` is a list of the same entries `result.attribution` holds, as served: in the server's order, duplicates and all, never undefined (empty if there are none). It's a copy. Pass the `origin` of a hit. If a cached tile holds the place, no request is made; otherwise the client asks the server (`org.atgeo.getPlace`) directly, with no discovery call first. A place with no origin is identified by its tile record's `uri`, which the cache can resolve; the server answers `PlaceNotFound` for a URI it doesn't serve, and `InvalidRequest` for a string that isn't a URI.
 
 A cache hit returns the copy, and the attribution, from the cached tile with the lowest URL, the same rule search uses; a network answer is the server's own copy. They agree when the copies are identical, which for garganorn they are.
 
@@ -246,7 +248,8 @@ There are more scripts in `package.json`, including a browser smoke test and an 
 - `normalize.json` and `jaro-winkler.json` are input/output pairs that a port must match exactly.
 - `lenient-readers.json` is a response body for each reader of the wire protocol (`getTiles`, a tile payload, `getPlace`, `describeService`, `describeTileset`) with what the reader keeps of it, or that it throws `DecodingError`. It pins what a port does with a missing, wrong-typed or unusable field. A tile payload's result is `{ records, attribution? }`, not a bare list.
 - `attribution-scenarios.json` is a set of tiles served by a raw server, with the `attribution` and each hit's `collection` a search over them must give.
-- `ranking-scenarios.json` describes regions, text, and records, and asserts which places land in the top K. It checks membership, not exact order, since the weights are likely to change. Each scenario names the `dataset` and `collection` it searches. Each record is `{ value, importance }`: `value` is an `org.atgeo.place` with an `origin`, and `importance` is an integer, as on the wire. The expectations name places by `origin`.
+- `match-tiers.json` is a query, a place and the match tier (1 or 2) a port must give it.
+- `ranking-scenarios.json` describes regions, text, and records, and asserts which places land in the top K. It checks membership, not exact order, since the weights are likely to change. Each scenario names the `dataset` and `collection` it searches, and `"overview": true` makes the fake server answer `getTiles` with an overview. Each record is `{ value, importance }`: `value` is an `org.atgeo.place` with an `origin`, and `importance` is an integer, as on the wire. The expectations name places by `origin`.
 
 `docs/port-contract.md` is the language-neutral statement of what this client does, written for ports; `docs/swift-sdk-spec.md` and `docs/kotlin-sdk-spec.md` are the specifications for the Swift and Kotlin ports, `docs/python-sdk-spec.md` for the Python port, and `docs/rust-sdk-spec.md` the proposed one for Rust.
 
