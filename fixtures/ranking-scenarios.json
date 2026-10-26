@@ -1378,6 +1378,61 @@
     }
   },
   {
+    "name": "similarity-tier-before-score",
+    "description": "Similarity sort puts tier first too: the tier-1 exact-token match ranks above a tier-2 fuzzy name that scores higher.",
+    "region": {
+      "lat": 37.7598,
+      "lon": -122.4194,
+      "radius": 1000
+    },
+    "dataset": "overturemaps.org",
+    "collection": "place",
+    "text": "coffee",
+    "records": [
+      {
+        "value": {
+          "$type": "org.atgeo.place",
+          "origin": "urn:atgeo:overturemaps.org:place:la-colombe",
+          "name": "La Colombe Coffee Workshop",
+          "locations": [
+            {
+              "$type": "community.lexicon.location.geo",
+              "latitude": "37.761000",
+              "longitude": "-122.418500"
+            }
+          ]
+        },
+        "importance": 20
+      },
+      {
+        "value": {
+          "$type": "org.atgeo.place",
+          "origin": "urn:atgeo:overturemaps.org:place:coffeys",
+          "name": "Coffey's",
+          "locations": [
+            {
+              "$type": "community.lexicon.location.geo",
+              "latitude": "37.759000",
+              "longitude": "-122.420000"
+            }
+          ]
+        },
+        "importance": 90
+      }
+    ],
+    "expect": {
+      "top": [
+        {
+          "k": 1,
+          "origins": [
+            "urn:atgeo:overturemaps.org:place:la-colombe"
+          ]
+        }
+      ]
+    },
+    "sort": "similarity"
+  },
+  {
     "name": "distance-mode-tier-first",
     "description": "In distance mode an exact match ranks before a nearer fuzzy match, and the fuzzy match is still returned.",
     "region": {
@@ -1490,6 +1545,41 @@
             "urn:atgeo:overturemaps.org:place:star-wax"
           ]
         }
+      ]
+    }
+  },
+  {
+    "name": "tier-one-below-threshold-dropped",
+    "description": "A tier-1 record still has to clear the 0.6 threshold: \"x.y\" folds to tokens x and y, which prefix \"Yellow Xylophone Workshop\", but its score is about 0.54, so it is dropped.",
+    "region": {
+      "lat": 37.7598,
+      "lon": -122.4194,
+      "radius": 1000
+    },
+    "dataset": "overturemaps.org",
+    "collection": "place",
+    "text": "x.y",
+    "records": [
+      {
+        "value": {
+          "$type": "org.atgeo.place",
+          "origin": "urn:atgeo:overturemaps.org:place:yellow-xylophone",
+          "name": "Yellow Xylophone Workshop",
+          "locations": [
+            {
+              "$type": "community.lexicon.location.geo",
+              "latitude": "37.761000",
+              "longitude": "-122.418500"
+            }
+          ]
+        },
+        "importance": 20
+      }
+    ],
+    "expect": {
+      "top": [],
+      "absent": [
+        "urn:atgeo:overturemaps.org:place:yellow-xylophone"
       ]
     }
   }
