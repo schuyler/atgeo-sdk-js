@@ -41,12 +41,12 @@ Distribution during beta mirrors the JS client: unpublished to any registry, add
 
 ## 3. Public API
 
-Names follow the Swift API Design Guidelines, so one method differs from the other SDKs:
+Method names match the other SDKs; argument labels follow the Swift API Design Guidelines:
 
 | JS / Kotlin | Swift |
 |---|---|
 | `searchPlaces(options)` | `searchPlaces(region:dataset:text:collection:sort:)` |
-| `getPlace({ origin })` | `place(origin:)` |
+| `getPlace({ origin })` | `getPlace(origin:)` |
 | `describeService()` | `describeService()` |
 | `describeTileset(slug)` | `describeTileset(_ slug:)` |
 
@@ -71,13 +71,13 @@ public actor AtgeoClient {
         sort: SortMode = .fused
     ) async throws -> SearchResult
 
-    public func place(origin: String) async throws -> PlaceRecord
+    public func getPlace(origin: String) async throws -> PlaceRecord
     public func describeService() async throws -> ServiceDescription
     public func describeTileset(_ slug: String) async throws -> Tileset
 }
 ```
 
-Why an actor: the three caches are mutable state shared by every call, and callers will use one client from many tasks (a search per keystroke, a `place(origin:)` per row). An actor makes that safe without a lock and makes the cache's "lowest URL wins" rule easy to keep honest. Actor reentrancy during `await` is acceptable here: the worst case is two concurrent searches both missing the tile-list cache and both fetching, which the contract permits (§14). Tile fetches themselves run as child tasks of a `TaskGroup` outside the actor, so the actor is not held while bytes arrive.
+Why an actor: the three caches are mutable state shared by every call, and callers will use one client from many tasks (a search per keystroke, a `getPlace(origin:)` per row). An actor makes that safe without a lock and makes the cache's "lowest URL wins" rule easy to keep honest. Actor reentrancy during `await` is acceptable here: the worst case is two concurrent searches both missing the tile-list cache and both fetching, which the contract permits (§14). Tile fetches themselves run as child tasks of a `TaskGroup` outside the actor, so the actor is not held while bytes arrive.
 
 ```swift
 public enum Region: Sendable, Hashable {
@@ -321,7 +321,7 @@ Swift's `sort` is documented stable on current toolchains, but add the input ind
 
 `TileCache` is an ordered dictionary: a `[URL: Entry]` plus a doubly linked list or an array of keys kept in recency order. For 50 MiB of tiles the key count is small (hundreds), so a `[String]` with `removeAll(where:)` on touch is fine and simpler than a linked list. `TtlCache` takes a `now: @Sendable () -> Date`; the public initializer passes `Date.init`, an internal initializer lets tests pass a clock.
 
-`find(key:)` for `place(origin:)` scans every cached tile and keeps the match from the lowest URL (by UTF-16 order), without touching recency (§10).
+`find(key:)` for `getPlace(origin:)` scans every cached tile and keeps the match from the lowest URL (by UTF-16 order), without touching recency (§10).
 
 ## 7. Testing
 
@@ -353,7 +353,7 @@ CI: GitHub Actions, two jobs. `macos-latest` with the current Xcode runs `swift 
 | Query encoding | manual, via `percentEncodedQueryItems` | `queryItems` leaves `+` raw |
 | Default transport caching | off | contract's no-persistence default; opt in by passing a session |
 | Argument errors | separate `AtgeoArgumentError` | keeps `AtgeoError.code` the server's namespace |
-| `getPlace` name | `place(origin:)` | API guidelines; mapped in the table above |
+| `getPlace` name | `getPlace(origin:)` | the wire name, as for `describeService` and `describeTileset` (schuyler/atgeo-sdk-swift#14) |
 | Minimum platforms | iOS 15 / macOS 12 | `URLSession` async API |
 
 Open:
