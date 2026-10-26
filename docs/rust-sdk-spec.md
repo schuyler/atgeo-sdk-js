@@ -206,7 +206,7 @@ A place is arbitrary JSON and must be surfaced untouched (contract §1). It is a
 
 The `Arc` is there because a place is shared, not copied. The client keeps the latest search's parsed tiles to make a repeat search cheap (section 6, Caches), and a hit's `place` points into that memo. Measured over the 15,849 places of the Philadelphia tiles (section 5) in a release build, deep-cloning every `Map` takes 0.09 to 0.12 s on a warm heap (6 to 8 µs a place) and 0.9 s on a fresh one, while cloning the `Arc`s takes 0.7 ms. `Arc` also makes the place immutable to the app, which plain `Map`s in a shared memo could not be. An app that wants its own copy writes `(*hit.place).clone()`.
 
-`name()` and `location()` are the accessors contract §14 allows; `location()` is built by the same `locate()` the ranker uses, so it cannot disagree with `distance`.
+`name()` and `location()` are the accessors contract §8 and §9 require; `location()` is built by the same `locate()` the ranker uses, so it cannot disagree with `distance`.
 
 ### Errors
 
