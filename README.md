@@ -26,7 +26,7 @@ for (const { origin, name, collection, distance, score } of places) {
 console.log(attribution.map((a) => a.attribution ?? `${a.dataset}/${a.collection}`));
 ```
 
-Misspellings are fine; matching is fuzzy (words that match exactly rank first), and that finds the Starbucks around Philadelphia's City Hall. The public server at places.atgeo.org has a limited dataset for now, mostly the east coast, so a search elsewhere may come back empty. `attribution` is who you owe credit for the data; see [Attribution](#attribution). If `complete` is `false`, some tiles failed to load and the results are partial. If `overview` is `true`, the region was too big to search in full and you got only its most important places; see [Overview answers](#overview-answers).
+Misspellings are fine; matching is fuzzy (words that match exactly rank first), and that finds the Starbucks around Philadelphia's City Hall. The public server at places.atgeo.org covers the whole world. `attribution` is who you owe credit for the data; see [Attribution](#attribution). If `complete` is `false`, some tiles failed to load and the results are partial. If `overview` is `true`, the region was too big to search in full and you got only its most important places; see [Overview answers](#overview-answers).
 
 ## Installation
 
