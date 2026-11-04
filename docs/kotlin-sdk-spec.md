@@ -7,7 +7,7 @@ Status: implemented in [schuyler/atgeo-sdk-kotlin](https://github.com/schuyler/a
 ## 1. Goals
 
 - Same results as the TypeScript client for the same server answers, verified by the shared fixtures.
-- Same privacy properties: search text and precise coordinates never leave the device.
+- Same privacy properties: `searchNearby`'s text and precise coordinates never leave the device. `searchPlaces` sends its keyword to the server by design and its region only as whole degrees (contract §9, §12).
 - Idiomatic Kotlin: `suspend` functions, structured concurrency, coroutine cancellation, immutable data classes, no checked-exception ceremony.
 - Android and plain JVM from one artifact, with the smallest dependency footprint that gets there: `kotlinx-coroutines-core` and `kotlinx-serialization-json`, and nothing for HTTP by default.
 
@@ -66,7 +66,7 @@ class AtgeoClient(
         const val DEFAULT_CACHE_BUDGET_BYTES = 50L * 1024 * 1024
     }
 
-    suspend fun searchPlaces(
+    suspend fun searchNearby(
         region: Region,
         dataset: String,
         text: String? = null,
@@ -74,17 +74,27 @@ class AtgeoClient(
         sort: SortMode = SortMode.FUSED,
     ): SearchResult
 
+    /** The server's keyword search (contract §9). Sends `keyword` to the server; `region` goes out as whole degrees. */
+    suspend fun searchPlaces(
+        dataset: String,
+        keyword: String,
+        collection: String? = null,
+        region: Region? = null,
+    ): PlaceSearchResult
+
     suspend fun getPlace(origin: String): PlaceRecord
     suspend fun describeService(): ServiceDescription
     suspend fun describeTileset(slug: String): Tileset
 }
 ```
 
+`searchPlaces` follows contract §9 (checks, the one request, server order) and §12 (item 5: the keyword is sent by design). `searchNearby` is the tile search, formerly `searchPlaces` in this document.
+
 The client is thread-safe and meant to be shared: one per server for the life of the process. Its caches are guarded by a `kotlinx.coroutines.sync.Mutex`. The critical sections are short and never suspend, so on the JVM alone a plain lock would serve as well; the `Mutex` is chosen because it is common Kotlin, which keeps the Multiplatform door open. It is never held across a transport call (section 5).
 
 ```kotlin
 sealed interface Region {
-    /** Radius in metres. Neither class validates in `init`: `Circle(Double.NaN, 0.0, 10.0)` constructs, and `searchPlaces` rejects it (Errors, below). */
+    /** Radius in metres. Neither class validates in `init`: `Circle(Double.NaN, 0.0, 10.0)` constructs, and `searchNearby` rejects it (Errors, below). */
     data class Circle(val lat: Double, val lon: Double, val radius: Double) : Region
     /** Degrees. west > east crosses the antimeridian. */
     data class Bbox(val west: Double, val south: Double, val east: Double, val north: Double) : Region
@@ -110,6 +120,8 @@ class SearchHit internal constructor(
     val name: String?          // computed: place["name"].stringOrNull()
     val location: PlaceLocation  // computed: locate(place), section 6
 }
+
+class PlaceSearchResult internal constructor(val places: List<PlaceRecord>)   // server order
 
 class PlaceRecord internal constructor(val origin: String, val place: JsonObject, val importance: Long?) {
     val name: String?
@@ -175,7 +187,7 @@ class AtgeoException(val code: String, message: String, val status: Int) : Runti
 class AtgeoDecodingException(message: String, cause: Throwable? = null) : IOException(message, cause)
 ```
 
-Bad arguments (contract §3) throw `IllegalArgumentException` from `require()` calls at the top of `searchPlaces`, in the contract's order, before anything is looked up or fetched; the observable rule is that no request is made. This matches the JS client's `TypeError` in spirit: a programming error, kept out of `AtgeoException`'s code namespace.
+Bad arguments (contract §3) throw `IllegalArgumentException` from `require()` calls at the top of `searchNearby`, in the contract's order, before anything is looked up or fetched; the observable rule is that no request is made. This matches the JS client's `TypeError` in spirit: a programming error, kept out of `AtgeoException`'s code namespace.
 
 Network failures throw `IOException` (or whatever the injected transport throws) unwrapped, with one exception: a `CancellationException` from the transport while the caller is still active (the transport's own `withTimeout`, say) is rethrown by the XRPC layer as `SocketTimeoutException` for a `TimeoutCancellationException` and as `IOException` otherwise, each with the original as its cause. Left as it is, it would end the caller's `launch {}` silently, and contract §14 calls a timeout a network failure. A 2xx body that is not JSON, or has no usable body in the contract's narrow sense (§1: no `tiles` array, no `value` object, a describe body that is not an object), throws `AtgeoDecodingException`, with kotlinx's `SerializationException` as its cause when the parser threw one; nothing else about a body's shape throws. It is the port's own type, as §1 allows, because `SerializationException` is an `IllegalArgumentException`, so a `catch` meant for a bad region would also catch a garbled answer; as an `IOException` it lands with the network failures, which is what it is to a caller: no usable answer arrived. For tiles, either counts as a failed tile. The search's own cancellation must propagate anywhere the client catches `Exception` (the tile-fetch loop and the XRPC layer are the two such places; neither catches `Throwable`, so that an `OutOfMemoryError` while parsing a tile fails the search instead of passing for one bad tile); section 5 gives the exact rule, which is not "rethrow every `CancellationException`".
 
@@ -212,12 +224,12 @@ The tile cache measures a tile as `body.size` bytes (§10).
 
 ## 5. Concurrency and cancellation
 
-- `searchPlaces` runs inside `coroutineScope`. The two `getTiles` calls for an antimeridian-crossing region are `async` siblings; if one throws, structured concurrency cancels the other and the search fails with the first error (allowed, §14).
+- `searchNearby` runs inside `coroutineScope`. The two `getTiles` calls for an antimeridian-crossing region are `async` siblings; if one throws, structured concurrency cancels the other and the search fails with the first error (allowed, §14).
 - Tiles are fetched by `min(8, urls.size)` worker coroutines started with `launch(computeDispatcher)`, each taking the next index from a shared `AtomicInteger` and writing its result into that index's slot: the reference's `mapLimit`. URLs are claimed in order with at most 8 in flight (the first calls can still interleave on a multi-threaded dispatcher; nothing in the suite asserts request order), and completion order never affects results (§4.3). `async` children behind a `Semaphore(8)` look equivalent but are not: on a multi-threaded dispatcher, permits are not acquired in launch order (a probe observed `0..6, 8, 7, 9, 11, 10`), so a test asserting request order would be flaky, and one coroutine per tile up front is heavier for a large region. Each worker catches `Exception` around one tile, calls `coroutineContext.ensureActive()` inside the catch so that its own cancellation propagates, and otherwise leaves the slot null. The slots are an `arrayOfNulls<TileOutcome>(urls.size)`, a sealed type: `Used` holds a used tile's cache entry and its records (an empty list for a tile whose every record was skipped), `Failed` holds its `TileFailure` (contract §4.4). The entry goes with the records so that the search can hand both to `ParsedTiles` when it ends (section 6). After the workers' `coroutineScope` returns, `fetched` is the count of `Used` slots and `tileFailures` the `Failed` ones in slot order, which is URL order, so `failed` is its size, so no counter is shared between threads (the reference's `failed++` would be a data race here). Catching everything but `CancellationException` is not the same rule: a transport that uses `withTimeout` throws `TimeoutCancellationException`, which is a `CancellationException`. In this worker design rethrowing it does not fail the search, because a `launch` child that completes with a `CancellationException` ends without failing its parent; the worker just stops, and the others go on claiming URLs. The damage is quieter: when every worker hits a timeout at once, the URLs after them are never claimed, and they are counted as failed without ever being requested. A test for this needs more timeouts than workers (8 timing-out tiles and a ninth that answers); with fewer, both rules give the same counts. The reference's check is `signal.aborted`, the search's own cancellation and nothing else.
 - A worker checks the tile cache under the mutex when it reaches a URL, as the reference does, so a cached tile never becomes a request and recency is touched in the same order as in the reference. Writes happen under the mutex as tiles arrive. The mutex is never held across a transport call.
 - Nothing blocks a dispatcher thread except the default transport's request task, which runs on `Dispatchers.IO` threads (section 4). The CPU work does not run on the caller's dispatcher either: the workers run on `computeDispatcher`, so a tile body is parsed and mapped off the calling thread, and dedupe, filtering, scoring and ranking run inside `withContext(computeDispatcher)`. `computeDispatcher` is a constructor parameter defaulting to `Dispatchers.Default`, following the Android convention of injecting dispatchers. The ported test suite constructs every client with `computeDispatcher = StandardTestDispatcher(testScheduler)` inside `runTest`: the workers then run single-threaded on virtual time, the fake server sees one request at a time, the `determinism` test's staggered delays cost nothing, and the two `getTiles` calls of a crossing region start in order, which `region.test.ts` asserts. The TTL clock is separate from virtual time: expiry tests use the `internal` constructor's `clock` (section 6). `getPlace`'s cache scan (section 6) also runs inside `withContext(computeDispatcher)`, since it walks every cached tile's keys and may parse the tile that holds the match. The reason is Android: an app searches from `Dispatchers.Main`, and child coroutines otherwise inherit that context, which would put megabytes of JSON parsing and tens of thousands of Jaro-Winkler comparisons on the main thread. On a server JVM the switch costs a dispatch and nothing else. `Dispatchers.Default` is common Kotlin, so the Multiplatform door stays open.
 
-Cancellation: cancelling the calling coroutine stops the search promptly and it throws `CancellationException`; whether the in-flight requests are torn down on the wire is the transport's business (section 4). A fully cached call from an already-cancelled coroutine also throws `CancellationException`: `coroutineScope` and `withContext` complete exceptionally when their parent is cancelled even if the body returns a value, so this design cannot complete such a call normally, and the contract does not ask it to (§14 lists it as a freedom). Tests must not assert either outcome. Do not add `ensureActive()` at the top of `searchPlaces`; the scope already does that work.
+Cancellation: cancelling the calling coroutine stops the search promptly and it throws `CancellationException`; whether the in-flight requests are torn down on the wire is the transport's business (section 4). A fully cached call from an already-cancelled coroutine also throws `CancellationException`: `coroutineScope` and `withContext` complete exceptionally when their parent is cancelled even if the body returns a value, so this design cannot complete such a call normally, and the contract does not ask it to (§14 lists it as a freedom). Tests must not assert either outcome. Do not add `ensureActive()` at the top of `searchNearby`; the scope already does that work.
 
 ## 6. Implementing the contract in Kotlin
 

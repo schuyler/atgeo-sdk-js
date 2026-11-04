@@ -7,7 +7,7 @@ Status: implemented in [schuyler/atgeo-sdk-python](https://github.com/schuyler/a
 ## 1. Goals
 
 - Same results as the TypeScript client for the same server answers, verified by the shared fixtures.
-- Same privacy properties: search text and precise coordinates never leave the device.
+- Same privacy properties: `search_nearby`'s text and precise coordinates never leave the device. `search_places` sends its keyword to the server by design and its region only as whole degrees (contract §9, §12).
 - Idiomatic Python: a blocking client for scripts, notebooks and WSGI servers and an asyncio client for async servers, with the same methods, arguments and results; type hints throughout, checked with `mypy --strict`; frozen dataclasses for everything the client returns.
 - Few dependencies: urllib3, which has none of its own, for the blocking client's HTTP, `truststore` for the operating system's certificates, and aiohttp for the async client's HTTP, behind an `async` extra. Everything else (`json`, `unicodedata`, `threading`, `asyncio`) is the standard library.
 
@@ -90,7 +90,7 @@ class AtgeoClient:
         clock: Callable[[], float] = time.time,      # seconds since the epoch; for tests (section 6, Caches)
     ) -> None: ...
 
-    def search_places(
+    def search_nearby(
         self,
         region: Circle | Bbox,
         *,
@@ -99,6 +99,16 @@ class AtgeoClient:
         collection: str | None = None,
         sort: SortMode | str = SortMode.FUSED,
     ) -> SearchResult: ...
+
+    # The server's keyword search (contract §9). Sends `keyword` to the server; `region` goes out as whole degrees.
+    def search_places(
+        self,
+        *,
+        dataset: str,
+        keyword: str,
+        collection: str | None = None,
+        region: Circle | Bbox | None = None,
+    ) -> PlaceSearchResult: ...
 
     def get_place(self, origin: str) -> PlaceRecord: ...
     def describe_service(self) -> ServiceDescription: ...
@@ -112,7 +122,8 @@ class AtgeoClient:
 class AsyncAtgeoClient:
     # The same constructor, with transport: AsyncTransport | None (default AiohttpTransport(), which needs
     # the async extra).
-    async def search_places(self, region: Circle | Bbox, *, dataset: str, text=..., collection=..., sort=...) -> SearchResult: ...
+    async def search_nearby(self, region: Circle | Bbox, *, dataset: str, text=..., collection=..., sort=...) -> SearchResult: ...
+    async def search_places(self, *, dataset: str, keyword: str, collection=..., region=...) -> PlaceSearchResult: ...
     async def get_place(self, origin: str) -> PlaceRecord: ...
     async def describe_service(self) -> ServiceDescription: ...
     async def describe_tileset(self, slug: str) -> Tileset: ...
@@ -121,7 +132,7 @@ class AsyncAtgeoClient:
     async def __aexit__(self, *exc: object) -> None: ...
 ```
 
-Every argument after `region` is keyword-only, so that `search_places(region, "Starbux")` is an error rather than a guess at which string is which. `server` must be an absolute http or https URL with a host and no credentials, or the constructor raises `ValueError` (section 4, URLs). `dataset` is a required keyword-only argument, so a call without it raises `TypeError`, and it is never defaulted. The other optional arguments are absent only when they are `None`, as the reference's `??` has it. An empty `dataset=""` is still a dataset, sent as given, with a collection prefix of `urn:atgeo::…`. Each client is safe to share and meant to be: one per server for the life of the process, or of the event loop. `AtgeoClient` may be called from many threads at once. `AsyncAtgeoClient` may be called from many tasks at once. Its own state is not bound to an event loop, but its default transport's aiohttp session is from the first request on (aiohttp cannot use a session in another loop: measured, `RuntimeError: Event loop is closed`), so a client using the default transport belongs to the loop of its first call, and using it from another raises a `RuntimeError` that says so. The client checks this itself, at the top of every call and before any request, rather than leaving it to the transport: a search from a second loop whose tile lists are still cached makes only tile requests, and the transport's `RuntimeError` there would count every tile as failed and return no places without an error. A script that calls `asyncio.run` more than once makes a client inside each. The test suite's fake transport is not loop-bound, which is what lets its harness run each call under its own `asyncio.run` (section 7). Both default transports pool connections, so use a client in a `with` (or `async with`) block or call `close()` (`aclose()`) when done with it; an unclosed aiohttp session logs a warning when it is collected. A client closes only a transport it created. An `AsyncAtgeoClient` that has closed its own transport raises `RuntimeError` on any later call, before any request, and `AiohttpTransport` refuses requests once closed: the port first opened a fresh session after `aclose()`, which nothing would close. `cache_budget_bytes` must be a non-negative integer (an `int` or an int-like through `operator.index`, not a `bool`), checked by both constructors (`TypeError`, `ValueError`): unchecked, a `None` or a string failed inside every tile store, where the error counted as a failed tile and every search came back empty without raising. `AiohttpTransport` is importable from `atgeo` but not listed in `__all__`, so that `from atgeo import *` works without the async extra.
+`search_places` follows contract §9 (checks, the one request, server order) and §12 (item 5: the keyword is sent by design); `PlaceSearchResult` is a frozen dataclass with `places: list[PlaceRecord]`. `search_nearby` is the tile search, formerly `search_places` in this document. Every argument after `region` is keyword-only, so that `search_nearby(region, "Starbux")` is an error rather than a guess at which string is which. `server` must be an absolute http or https URL with a host and no credentials, or the constructor raises `ValueError` (section 4, URLs). `dataset` is a required keyword-only argument, so a call without it raises `TypeError`, and it is never defaulted. The other optional arguments are absent only when they are `None`, as the reference's `??` has it. An empty `dataset=""` is still a dataset, sent as given, with a collection prefix of `urn:atgeo::…`. Each client is safe to share and meant to be: one per server for the life of the process, or of the event loop. `AtgeoClient` may be called from many threads at once. `AsyncAtgeoClient` may be called from many tasks at once. Its own state is not bound to an event loop, but its default transport's aiohttp session is from the first request on (aiohttp cannot use a session in another loop: measured, `RuntimeError: Event loop is closed`), so a client using the default transport belongs to the loop of its first call, and using it from another raises a `RuntimeError` that says so. The client checks this itself, at the top of every call and before any request, rather than leaving it to the transport: a search from a second loop whose tile lists are still cached makes only tile requests, and the transport's `RuntimeError` there would count every tile as failed and return no places without an error. A script that calls `asyncio.run` more than once makes a client inside each. The test suite's fake transport is not loop-bound, which is what lets its harness run each call under its own `asyncio.run` (section 7). Both default transports pool connections, so use a client in a `with` (or `async with`) block or call `close()` (`aclose()`) when done with it; an unclosed aiohttp session logs a warning when it is collected. A client closes only a transport it created. An `AsyncAtgeoClient` that has closed its own transport raises `RuntimeError` on any later call, before any request, and `AiohttpTransport` refuses requests once closed: the port first opened a fresh session after `aclose()`, which nothing would close. `cache_budget_bytes` must be a non-negative integer (an `int` or an int-like through `operator.index`, not a `bool`), checked by both constructors (`TypeError`, `ValueError`): unchecked, a `None` or a string failed inside every tile store, where the error counted as a failed tile and every search came back empty without raising. `AiohttpTransport` is importable from `atgeo` but not listed in `__all__`, so that `from atgeo import *` works without the async extra.
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -143,7 +154,7 @@ class SortMode(StrEnum):
     SIMILARITY = "similarity"
 ```
 
-Neither region class validates in `__post_init__`: `Circle(math.nan, 0, 10)` constructs, and `search_places` rejects it (Errors, below), so that the contract's order of checks (§3) holds whichever fault a call has. `sort` takes a `SortMode` or its string value; any other string is a `ValueError` before any request.
+Neither region class validates in `__post_init__`: `Circle(math.nan, 0, 10)` constructs, and `search_nearby` rejects it (Errors, below), so that the contract's order of checks (§3) holds whichever fault a call has. `sort` takes a `SortMode` or its string value; any other string is a `ValueError` before any request.
 
 ```python
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -222,7 +233,7 @@ class AtgeoDecodingError(Exception):
     __cause__ is the parser's exception when there was one."""
 ```
 
-Bad arguments raise `ValueError` from the top of `search_places`, in the contract's order (§3), before anything is looked up or fetched: a non-finite or out-of-range coordinate, `south > north`, a negative or non-finite radius, an unknown `sort`, then `similarity` with no text. A `region` that is neither a `Circle` nor a `Bbox` raises `TypeError`, Python's convention for the wrong type. This matches the JS client's `TypeError` in spirit: a programming error, kept out of `AtgeoError`'s code namespace.
+Bad arguments raise `ValueError` from the top of `search_nearby`, in the contract's order (§3), before anything is looked up or fetched: a non-finite or out-of-range coordinate, `south > north`, a negative or non-finite radius, an unknown `sort`, then `similarity` with no text. A `region` that is neither a `Circle` nor a `Bbox` raises `TypeError`, Python's convention for the wrong type. This matches the JS client's `TypeError` in spirit: a programming error, kept out of `AtgeoError`'s code namespace.
 
 `AtgeoDecodingError` is its own type, not a `ValueError` subclass, for the reason Kotlin's is not a `SerializationException`: `json.JSONDecodeError` is a `ValueError`, so an `except ValueError` written for a bad region would also swallow a garbled answer. A 2xx body that is not JSON, or has no usable body in the contract's narrow sense (§1: no `tiles` list, no `value` object, a describe body that is not an object), raises `AtgeoDecodingError` from the parser's error; nothing else about a body's shape raises. Inside a tile fetch either counts as a failed tile.
 

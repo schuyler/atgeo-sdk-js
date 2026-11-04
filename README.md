@@ -1,6 +1,6 @@
 # @atgeo/client
 
-A TypeScript/ESM client for the atgeo gazetteer served by [garganorn](https://github.com/schuyler/garganorn), which searches places without telling the server what you searched for.
+A TypeScript/ESM client for the atgeo gazetteer served by [garganorn](https://github.com/schuyler/garganorn), which can search places without telling the server what you searched for (`searchNearby`), or ask the server to find a place by name (`searchPlaces`, which does tell it; see [Privacy](#privacy)).
 
 It runs in evergreen browsers, Node 20 or later, and workers, and has no runtime dependencies.
 
@@ -11,7 +11,7 @@ import { AtgeoClient } from "@atgeo/client";
 
 const atgeo = new AtgeoClient();
 
-const { places, complete, attribution } = await atgeo.searchPlaces({
+const { places, complete, attribution } = await atgeo.searchNearby({
   dataset: "overturemaps.org",
   collection: "place",
   region: { lat: 39.9526, lon: -75.1652, radius: 1000 }, // meters
@@ -66,7 +66,9 @@ They apply to every request, whatever `fetch` you pass in, since they're enforce
 
 Every method that touches the network takes an optional `signal` (`AbortSignal`).
 
-### `searchPlaces(options): Promise<SearchResult>`
+### `searchNearby(options): Promise<SearchResult>`
+
+Searches an area, and the search text never leaves the device. This was called `searchPlaces` before 0.2.0; the behaviour is the same, but `searchPlaces` is now a different call (next).
 
 | Option | Meaning |
 |---|---|
@@ -181,6 +183,33 @@ When the copies differ, which one you get is decided by tile URL: the copy from 
 
 The guarantee is that the result is deterministic for the server's answers and the cache's contents, and no stronger. Which copies are present depends on which tiles a search covered, so two searches over different regions can return different copies of the same place. The rule merges copies; it doesn't decide which is correct.
 
+### `searchPlaces(options): Promise<{ places: PlaceRecord[] }>`
+
+Asks the server to find places in a dataset by name, without knowing where they are. **The keyword goes to the server.** That is the point of the call, and it is the opposite of `searchNearby`. If the search itself has to stay private, use `searchNearby`.
+
+```ts
+const { places } = await atgeo.searchPlaces({
+  dataset: "overturemaps.org",
+  keyword: "golden gate bridge",
+  region: { bbox: [-123, 37, -122, 38] },   // optional
+});
+console.log(places.map((p) => p.name));
+```
+
+| Option | Meaning |
+|---|---|
+| `dataset` | Required, with no default. |
+| `keyword` | Required string, sent to the server exactly as you give it. A place matches when every word of the keyword begins a word of one of its names. The server decides what is valid (a keyword with no word of two characters is `KeywordRequired`); the client checks nothing. |
+| `collection` | Optional. Restricts the search to one collection of the dataset. |
+| `region` | Optional circle or bounding box, as for `searchNearby`. Only its enclosing box goes out, snapped outward to whole degrees (`[-122.42, 37.77, -122.41, 37.78]` becomes `-123,37,-122,38`), so the server learns a box at least one degree on a side, never your region. Without a region the whole world is searched. |
+| `signal` | Aborts the call. |
+
+It returns `{ places }`: at most 20 `PlaceRecord`s, each the same `{ origin, place, name, location, importance, attribution }` that `getPlace` returns, in the server's order (Wikipedia-notable places first, then by importance). Nothing is re-sorted, deduplicated or cached, and there are no distances, because the server was never told where you are. Two identical calls make two requests, and a hit is not in the tile cache, so `getPlace` on it asks the server.
+
+A region that crosses the antimeridian goes out as one box, not two requests. A region too small or too oddly placed for whole degrees is widened to the smallest box that holds it.
+
+Errors: it throws `TypeError` synchronously, before any request, for a `dataset` that isn't a string, then a `keyword` that isn't a string (so an old `searchPlaces({ dataset, region, text })` call fails instead of sending your text to the server), then an invalid region. A server error rejects with an `AtgeoError` carrying the server's code (`KeywordRequired`, `DatasetNotFound`, `CollectionNotFound`, `InvalidBbox`, and so on). A 2xx body with no `places` array rejects with `DecodingError`; entries in it that can't be read are skipped.
+
 ### `getPlace({ origin }): Promise<PlaceRecord>`
 
 Returns `{ origin, place, name, location, importance, attribution }`, where `name` and `location` are as on a hit, `place` is the value as served (frozen and shared with the cache, like `hit.place`), `importance` is a number or `null`, and `attribution` is a list of the same entries `result.attribution` holds, as served: in the server's order, duplicates and all, never undefined (empty if there are none). It's a copy. Pass the `origin` of a hit. If a cached tile holds the place, no request is made; otherwise the client asks the server (`org.atgeo.getPlace`) directly, with no discovery call first. A place with no origin is identified by its tile record's `uri`, which the cache can resolve; the server answers `PlaceNotFound` for a URI it doesn't serve, and `InvalidRequest` for a string that isn't a URI.
@@ -200,9 +229,10 @@ Returns the tileset's descriptor: `slug`, `collections` (each a `{ dataset, coll
 ### Errors
 
 - `AtgeoError` has a `code` string and the HTTP `status`, which tells a request the server refused (4xx) from one it failed to answer (5xx) without matching on codes. A non-2xx response from the server becomes an `AtgeoError` whose `code` and message come from the server's JSON error body (`error`, `message`); if there isn't one, the code is `HttpError`. Apart from `HttpError`, every code comes from the server: for example `PlaceNotFound`, `TilesetNotFound`, `DatasetNotFound`, `CollectionNotFound`, `BboxTooLarge`, or `InvalidRequest` for a malformed parameter. The lexicons in `test/lexicon/` list the codes each method declares.
-- `DecodingError` means the server answered 2xx with JSON that has nothing the client can use: a `getTiles` body with no `tiles` array, a `getPlace` body with no `value` object, or a describe body that isn't an object. It rejects the call, and nothing is cached. The client is otherwise tolerant: it ignores fields it doesn't read, treats a missing or wrong-typed one as absent, and skips a tile record or list entry it can't read instead of failing. A body that isn't JSON at all rejects with the `SyntaxError` from `JSON.parse`, not a `DecodingError`.
+- `DecodingError` means the server answered 2xx with JSON that has nothing the client can use: a `getTiles` body with no `tiles` array, a `searchPlaces` body with no `places` array, a `getPlace` body with no `value` object, or a describe body that isn't an object. It rejects the call, and nothing is cached. The client is otherwise tolerant: it ignores fields it doesn't read, treats a missing or wrong-typed one as absent, and skips a tile record or list entry it can't read instead of failing. A body that isn't JSON at all rejects with the `SyntaxError` from `JSON.parse`, not a `DecodingError`.
 - A body over `maxBodyBytes` and a request past `requestTimeoutMs` reject unwrapped from `getTiles` (so, a search), `getPlace`, `describeService` and `describeTileset`: a `BodyTooLargeError`, or a `TimeoutError` `DOMException`. Neither is an `AtgeoError`, even for a non-2xx: an error body over the cap is a `BodyTooLargeError`, not the `AtgeoError` its status would have made. (For a tile, they are a failed tile of kind `transport`, below.)
-- `searchPlaces` throws `TypeError` for an invalid region (non-finite or out-of-range coordinates, `south > north`, negative radius), for a missing `dataset` and for `sort: "similarity"` without text. It throws synchronously, before any request.
+- `searchNearby` throws `TypeError` for an invalid region (non-finite or out-of-range coordinates, `south > north`, negative radius), for a missing `dataset` and for `sort: "similarity"` without text. It throws synchronously, before any request.
+- `searchPlaces` throws `TypeError` for a missing or non-string `dataset` or `keyword`, and for an invalid region. It throws synchronously, before any request.
 - A failed `getTiles` request rejects the whole search. A failed tile request does not: that tile is skipped, `tiles.failed` counts it, `complete` is `false`, and `tileFailures` says which tile and why. The `kind` is where it went wrong:
   - `refused`: the URL isn't an absolute `http` or `https` URL, or carries credentials (`https://user:pw@host/…`). No request is made.
   - `status`: the tile answered non-2xx. `status` is the HTTP status and `error` the `AtgeoError`.
@@ -214,7 +244,11 @@ Returns the tileset's descriptor: `slug`, `collections` (each a `{ dataset, coll
 
 ## Privacy
 
-Your search text never leaves the device. Neither does your precise location.
+**`searchPlaces` sends your keyword to the server.** `searchNearby` never sends its text: your search text never leaves the device, and neither does your precise location. Pick the one that matches what you can tell the server.
+
+`searchPlaces` sends one GET with `dataset`, `collection` if you gave one, `q` (the keyword, verbatim) and, if you gave a region, `bbox` in whole degrees. Nothing else: no precise coordinates, no body. The server learns what was typed and, at most, a box a degree or more on a side. It has no way to learn a point, and the client never logs the keyword. The server's spec says it keeps keywords in no log; the SDK can't check that for a server you don't run.
+
+The rest of this section is about `searchNearby`.
 
 To search, the client asks the server which tiles cover an area, downloads those tiles, and does the matching, filtering, and ranking locally. The only location a search sends is a bounding box (two across the antimeridian), snapped outward to a 0.01 degree grid (roughly 1 km of latitude) before it goes out; alongside it go the search's dataset and, if it has one, its collection. Your exact region is used only on the device, to filter and to compute distances.
 
@@ -224,6 +258,7 @@ What does go on the wire:
 - Requests for the tile URLs the server returned, exactly as served, minus any already in the cache. So the server can tell which of those tiles this client fetched before — that you searched near here recently — but nothing finer than the tiles themselves.
 - `describeService` and `describeTileset`, only if you call them.
 - `getPlace` on a cache miss sends the origin of the place you asked for.
+- `searchPlaces`, if you call it: the request above.
 
 The server also sees your IP address and whatever headers your `fetch` adds, as with any HTTP request. Snapping hides where in a ~1 km cell you are; it doesn't hide the cell.
 
