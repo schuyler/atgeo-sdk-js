@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AtgeoClient } from "../src/index.js";
 import type { Region } from "../src/index.js";
+import { degreeBbox } from "../src/region.js";
 import { OVERTURE, fakeServer, overture, place, placeOrigin, point, record } from "./helpers/fakeServer.js";
 
 const COORD = /^-?\d{1,3}\.\d{2}$/;
@@ -12,7 +13,7 @@ function setup() {
 
 async function emitted(region: Region): Promise<string[]> {
   const { server, client } = setup();
-  await client.searchPlaces({ ...OVERTURE, region });
+  await client.searchNearby({ ...OVERTURE, region });
   return server.requests
     .filter((r) => r.url.includes("org.atgeo.getTiles"))
     .map((r) => new URL(r.url).searchParams.get("bbox") ?? "");
@@ -41,7 +42,7 @@ describe("coordinate serialization", () => {
 
   it.each(adversarial)("emits only two-decimal coordinates: %s", async (_name, region) => {
     const { server, client } = setup();
-    await client.searchPlaces({ ...OVERTURE, region });
+    await client.searchNearby({ ...OVERTURE, region });
     const tileLists = server.requests.filter((r) => r.url.includes("org.atgeo.getTiles"));
     expect(tileLists.length).toBeGreaterThan(0);
     for (const r of tileLists) {
@@ -231,7 +232,7 @@ describe("antimeridian", () => {
       tilesFor: (bbox) => (bbox.startsWith("170") ? [west] : [east]),
     });
     const client = new AtgeoClient({ fetch: server.fetch });
-    const result = await client.searchPlaces({ ...OVERTURE, region: { bbox: [170, 10, -170, 20] } });
+    const result = await client.searchNearby({ ...OVERTURE, region: { bbox: [170, 10, -170, 20] } });
     expect(result.places.map((h) => h.origin).sort()).toEqual([placeOrigin("e"), placeOrigin("w")]);
     expect(result.complete).toBe(true);
   });
@@ -261,24 +262,151 @@ describe("invalid regions", () => {
 
   it.each(bad)("throws TypeError synchronously before any request: %s", (_name, region) => {
     const { server, client } = setup();
-    expect(() => client.searchPlaces({ ...OVERTURE, region })).toThrow(TypeError);
-    expect(() => client.searchPlaces({ ...OVERTURE, region })).toThrow(/^invalid (bbox|circle)$/);
+    expect(() => client.searchNearby({ ...OVERTURE, region })).toThrow(TypeError);
+    expect(() => client.searchNearby({ ...OVERTURE, region })).toThrow(/^invalid (bbox|circle)$/);
     expect(server.requests).toHaveLength(0);
   });
 
   it("accepts minLon > maxLon", async () => {
     const { client } = setup();
-    await expect(client.searchPlaces({ ...OVERTURE, region: { bbox: [170, 0, -170, 1] } })).resolves.toBeDefined();
+    await expect(client.searchNearby({ ...OVERTURE, region: { bbox: [170, 0, -170, 1] } })).resolves.toBeDefined();
   });
 
   it("throws TypeError synchronously for similarity sort without text", () => {
     const { server, client } = setup();
     expect(() =>
-      client.searchPlaces({ ...OVERTURE, region: { bbox: [0, 0, 1, 1] }, sort: "similarity" }),
+      client.searchNearby({ ...OVERTURE, region: { bbox: [0, 0, 1, 1] }, sort: "similarity" }),
     ).toThrow(TypeError);
     expect(() =>
-      client.searchPlaces({ ...OVERTURE, region: { bbox: [0, 0, 1, 1] }, sort: "similarity" }),
+      client.searchNearby({ ...OVERTURE, region: { bbox: [0, 0, 1, 1] }, sort: "similarity" }),
     ).toThrow(/similarity/);
     expect(server.requests).toHaveLength(0);
+  });
+});
+
+describe("degreeBbox", () => {
+  const box = (bbox: [number, number, number, number]): Region => ({ bbox });
+
+  it.each([
+    ["snaps outward to whole degrees", box([-122.4194155, 37.7749295, -122.4094155, 37.7849295]), "-123,37,-122,38"],
+    ["keeps whole degrees as they are", box([10, 20, 12, 22]), "10,20,12,22"],
+    ["treats a corner within 1e-9 of a whole degree as that degree", box([10 + 1e-10, 20 - 1e-10, 12 + 1e-10, 22 - 1e-10]), "10,20,12,22"],
+    ["does not treat a corner 1e-8 past a whole degree as on it", box([10.00000001, 20, 12.00000001, 22]), "10,20,13,22"],
+    ["snaps a box that straddles zero", box([-0.5, -0.5, 0.5, 0.5]), "-1,-1,1,1"],
+  ] as [string, Region, string][])("%s", (_name, region, expected) => {
+    expect(degreeBbox(region)).toBe(expected);
+  });
+
+  it.each([
+    ["widens a zero-height box north", box([0, 10, 5, 10]), "0,10,5,11"],
+    ["widens a zero-height box at 90 south", box([0, 90, 5, 90]), "0,89,5,90"],
+    ["widens a zero-height box at -90 north", box([0, -90, 5, -90]), "0,-90,5,-89"],
+    ["widens a zero-width box east", box([10, 0, 10, 5]), "10,0,11,5"],
+    ["widens a zero-width box at 180 west", box([180, 0, 180, 5]), "179,0,180,5"],
+    ["widens a zero-width box at -180 east", box([-180, 0, -180, 5]), "-180,0,-179,5"],
+    ["widens a box that snaps to one degree on both axes", box([10.2, 20.2, 10.2, 20.2]), "10,20,11,21"],
+  ] as [string, Region, string][])("%s", (_name, region, expected) => {
+    expect(degreeBbox(region)).toBe(expected);
+  });
+
+  it.each([
+    ["keeps a crossing box crossing", box([170.5, 10, -170.5, 20]), "170,10,-170,20"],
+    ["clamps a west edge of 180 to 179", box([180, 0, -170, 1]), "179,0,-170,1"],
+    ["clamps an east edge of -180 to -179", box([170, 0, -180, 1]), "170,0,-179,1"],
+    ["clamps both seam edges", box([180, 0, -180, 1]), "179,0,-179,1"],
+    ["sends full longitude when snapping closes the gap", box([0.5, 0, 0.2, 1]), "-180,0,180,1"],
+    ["sends full longitude when the east side snaps to 0", box([5, 0, -0.2, 1]), "-180,0,180,1"],
+    ["sends full longitude when both sides are east of 0", box([5, 0, 3, 1]), "-180,0,180,1"],
+    ["sends full longitude when both sides are west of 0", box([-3, 0, -5, 1]), "-180,0,180,1"],
+    ["keeps the latitude band when it sends full longitude", box([5, 10.5, 3, 12.5]), "-180,10,180,13"],
+  ] as [string, Region, string][])("%s", (_name, region, expected) => {
+    expect(degreeBbox(region)).toBe(expected);
+  });
+
+  it("writes negative zero as 0", () => {
+    expect(degreeBbox(box([-0, -0, 0, 0]))).toBe("0,0,1,1");
+    expect(degreeBbox(box([-5, -5, -0.2, -0.2]))).toBe("-5,-5,0,0");
+  });
+
+  it.each([
+    ["a circle", { lat: 10, lon: 20, radius: 111194.927 }, "18,9,22,11"],
+    ["a radius-0 circle off the grid", { lat: 37.5, lon: -122.5, radius: 0 }, "-123,37,-122,38"],
+    ["a radius-0 circle on the grid", { lat: 20, lon: 10, radius: 0 }, "10,20,11,21"],
+    ["a circle across the antimeridian", { lat: 0, lon: 179.75, radius: 55597.4635 }, "179,-1,-179,1"],
+    ["a circle centred on the antimeridian", { lat: 0, lon: 180, radius: 55597.4635 }, "179,-1,-179,1"],
+    ["a circle holding the north pole", { lat: 89.5, lon: 10, radius: 111194.927 }, "-180,88,180,90"],
+    ["a circle holding the south pole", { lat: -89.5, lon: 10, radius: 111194.927 }, "-180,-90,180,-88"],
+  ] as [string, Region, string][])("uses the enclosing box of %s", (_name, region, expected) => {
+    expect(degreeBbox(region)).toBe(expected);
+  });
+
+  describe("containment", () => {
+    const TOL = 1e-9;
+    const RAD = Math.PI / 180;
+    const segments = (w: number, e: number): [number, number][] => (w <= e ? [[w, e]] : [[w, 180], [-180, e]]);
+    const parts = (out: string) => out.split(",").map(Number);
+
+    const wellFormed = (out: string) => {
+      const [w, s, e, n] = parts(out);
+      expect(out.split(",").every((c) => /^-?\d+$/.test(c) && c !== "-0")).toBe(true);
+      expect(s).toBeLessThan(n);
+      expect(w < e || (w > 0 && e < 0 && !(w === 180 && e === -180))).toBe(true);
+    };
+    const lonIn = (lon: number, out: [number, number][]) => out.some(([a, b]) => lon >= a - TOL && lon <= b + TOL);
+
+    it("contains every bbox of a grid and has whole-degree, server-valid output", () => {
+      const lons = [-180, -179.5, -10.3, -0.2, 0, 0.7, 10, 179.2, 180];
+      const lats = [-90, -45.5, -0.3, 0, 12.2, 89.4, 90];
+      for (const minLon of lons) {
+        for (const maxLon of lons) {
+          for (const minLat of lats) {
+            for (const maxLat of lats.filter((l) => l >= minLat)) {
+              const out = degreeBbox({ bbox: [minLon, minLat, maxLon, maxLat] });
+              const [w, s, e, n] = parts(out);
+              wellFormed(out);
+              expect(s).toBeLessThanOrEqual(minLat + TOL);
+              expect(n).toBeGreaterThanOrEqual(maxLat - TOL);
+              const outSegments = segments(w, e);
+              for (const [lo, hi] of segments(minLon, maxLon)) {
+                const covered = outSegments.some(([a, b]) => a <= lo + TOL && b >= hi - TOL);
+                expect(covered, `${[minLon, minLat, maxLon, maxLat]} -> ${out}`).toBe(true);
+              }
+            }
+          }
+        }
+      }
+    });
+
+    it("contains points around every circle of a grid and has whole-degree, server-valid output", () => {
+      const lats = [-90, -60, -0.4, 0, 37.77, 89.5, 90];
+      const lons = [-180, -179.9, 0, 0.3, 122.4, 179.9, 180];
+      const radii = [0, 1, 500, 50000, 500000, 3e6];
+      for (const lat of lats) {
+        for (const lon of lons) {
+          for (const radius of radii) {
+            const out = degreeBbox({ lat, lon, radius });
+            wellFormed(out);
+            const [w, s, e, n] = parts(out);
+            const outSegments = segments(w, e);
+            const d = radius / 111194.927 * RAD;
+            for (let k = 0; k < 24; k++) {
+              const theta = (k * 15 * Math.PI) / 180;
+              const lat2 = Math.asin(Math.sin(lat * RAD) * Math.cos(d) + Math.cos(lat * RAD) * Math.sin(d) * Math.cos(theta));
+              let lon2 =
+                lon +
+                (Math.atan2(Math.sin(theta) * Math.sin(d) * Math.cos(lat * RAD), Math.cos(d) - Math.sin(lat * RAD) * Math.sin(lat2)) / RAD);
+              if (lon2 > 180) lon2 -= 360;
+              if (lon2 < -180) lon2 += 360;
+              const label = `${lat},${lon},${radius} at ${k * 15} deg -> ${out}`;
+              expect(lat2 / RAD, label).toBeGreaterThanOrEqual(s - TOL);
+              expect(lat2 / RAD, label).toBeLessThanOrEqual(n + TOL);
+              // A point at lon 180 or -180 is the same meridian: either side counts.
+              const inside = lonIn(lon2, outSegments) || (Math.abs(Math.abs(lon2) - 180) < 1e-6 && (lonIn(180, outSegments) || lonIn(-180, outSegments)));
+              expect(inside, label).toBe(true);
+            }
+          }
+        }
+      }
+    });
   });
 });

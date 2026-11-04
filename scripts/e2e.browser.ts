@@ -24,7 +24,7 @@ test("client works cross-origin against a real garganorn", async () => {
   const tileset = await client.describeTileset(served!.slug!);
   expect(tileset.collections.some(wanted)).toBe(true);
 
-  const nearby = await client.searchPlaces({ dataset, collection, region, sort: "distance" });
+  const nearby = await client.searchNearby({ dataset, collection, region, sort: "distance" });
   expect(nearby.complete).toBe(true);
   expect(nearby.places.length).toBeGreaterThan(0);
   const distances = nearby.places.map((h) => h.distance);
@@ -35,7 +35,7 @@ test("client works cross-origin against a real garganorn", async () => {
   const named = nearby.places.find((h) => h.origin && typeof h.place.name === "string" && h.place.name);
   expect(named).toBeDefined();
   const name = named!.place.name as string;
-  const matched = await client.searchPlaces({ dataset, collection, region, text: name });
+  const matched = await client.searchNearby({ dataset, collection, region, text: name });
   expect(matched.places.some((h) => h.origin === named!.origin && h.score !== null)).toBe(true);
 
   const record = await new AtgeoClient({ server: ATGEO_SERVER }).getPlace({ origin: named!.origin as string });
