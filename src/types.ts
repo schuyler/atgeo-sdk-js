@@ -91,6 +91,21 @@ export interface SearchOptions {
   signal?: AbortSignal;
 }
 
+// Unlike searchNearby's text, the keyword is sent to the server. A region is sent only as a box snapped
+// outward to whole degrees; no precise coordinate leaves the client. Without a region the search is worldwide.
+export interface PlaceSearchOptions {
+  dataset: string;
+  keyword: string;
+  collection?: string;
+  region?: Region;
+  signal?: AbortSignal;
+}
+
+// The server's hits, in the server's order.
+export interface PlaceSearchResult {
+  places: PlaceRecord[];
+}
+
 export interface SearchHit {
   origin: string | null;
   // The collection the hit belongs to, matched against its tile's attribution (contract section 8); null when

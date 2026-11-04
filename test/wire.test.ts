@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import fixture from "../fixtures/lenient-readers.json" with { type: "json" };
 import { DecodingError } from "../src/index.js";
-import { readPlace, readServiceDescription, readTileList, readTilePayload, readTileset } from "../src/wire.js";
+import { readPlace, readPlaceList, readServiceDescription, readTileList, readTilePayload, readTileset } from "../src/wire.js";
 
 // The lenient readers against fixtures/lenient-readers.json, which the ports vendor (contract section 1).
 // An absent field is a missing key, so the comparison is strict.
@@ -9,6 +9,7 @@ const readers: Record<string, (body: unknown) => unknown> = {
   getTiles: readTileList,
   tilePayload: readTilePayload,
   getPlace: readPlace,
+  searchPlaces: (body) => ({ places: readPlaceList(body) }),
   describeService: readServiceDescription,
   describeTileset: readTileset,
 };

@@ -21,7 +21,7 @@ function setup() {
   return { fake, client: new AtgeoClient({ fetch: fake.fetch }) };
 }
 
-const firstHit = async (client: AtgeoClient) => (await client.searchPlaces({ ...OVERTURE, region })).places[0];
+const firstHit = async (client: AtgeoClient) => (await client.searchNearby({ ...OVERTURE, region })).places[0];
 
 describe("a search hit's place", () => {
   it("is frozen, and assigning, deleting or defining a property throws", async () => {
@@ -133,13 +133,13 @@ describe("a search result's attribution", () => {
       ],
     });
     const client = new AtgeoClient({ fetch: fake.fetch });
-    const r1 = await client.searchPlaces({ ...OVERTURE, region });
+    const r1 = await client.searchNearby({ ...OVERTURE, region });
     const original = structuredClone(r1.attribution);
     expect(original[0].licenses).toEqual(licenses);
     r1.attribution[0].licenses!.push("https://l.example/changed");
     r1.attribution[0].release = "changed";
     r1.attribution.reverse();
-    const r2 = await client.searchPlaces({ ...OVERTURE, region });
+    const r2 = await client.searchNearby({ ...OVERTURE, region });
     expect(r2.attribution).toStrictEqual(original);
     expect(r2.attribution).not.toBe(r1.attribution);
   });

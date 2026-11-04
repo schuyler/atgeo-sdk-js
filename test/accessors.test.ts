@@ -33,7 +33,7 @@ async function seen(value: PlaceValue): Promise<Seen[]> {
       return counting(input, init);
     }) as typeof fetch,
   });
-  const hit = (await warm.searchPlaces({ ...OVERTURE, region })).places[0];
+  const hit = (await warm.searchNearby({ ...OVERTURE, region })).places[0];
   const before = requests.length;
   const cached = await warm.getPlace({ origin: placeOrigin("x") });
   // The warm getPlace is answered from the cache: no request of any kind.

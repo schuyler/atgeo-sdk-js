@@ -96,3 +96,45 @@ export function queryBboxes(region: Region): string[] {
     return [lon0, lat0, lon1, lat1].map(fixed).join(",");
   });
 }
+
+// Whole-degree steps, with the same tolerance idea as the 0.01 degree snap.
+const down = (x: number) => (Math.abs(x - Math.round(x)) < EPSILON ? Math.round(x) : Math.floor(x));
+const up = (x: number) => (Math.abs(x - Math.round(x)) < EPSILON ? Math.round(x) : Math.ceil(x));
+
+function degreeSpan(min: number, max: number, limit: number): [number, number] {
+  const lo = down(min);
+  const hi = up(max);
+  if (lo !== hi) return [lo, hi];
+  return hi < limit ? [lo, hi + 1] : [lo - 1, hi];
+}
+
+// The searchPlaces bbox string "w,s,e,n": the region's enclosing box snapped outward to whole degrees.
+// A box that crosses the antimeridian, or touches it on one side only, goes out as one crossing box
+// (west > 0 > east) a degree past the seam when that is expressible, else as full longitude.
+export function degreeBbox(region: Region): string {
+  const [minLon, minLat, maxLon, maxLat] =
+    "bbox" in region ? region.bbox : circleBox(region.lat, region.lon, region.radius);
+  const [s, n] = degreeSpan(minLat, maxLat, 90);
+  let w: number;
+  let e: number;
+  let crossing: boolean;
+  if (minLon <= maxLon) {
+    [w, e] = degreeSpan(minLon, maxLon, 180);
+    // The server compares stored longitudes numerically, so a box ending at 180 would miss a place
+    // stored at -180, and the reverse. A box on the seam at one side only goes a degree past it.
+    crossing = (e === 180) !== (w === -180);
+    if (e === 180 && crossing) e = -179;
+    if (w === -180 && crossing) w = 179;
+  } else {
+    w = down(minLon);
+    e = up(maxLon);
+    if (w === 180) w = 179;
+    if (e === -180) e = -179;
+    crossing = true;
+  }
+  if (crossing && !(w > 0 && e < 0)) {
+    w = -180;
+    e = 180;
+  }
+  return [w, s, e, n].map(String).join(",");
+}

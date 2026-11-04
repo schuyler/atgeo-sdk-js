@@ -1685,5 +1685,439 @@
     "name": "no usable body: empty array",
     "body": [],
     "decodingError": true
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "no usable body: null body",
+    "body": null,
+    "decodingError": true
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "no usable body: array body",
+    "body": [],
+    "decodingError": true
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "no usable body: string body",
+    "body": "x",
+    "decodingError": true
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "no usable body: number body",
+    "body": 5,
+    "decodingError": true
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "no usable body: no places",
+    "body": {
+      "uri": "x"
+    },
+    "decodingError": true
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "no usable body: places is null",
+    "body": {
+      "places": null
+    },
+    "decodingError": true
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "no usable body: places is an object",
+    "body": {
+      "places": {}
+    },
+    "decodingError": true
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "no usable body: places is a string",
+    "body": {
+      "places": "x"
+    },
+    "decodingError": true
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "empty list",
+    "body": {
+      "places": []
+    },
+    "result": {
+      "places": []
+    }
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "the full answer",
+    "body": {
+      "places": [
+        {
+          "uri": "urn:atgeo:d:c:1",
+          "url": "https://x.example/d/c/1",
+          "importance": 5,
+          "value": {
+            "name": "A",
+            "extra": [
+              1
+            ]
+          },
+          "attribution": [
+            {
+              "dataset": "d",
+              "collection": "c",
+              "licenses": [
+                "l"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "result": {
+      "places": [
+        {
+          "uri": "urn:atgeo:d:c:1",
+          "value": {
+            "name": "A",
+            "extra": [
+              1
+            ]
+          },
+          "importance": 5,
+          "attribution": [
+            {
+              "dataset": "d",
+              "collection": "c",
+              "licenses": [
+                "l"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "entries that are not objects are skipped",
+    "body": {
+      "places": [
+        null,
+        "x",
+        5,
+        [],
+        {
+          "uri": "b",
+          "value": {}
+        }
+      ]
+    },
+    "result": {
+      "places": [
+        {
+          "uri": "b",
+          "value": {},
+          "attribution": []
+        }
+      ]
+    }
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "an entry whose uri is not a string is skipped",
+    "body": {
+      "places": [
+        {
+          "value": {}
+        },
+        {
+          "uri": 5,
+          "value": {}
+        },
+        {
+          "uri": null,
+          "value": {}
+        },
+        {
+          "uri": "b",
+          "value": {}
+        }
+      ]
+    },
+    "result": {
+      "places": [
+        {
+          "uri": "b",
+          "value": {},
+          "attribution": []
+        }
+      ]
+    }
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "an entry whose value is not an object is skipped",
+    "body": {
+      "places": [
+        {
+          "uri": "a"
+        },
+        {
+          "uri": "a",
+          "value": null
+        },
+        {
+          "uri": "a",
+          "value": []
+        },
+        {
+          "uri": "a",
+          "value": "x"
+        },
+        {
+          "uri": "a",
+          "value": 5
+        },
+        {
+          "uri": "b",
+          "value": {}
+        }
+      ]
+    },
+    "result": {
+      "places": [
+        {
+          "uri": "b",
+          "value": {},
+          "attribution": []
+        }
+      ]
+    }
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "no importance",
+    "body": {
+      "places": [
+        {
+          "uri": "a",
+          "value": {}
+        }
+      ]
+    },
+    "result": {
+      "places": [
+        {
+          "uri": "a",
+          "value": {},
+          "attribution": []
+        }
+      ]
+    }
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "a fractional importance is truncated toward zero",
+    "body": {
+      "places": [
+        {
+          "uri": "a",
+          "value": {},
+          "importance": -2.9
+        }
+      ]
+    },
+    "result": {
+      "places": [
+        {
+          "uri": "a",
+          "value": {},
+          "importance": -2,
+          "attribution": []
+        }
+      ]
+    }
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "non-number importance is absent",
+    "body": {
+      "places": [
+        {
+          "uri": "a",
+          "value": {},
+          "importance": "5"
+        }
+      ]
+    },
+    "result": {
+      "places": [
+        {
+          "uri": "a",
+          "value": {},
+          "attribution": []
+        }
+      ]
+    }
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "out-of-range importance is absent",
+    "body": {
+      "places": [
+        {
+          "uri": "a",
+          "value": {},
+          "importance": 1e+30
+        }
+      ]
+    },
+    "result": {
+      "places": [
+        {
+          "uri": "a",
+          "value": {},
+          "attribution": []
+        }
+      ]
+    }
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "attribution is read leniently",
+    "body": {
+      "places": [
+        {
+          "uri": "a",
+          "value": {},
+          "attribution": [
+            null,
+            {
+              "dataset": "d"
+            },
+            {
+              "dataset": "d",
+              "collection": "c",
+              "licenses": "l"
+            }
+          ]
+        }
+      ]
+    },
+    "result": {
+      "places": [
+        {
+          "uri": "a",
+          "value": {},
+          "attribution": [
+            {
+              "dataset": "d",
+              "collection": "c"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "attribution that is not an array is empty",
+    "body": {
+      "places": [
+        {
+          "uri": "a",
+          "value": {},
+          "attribution": "x"
+        }
+      ]
+    },
+    "result": {
+      "places": [
+        {
+          "uri": "a",
+          "value": {},
+          "attribution": []
+        }
+      ]
+    }
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "url is ignored",
+    "body": {
+      "places": [
+        {
+          "uri": "a",
+          "url": "https://x.example/a",
+          "value": {}
+        }
+      ]
+    },
+    "result": {
+      "places": [
+        {
+          "uri": "a",
+          "value": {},
+          "attribution": []
+        }
+      ]
+    }
+  },
+  {
+    "reader": "searchPlaces",
+    "name": "order and duplicates are kept",
+    "body": {
+      "places": [
+        {
+          "uri": "b",
+          "value": {
+            "n": 1
+          }
+        },
+        {
+          "uri": "a",
+          "value": {
+            "n": 2
+          }
+        },
+        {
+          "uri": "b",
+          "value": {
+            "n": 1
+          }
+        }
+      ]
+    },
+    "result": {
+      "places": [
+        {
+          "uri": "b",
+          "value": {
+            "n": 1
+          },
+          "attribution": []
+        },
+        {
+          "uri": "a",
+          "value": {
+            "n": 2
+          },
+          "attribution": []
+        },
+        {
+          "uri": "b",
+          "value": {
+            "n": 1
+          },
+          "attribution": []
+        }
+      ]
+    }
   }
 ]

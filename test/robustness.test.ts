@@ -45,7 +45,7 @@ describe("getTiles body", () => {
     ["a string tiles", { tiles: "x" }],
   ])("fails the search with a DecodingError on %s, requesting no tile", async (_name, body) => {
     const server = rawServer({ getTiles: body });
-    await expect(new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region })).rejects.toBeInstanceOf(DecodingError);
+    await expect(new AtgeoClient({ fetch: server.fetch }).searchNearby({ ...OVERTURE, region })).rejects.toBeInstanceOf(DecodingError);
     expect(server.nonXrpc()).toEqual([]);
   });
 
@@ -53,9 +53,9 @@ describe("getTiles body", () => {
     let body: Body = {};
     const server = rawServer({ getTiles: () => new Response(JSON.stringify(body)), tiles: { [tileUrl("a")]: { records: [{ value: place("a", "A", [here]) }] } } });
     const client = new AtgeoClient({ fetch: server.fetch });
-    await expect(client.searchPlaces({ ...OVERTURE, region })).rejects.toBeInstanceOf(DecodingError);
+    await expect(client.searchNearby({ ...OVERTURE, region })).rejects.toBeInstanceOf(DecodingError);
     body = { tiles: [tileUrl("a")] };
-    const result = await client.searchPlaces({ ...OVERTURE, region });
+    const result = await client.searchNearby({ ...OVERTURE, region });
     expect(ids(result.places)).toEqual([placeOrigin("a")]);
     expect(server.requests.filter((u) => u.includes("getTiles"))).toHaveLength(2);
   });
@@ -65,7 +65,7 @@ describe("getTiles body", () => {
       getTiles: { tiles: [5, null, [tileUrl("a")], tileUrl("a")] },
       tiles: { [tileUrl("a")]: { records: [{ value: place("a", "A", [here]) }] } },
     });
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ ...OVERTURE, region });
     expect(result).toMatchObject({ complete: true, tiles: { fetched: 1, failed: 0 }, tileFailures: [] });
     expect(server.nonXrpc()).toEqual([tileUrl("a")]);
   });
@@ -77,7 +77,7 @@ describe("tile records", () => {
   it("skips a record that is not an object, or has no object value, and keeps the tile", async () => {
     const server = withTiles([null, 5, "s", [], true, {}, { value: null }, { value: 5 }, { value: [] }, good]);
     const client = new AtgeoClient({ fetch: server.fetch });
-    const result = await client.searchPlaces({ ...OVERTURE, region });
+    const result = await client.searchNearby({ ...OVERTURE, region });
     expect(result).toMatchObject({ complete: true, tiles: { fetched: 1, failed: 0 }, tileFailures: [] });
     expect(ids(result.places)).toEqual([placeOrigin("good")]);
   });
@@ -91,15 +91,15 @@ describe("tile records", () => {
       },
     });
     // A dataset-only search, since a collection filter drops records with no origin.
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ region, dataset: "overturemaps.org" });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ region, dataset: "overturemaps.org" });
     expect(ids(result.places)).toEqual(["u-1"]);
   });
 
   it("leaves a cache that later searches and getPlace can read without throwing", async () => {
     const server = withTiles([null, { value: 5 }, good]);
     const client = new AtgeoClient({ fetch: server.fetch });
-    await client.searchPlaces({ ...OVERTURE, region });
-    const again = await client.searchPlaces({ ...OVERTURE, region });
+    await client.searchNearby({ ...OVERTURE, region });
+    const again = await client.searchNearby({ ...OVERTURE, region });
     expect(ids(again.places)).toEqual([placeOrigin("good")]);
     const before = server.requests.length;
     expect(await client.getPlace({ origin: placeOrigin("good") })).toMatchObject({ importance: 4 });
@@ -112,7 +112,7 @@ describe("tile records", () => {
       { value: { name: "One", locations: [here] }, uri: 5 },
       { value: { name: "Two", locations: [here] }, uri: 5 },
     ]);
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ region, dataset: "overturemaps.org" });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ region, dataset: "overturemaps.org" });
     expect(result.places.map((h) => [h.origin, h.place.name])).toEqual([
       [null, "One"],
       [null, "Two"],
@@ -121,7 +121,7 @@ describe("tile records", () => {
 
   it.each([["a string", "9"], ["true", true], ["an array", [9]], ["too large", 1e30]])("reads an importance that is %s as absent", async (_name, importance) => {
     const server = withTiles([{ value: place("p", "P", [here]), importance }]);
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ ...OVERTURE, region });
     expect(result.places.map((h) => h.importance)).toEqual([null]);
   });
 });
@@ -129,7 +129,7 @@ describe("tile records", () => {
 describe("tile attribution", () => {
   const good = { value: place("good", "Good", [here]), importance: 4 };
   const search = (tile: Body) =>
-    new AtgeoClient({ fetch: rawServer({ getTiles: { tiles: [tileUrl("a")] }, tiles: { [tileUrl("a")]: tile } }).fetch }).searchPlaces({ ...OVERTURE, region });
+    new AtgeoClient({ fetch: rawServer({ getTiles: { tiles: [tileUrl("a")] }, tiles: { [tileUrl("a")]: tile } }).fetch }).searchNearby({ ...OVERTURE, region });
 
   it("gives a search whose tiles lack attribution an empty attribution and null hit collections", async () => {
     const result = await search({ records: [good] });
@@ -156,19 +156,19 @@ describe("tile attribution", () => {
 describe("place locations and variants", () => {
   it("skips a null element of locations", async () => {
     const server = withTiles([{ value: place("p", "P", [null, 5, "x", [], here]) }]);
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ ...OVERTURE, region });
     expect(ids(result.places)).toEqual([placeOrigin("p")]);
   });
 
   it("skips a null element of locations that comes after the point, and in a circle search", async () => {
     const server = withTiles([{ value: place("p", "P", [here, null]) }]);
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region: { lat: 37.772, lon: -122.412, radius: 100 } });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ ...OVERTURE, region: { lat: 37.772, lon: -122.412, radius: 100 } });
     expect(ids(result.places)).toEqual([placeOrigin("p")]);
   });
 
   it("skips a null element of variants when the search has text, and still scores the others", async () => {
     const server = withTiles([{ value: place("p", "Unrelated", [here], { variants: [null, 5, [], { name: 7 }, { name: "Zanzibar" }] }) }]);
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region, text: "Zanzibar" });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ ...OVERTURE, region, text: "Zanzibar" });
     expect(ids(result.places)).toEqual([placeOrigin("p")]);
     expect(result.places[0].score).toBeCloseTo(1, 2);
   });
@@ -177,7 +177,7 @@ describe("place locations and variants", () => {
     const wrong = { $type: "community.lexicon.location.geo", latitude: [37.772], longitude: [-122.412] };
     const right = { $type: "community.lexicon.location.geo", latitude: 37.772, longitude: "-122.412" };
     const server = withTiles([{ value: place("array", "A", [wrong]) }, { value: place("numbers", "N", [wrong, right]) }]);
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ ...OVERTURE, region });
     expect(ids(result.places)).toEqual([placeOrigin("numbers")]);
   });
 });
@@ -295,7 +295,7 @@ describe("a 2xx body that is not JSON", () => {
 
   // Invalid JSON is the platform's SyntaxError, not a DecodingError (contract section 1).
   it.each([
-    ["getTiles", (c: AtgeoClient) => c.searchPlaces({ ...OVERTURE, region }), { getTiles: broken }],
+    ["getTiles", (c: AtgeoClient) => c.searchNearby({ ...OVERTURE, region }), { getTiles: broken }],
     ["getPlace", (c: AtgeoClient) => c.getPlace({ origin }), { getPlace: broken }],
     ["describeService", (c: AtgeoClient) => c.describeService(), { describeService: broken }],
     ["describeTileset", (c: AtgeoClient) => c.describeTileset("s"), { describeTileset: broken }],
@@ -306,7 +306,7 @@ describe("a 2xx body that is not JSON", () => {
   });
 
   it("reports a tile payload as a decode failure whose error is a SyntaxError", async () => {
-    const result = await new AtgeoClient({ fetch: rawServer({ getTiles: { tiles: [tileUrl("a")] }, tiles: { [tileUrl("a")]: broken } }).fetch }).searchPlaces({ ...OVERTURE, region });
+    const result = await new AtgeoClient({ fetch: rawServer({ getTiles: { tiles: [tileUrl("a")] }, tiles: { [tileUrl("a")]: broken } }).fetch }).searchNearby({ ...OVERTURE, region });
     expect(result.tileFailures).toEqual([{ url: tileUrl("a"), kind: "decode", error: expect.any(SyntaxError) }]);
   });
 });

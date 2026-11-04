@@ -7,7 +7,7 @@ Status: proposal. Nothing here has been built. The normalization, similarity, sn
 ## 1. Goals
 
 - Same results as the TypeScript client for the same server answers, verified by the shared fixtures.
-- Same privacy properties: search text and precise coordinates never leave the device.
+- Same privacy properties: `searchNearby`'s text and precise coordinates never leave the device. `searchPlaces` sends its keyword to the server by design and its region only as whole degrees (contract §9, §12).
 - Idiomatic Swift: `async`/`await`, structured cancellation, value types, `Sendable` throughout, usable from Swift 6 strict concurrency.
 - No dependencies beyond Foundation. The package must build on Linux so that CI can run without a Mac and so that server-side Swift can use it.
 
@@ -45,12 +45,13 @@ Method names match the other SDKs; argument labels follow the Swift API Design G
 
 | JS / Kotlin | Swift |
 |---|---|
-| `searchPlaces(options)` | `searchPlaces(region:dataset:text:collection:sort:)` |
+| `searchNearby(options)` | `searchNearby(region:dataset:text:collection:sort:)` |
+| `searchPlaces({ dataset, keyword, collection, region })` | `searchPlaces(dataset:keyword:collection:region:)` |
 | `getPlace({ origin })` | `getPlace(origin:)` |
 | `describeService()` | `describeService()` |
 | `describeTileset(slug)` | `describeTileset(_ slug:)` |
 
-The XRPC-named methods keep their names because they are the names of the server queries they wrap, and that is how a reader will look them up.
+The XRPC-named methods (`searchPlaces`, `getPlace`, `describeService`, `describeTileset`) keep their names because they are the names of the server queries they wrap, and that is how a reader will look them up. `searchNearby` is the tile search; it was called `searchPlaces` before the server grew a query of that name.
 
 ```swift
 public actor AtgeoClient {
@@ -63,7 +64,7 @@ public actor AtgeoClient {
         cacheBudgetBytes: Int = AtgeoClient.defaultCacheBudgetBytes
     )
 
-    public func searchPlaces(
+    public func searchNearby(
         region: Region,
         dataset: String,
         text: String? = nil,
@@ -71,11 +72,21 @@ public actor AtgeoClient {
         sort: SortMode = .fused
     ) async throws -> SearchResult
 
+    /// The server's keyword search (contract §9). Sends `keyword` to the server; `region` goes out as whole degrees.
+    public func searchPlaces(
+        dataset: String,
+        keyword: String,
+        collection: String? = nil,
+        region: Region? = nil
+    ) async throws -> PlaceSearchResult
+
     public func getPlace(origin: String) async throws -> PlaceRecord
     public func describeService() async throws -> ServiceDescription
     public func describeTileset(_ slug: String) async throws -> Tileset
 }
 ```
+
+`searchPlaces` follows contract §9 (checks, the one request, server order) and §12 (item 5: the keyword is sent by design).
 
 Why an actor: the three caches are mutable state shared by every call, and callers will use one client from many tasks (a search per keystroke, a `getPlace(origin:)` per row). An actor makes that safe without a lock and makes the cache's "lowest URL wins" rule easy to keep honest. Actor reentrancy during `await` is acceptable here: the worst case is two concurrent searches both missing the tile-list cache and both fetching, which the contract permits (§14). Tile fetches themselves run as child tasks of a `TaskGroup` outside the actor, so the actor is not held while bytes arrive.
 
@@ -86,6 +97,8 @@ public enum Region: Sendable, Hashable {
     /// Degrees. west > east crosses the antimeridian.
     case bbox(west: Double, south: Double, east: Double, north: Double)
 }
+
+public struct PlaceSearchResult: Sendable, Equatable { public var places: [PlaceRecord] }   // server order
 
 public enum SortMode: String, Sendable, CaseIterable { case fused, distance, similarity }
 
@@ -233,7 +246,7 @@ The transport reads the whole body before checking the status, so that an error 
 - Cache lookups happen on the actor before a child is added, so a cached tile never becomes a request. Cache writes happen on the actor as children complete. The records are assembled in URL order from a dictionary after the group finishes, so completion order never affects results (§4.3).
 - Nothing in the client blocks a thread. CPU work (normalizing, scoring) runs on the actor; for a region with tens of thousands of records this is milliseconds, and a caller who cares can wrap the call in a detached task.
 
-Cancellation: a `Task` cancelled during a request sees `URLSession` abort the request and the error propagate. A fully cached call does not check cancellation and completes (§11); do not add `try Task.checkCancellation()` at the top of `searchPlaces`.
+Cancellation: a `Task` cancelled during a request sees `URLSession` abort the request and the error propagate. A fully cached call does not check cancellation and completes (§11); do not add `try Task.checkCancellation()` at the top of `searchNearby`.
 
 ## 6. Implementing the contract in Swift
 
@@ -336,7 +349,7 @@ The fake server is an `HTTPTransport` that:
 
 Test files map one to one onto the reference's `test/*.test.ts`, with the same `describe`/`it` names turned into suites and test names, so that a reviewer can diff coverage by eye. The fixture tests (`normalize.json`, `jaro-winkler.json`, `ranking-scenarios.json`) are table-driven with `@Test(arguments:)`.
 
-The default transport gets one small test of its own against a loopback HTTP server, since the fake replaces it everywhere else: a 4xx with a JSON error body, a 4xx with an empty body, a redirect, cancellation mid-request, and the request headers it sets itself: `Accept: application/json`, `User-Agent: atgeo-client-swift` and `Accept-Language: *` (contract §12, item 5). URLSession adds others of its own that vary by platform, so the test asserts only on these.
+The default transport gets one small test of its own against a loopback HTTP server, since the fake replaces it everywhere else: a 4xx with a JSON error body, a 4xx with an empty body, a redirect, cancellation mid-request, and the request headers it sets itself: `Accept: application/json`, `User-Agent: atgeo-client-swift` and `Accept-Language: *` (contract §12, item 6). URLSession adds others of its own that vary by platform, so the test asserts only on these.
 
 An end-to-end script against a local garganorn (`ATGEO_SERVER`, `ATGEO_DATASET`, `ATGEO_COLLECTION`, `ATGEO_REGION`, same variables as `scripts/e2e.ts`) lives in `Scripts/e2e.swift` and is not part of `swift test`.
 

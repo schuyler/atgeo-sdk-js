@@ -123,6 +123,28 @@ export function readPlace(body: unknown): { value: PlaceValue; importance?: numb
   });
 }
 
+/** A searchPlaces answer: the entries of `places` that are objects with a string `uri` and an object `value`
+ * (frozen), in served order. `importance` is absent unless a number; `attribution` is empty unless an array. */
+export function readPlaceList(
+  body: unknown,
+): { uri: string; value: PlaceValue; importance?: number; attribution: Attribution[] }[] {
+  if (!isObject(body)) return unusable("searchPlaces body is not an object");
+  if (!Array.isArray(body.places)) return unusable("searchPlaces body has no places array");
+  const list: { uri: string; value: PlaceValue; importance?: number; attribution: Attribution[] }[] = [];
+  for (const e of body.places) {
+    if (!isObject(e) || typeof e.uri !== "string" || !isObject(e.value)) continue;
+    list.push(
+      present({
+        uri: e.uri,
+        value: freezePlace(e.value),
+        importance: readInteger(e.importance),
+        attribution: readAttributionList(e.attribution) ?? [],
+      }),
+    );
+  }
+  return list;
+}
+
 const readCollectionRef = (o: Record<string, unknown>): CollectionRef =>
   present({ dataset: readString(o.dataset), collection: readString(o.collection) });
 

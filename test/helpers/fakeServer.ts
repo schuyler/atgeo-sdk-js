@@ -9,6 +9,7 @@ import geo from "../lexicon/geo.json" with { type: "json" };
 import getPlace from "../lexicon/getPlace.json" with { type: "json" };
 import getTiles from "../lexicon/getTiles.json" with { type: "json" };
 import placeLexicon from "../lexicon/place.json" with { type: "json" };
+import searchPlacesLexicon from "../lexicon/searchPlaces.json" with { type: "json" };
 import tilePayload from "../lexicon/tilePayload.json" with { type: "json" };
 
 const lexicons = new Lexicons([
@@ -21,6 +22,7 @@ const lexicons = new Lexicons([
   getPlace,
   getTiles,
   placeLexicon,
+  searchPlacesLexicon,
   tilePayload,
 ] as unknown as LexiconDoc[]);
 
@@ -59,6 +61,9 @@ export interface FakeServerOptions {
   // Replaces the whole getTiles answer after dataset and collection selection has passed.
   tilesFor?: TilesFor;
   failTiles?: string[];
+  // The org.atgeo.searchPlaces answer: the placeView list to serve, or an error response (HTTP 400).
+  // Default: no places. Params are checked against the lexicon either way.
+  searchPlaces?: { places: unknown[] } | { error: string; message: string };
 }
 
 export interface FakeServer {
@@ -104,7 +109,7 @@ export function record(value: PlaceValue, importance?: number, uri?: string): Ti
   return { value, ...(importance === undefined ? {} : { importance }), ...(uri === undefined ? {} : { uri }) };
 }
 
-// The dataset and collection a search names; searchPlaces has no defaults (contract section 4.1).
+// The dataset and collection a search names; searchNearby has no defaults (contract section 4.1).
 export const OVERTURE = { dataset: "overturemaps.org", collection: "place" } as const;
 
 export function overture(tiles: FakeTileset["tiles"]): FakeTileset {
@@ -192,6 +197,10 @@ export function fakeServer(options: FakeServerOptions = {}): FakeServer {
       const handlers: Record<string, (params: Record<string, string>) => Response> = {
         "org.atgeo.getTiles": getTilesAnswer,
         "org.atgeo.getPlace": (params) => getPlaceAnswer(params.uri),
+        "org.atgeo.searchPlaces": () => {
+          const scripted = options.searchPlaces ?? { places: [] };
+          return "error" in scripted ? xrpcError(scripted.error, scripted.message) : answer("org.atgeo.searchPlaces", scripted);
+        },
         "org.atgeo.describeService": () =>
           answer("org.atgeo.describeService", {
             did,
