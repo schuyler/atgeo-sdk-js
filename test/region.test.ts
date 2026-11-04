@@ -304,7 +304,7 @@ describe("degreeBbox", () => {
     ["widens a zero-width box east", box([10, 0, 10, 5]), "10,0,11,5"],
     ["widens a zero-width box at 180 west", box([180, 0, 180, 5]), "179,0,180,5"],
     ["widens a zero-width box at -180 east", box([-180, 0, -180, 5]), "-180,0,-179,5"],
-    ["widens a box that snaps to one degree on both axes", box([10.2, 20.2, 10.2, 20.2]), "10,20,11,21"],
+    ["snaps a sub-degree box outward to one degree on both axes", box([10.2, 20.2, 10.2, 20.2]), "10,20,11,21"],
   ] as [string, Region, string][])("%s", (_name, region, expected) => {
     expect(degreeBbox(region)).toBe(expected);
   });

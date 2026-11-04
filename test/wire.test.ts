@@ -9,7 +9,7 @@ const readers: Record<string, (body: unknown) => unknown> = {
   getTiles: readTileList,
   tilePayload: readTilePayload,
   getPlace: readPlace,
-  searchPlaces: readPlaceList,
+  searchPlaces: (body) => ({ places: readPlaceList(body) }),
   describeService: readServiceDescription,
   describeTileset: readTileset,
 };
