@@ -46,7 +46,7 @@ export class AtgeoClient {
     return this.search(options, query, sort);
   }
 
-  // Sends the keyword to the server; nothing is cached (contract section 9).
+  // Sends the keyword to the server; nothing is cached (contract sections 9 and 10).
   searchPlaces(options: PlaceSearchOptions): Promise<PlaceSearchResult> {
     if (typeof (options as { dataset?: unknown }).dataset !== "string") throw new TypeError("searchPlaces requires a dataset");
     if (typeof (options as { keyword?: unknown }).keyword !== "string") throw new TypeError("searchPlaces requires a keyword");

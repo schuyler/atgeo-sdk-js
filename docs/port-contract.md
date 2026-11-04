@@ -168,11 +168,11 @@ The snapped box must contain the caller's region. The precise coordinates must n
 1. The enclosing box `[minLon, minLat, maxLon, maxLat]` is the region's bbox, or, for a circle, the box of "Circle to enclosing box" above (unchanged).
 2. `down(x)` is `round(x)` if `|x - round(x)| < 1e-9`, else `floor(x)`. `up(x)` is the same with `ceil`.
 3. Latitude: `south = down(minLat)`, `north = up(maxLat)`. If they are equal, `north += 1` unless `north` is 90, in which case `south -= 1`.
-4. Longitude, when `minLon <= maxLon`: `west = down(minLon)`, `east = up(maxLon)`. If they are equal, widen as for latitude with limit 180: `east += 1` unless `east` is 180, in which case `west -= 1`.
+4. Longitude, when `minLon <= maxLon`: `west = down(minLon)`, `east = up(maxLon)`. If they are equal, widen as for latitude with limit 180: `east += 1` unless `east` is 180, in which case `west -= 1`. Unlike step 5, nothing is done at the seam here: the server compares stored longitudes numerically, so a box ending at 180 misses a place stored at -180, and the reverse. The reference accepts this; a port must send the same box.
 5. Longitude, when `minLon > maxLon` (a crossing box): `west = down(minLon)` and `east = up(maxLon)`, then `west = 179` if it is 180, and `east = -179` if it is -180. The server compares stored longitudes numerically, so a box that ends at -180 would miss a place stored at 180, and the reverse; widening by a degree past the seam keeps both. If now `west > 0 > east`, send them as they are (a crossing box). Otherwise, because snapping closed the gap or a side lies at or past 0, send `-180` and `180` instead: that contains the region and keeps the latitude band.
 6. Each number is written as a plain integer: no sign on zero, no decimal point, no exponent (`-0` is `0`).
 
-Every result satisfies the server's rules: integers, `south < north`, and `west < east` unless the box crosses with `west > 0 > east` and is not `180,…,-180`. It contains the region, up to the same 1e-9 tolerance as the 0.01° snap. A whole-world search sends no `bbox` at all.
+Every result satisfies the server's rules: integers, `south < north`, and `west < east` unless the box crosses with `west > 0 > east` and is not `180,…,-180`. It contains the region, up to the same 1e-9 tolerance as the 0.01° snap. A call with no region sends no `bbox` at all.
 
 Worked examples, from `test/region.test.ts`:
 
@@ -501,7 +501,7 @@ These are what the client is for. They must be covered by tests against a reques
 
 1. `searchNearby`: the search text never appears on the wire: not raw, not normalized, not any of its words, not URL-encoded, not in a header, not in a body, in any case folding. Test with text such as `Zanzibar Quokka`, `  ZANZIBÁR   quokka `, and check every request's URL (raw and percent-decoded), headers and body for the text, its trimmed and lowercased forms, the normalized form, each normalized word, and prefixes such as `zanzib`.
 2. `searchNearby` issues only `getTiles` and tile requests, all GET, with no body.
-3. Precise coordinates never appear on the wire, from any call, `searchPlaces`'s region included. For a circle at `37.7749295, -122.4194155` with radius `123.456789`, none of `37.7749295`, `122.4194155`, `7749295`, `4194155`, `123.456789` appears in any request. For a bbox of full-precision corners, none of the corner digit strings appears.
+3. Precise coordinates of a region never appear on the wire, from any call, `searchPlaces`'s region included. (A `searchPlaces` keyword is the caller's text and is sent as typed, item 5.) For a circle at `37.7749295, -122.4194155` with radius `123.456789`, none of `37.7749295`, `122.4194155`, `7749295`, `4194155`, `123.456789` appears in any request. For a bbox of full-precision corners, none of the corner digit strings appears.
 4. `getPlace` on a cache miss sends the origin and nothing else.
 5. `searchPlaces` issues one GET with no body. Its only parameters are `dataset`, `collection` (if given), `q` (the caller's keyword, verbatim) and `bbox` (whole degrees, only if a region is given). The keyword is sent by design: that is the call's purpose, and a port's README says so prominently and points to `searchNearby` for a search that must stay private. Nothing else the caller did not give goes out, and the region leaves the device only as whole degrees.
 6. A port's default transport sends a fixed `User-Agent` naming the port and nothing else, with no version (`atgeo-client-kotlin`, `atgeo-client-swift`), the same on every request and every device, in place of the platform's default, which can name the OS release and the device model (Android's `http.agent` does). A version would split users by app update. It sends no `Accept-Language` derived from the user's locale: either none, or a fixed `*`. URLSession adds one from the locale (`en-US,en;q=0.9` on Apple platforms, `en` on Linux) unless the request sets its own. The fake server replaces the transport, so the transport's own loopback test asserts both, on whatever platforms the port's CI can run it; where it can't (Kotlin on Android), the port's spec says how the platform's behaviour was established. The reference is exempt: its runtime's `fetch` sends values that are fixed for the runtime (Node 22's sends `User-Agent: node` and `Accept-Language: *`), and in a browser or a worker both headers are the runtime's, the same for every site. A transport the app supplies sends whatever its HTTP stack does, and the port's README says so.
@@ -570,7 +570,7 @@ It also reproduces the worked examples in sections 3 and 6, and ports the behavi
 - `frozenPlace.test.ts`: what an app can and can't change in a place or an attribution list it was handed (sections 8 and 9).
 - `privacy.test.ts`: section 12.
 
-The fake server should validate every request and response it handles against the lexicons where a lexicon validator exists for the language. Where none does, it must at least check the request parameter names, that `bbox` matches `^-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d$`, and that its own responses carry the required fields. It must capture every request's URL for the privacy tests, and the method, headers and body where the port's transport seam carries them (a seam that carries only a URL fixes those by construction), and must be able to go offline (every request fails) and to fail named tiles.
+The fake server should validate every request and response it handles against the lexicons where a lexicon validator exists for the language. Where none does, it must at least check the request parameter names, that a `getTiles` `bbox` matches `^-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d$` and a `searchPlaces` `bbox` matches `^-?\d+,-?\d+,-?\d+,-?\d+$`, and that its own responses carry the required fields. It must capture every request's URL for the privacy tests, and the method, headers and body where the port's transport seam carries them (a seam that carries only a URL fixes those by construction), and must be able to go offline (every request fails) and to fail named tiles.
 
 ## 14. Deliberate freedoms
 
@@ -580,7 +580,7 @@ A port may:
 - measure cache size in bytes (section 10);
 - prune expired TTL entries;
 - cancel sibling requests when a `getTiles` call fails, where structured concurrency does that for free;
-- coalesce concurrent identical requests, as long as results are unchanged;
+- coalesce concurrent identical requests, as long as results are unchanged, except `searchPlaces`, which makes one request per call (section 10);
 - throw a cancellation error from a fully cached call (section 11);
 - fail a cancelled search with its cancellation error rather than with the error of the tile that was in flight (section 4.4);
 - time out a request in its transport: a timeout is a network failure, and inside a tile fetch a failed tile. The reference gives every request 30 seconds in all, covering the body (`requestTimeoutMs`), and raises a `TimeoutError` `DOMException`; the Kotlin port and Rust's reqwest transport time out a connection after 10 seconds and a stalled read after 30, Rust's ureq transport adds 120 seconds for the whole call, and the Python port's `Urllib3Transport` 120 seconds (`total_timeout`) plus up to one read timeout (the Python port's aiohttp transport has no total), and the Swift port keeps `URLSession`'s default 60-second request timeout, which restarts whenever data arrives. A caller's cancellation is never reported as a timeout: it surfaces as the cancellation error (section 11), and a timeout while the caller's signal is still live is the network failure.
@@ -591,7 +591,7 @@ A port must not:
 
 - be stricter than section 1 about what a response may contain: fail a call over an unknown field, a missing optional field, a wrong-typed field it can treat as absent, or a record it can skip;
 - retry a failed tile within a search;
-- log above its platform's debug level, or log the search text or the region at any level (section 12);
+- log above its platform's debug level, or log the search text, a `searchPlaces` keyword or the region at any level (section 12);
 - report a failure anywhere but to the app: no telemetry, no error report to the server (section 12);
 - count as a failed tile an error from the client's own work after a tile is decoded (section 4.4);
 - subdivide a region after `BboxTooLarge`;
