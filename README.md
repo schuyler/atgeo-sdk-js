@@ -206,7 +206,7 @@ console.log(places.map((p) => p.name));
 
 It returns `{ places }`: the `PlaceRecord`s the server sent (at most 20), each the same `{ origin, place, name, location, importance, attribution }` that `getPlace` returns, in the server's order (Wikipedia-notable places first, then by importance). Nothing is re-sorted, deduplicated or cached, and the SDK computes no distances. Two identical calls make two requests, and a hit is not in the tile cache, so `getPlace` on it asks the server.
 
-A region that crosses the antimeridian goes out as one box, not two requests. A region is widened outward to whole degrees, at least one degree on a side; a crossing region that snapping can't keep crossing goes out as the full longitude range, keeping its latitude band.
+A region that crosses the antimeridian goes out as one box, not two requests. A region is widened outward to whole degrees, at least one degree on a side; a region that crosses or touches the antimeridian goes out as one box a degree past it, so places stored at either 180 or -180 are found, or as the full longitude range (keeping its latitude band) when one box can't hold it.
 
 Errors: it throws `TypeError` synchronously, before any request, for a `dataset` that isn't a string, then a `keyword` that isn't a string (so an old `searchPlaces({ dataset, region, text })` call fails instead of sending your text to the server), then an invalid region. A server error rejects with an `AtgeoError` carrying the server's code (`KeywordRequired`, `DatasetNotFound`, `CollectionNotFound`, `InvalidBbox`, and so on). A 2xx body with no `places` array rejects with `DecodingError`; entries in it that can't be read are skipped.
 

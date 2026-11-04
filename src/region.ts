@@ -109,8 +109,8 @@ function degreeSpan(min: number, max: number, limit: number): [number, number] {
 }
 
 // The searchPlaces bbox string "w,s,e,n": the region's enclosing box snapped outward to whole degrees.
-// A box that crosses the antimeridian stays one crossing box (west > 0 > east) when snapping leaves it
-// expressible, else it goes out as full longitude.
+// A box that crosses the antimeridian, or touches it on one side only, goes out as one crossing box
+// (west > 0 > east) a degree past the seam when that is expressible, else as full longitude.
 export function degreeBbox(region: Region): string {
   const [minLon, minLat, maxLon, maxLat] =
     "bbox" in region ? region.bbox : circleBox(region.lat, region.lon, region.radius);
