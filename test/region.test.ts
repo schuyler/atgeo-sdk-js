@@ -357,7 +357,7 @@ describe("degreeBbox", () => {
       expect(s).toBeLessThan(n);
       expect(w < e || (w > 0 && e < 0 && !(w === 180 && e === -180))).toBe(true);
       // A box touches the seam on both sides or neither: one ending at 180 would miss a place stored at -180.
-      expect(w === -180).toBe(e === 180);
+      expect(w === -180, out).toBe(e === 180);
     };
     const lonIn = (lon: number, out: [number, number][]) => out.some(([a, b]) => lon >= a - TOL && lon <= b + TOL);
 

@@ -168,11 +168,11 @@ The snapped box must contain the caller's region. The precise coordinates must n
 1. The enclosing box `[minLon, minLat, maxLon, maxLat]` is the region's bbox, or, for a circle, the box of "Circle to enclosing box" above (unchanged).
 2. `down(x)` is `round(x)` if `|x - round(x)| < 1e-9`, else `floor(x)`. `up(x)` is the same with `ceil`.
 3. Latitude: `south = down(minLat)`, `north = up(maxLat)`. If they are equal, `north += 1` unless `north` is 90, in which case `south -= 1`.
-4. Longitude, when `minLon <= maxLon`: `west = down(minLon)`, `east = up(maxLon)`. If they are equal, widen as for latitude with limit 180: `east += 1` unless `east` is 180, in which case `west -= 1`. Unlike step 5, nothing is done at the seam here: the server compares stored longitudes numerically, so a box ending at 180 misses a place stored at -180, and the reverse. The reference accepts this; a port must send the same box.
+4. Longitude, when `minLon <= maxLon`: `west = down(minLon)`, `east = up(maxLon)`. If they are equal, widen as for latitude with limit 180: `east += 1` unless `east` is 180, in which case `west -= 1`. Then, if exactly one side is on the seam, take it a degree past the seam, as step 5 does for a crossing box: `east = -179` if it is 180, or `west = 179` if it is -180, and finish as step 5 does from "If now". A box from -180 to 180 is sent as it is.
 5. Longitude, when `minLon > maxLon` (a crossing box): `west = down(minLon)` and `east = up(maxLon)`, then `west = 179` if it is 180, and `east = -179` if it is -180. The server compares stored longitudes numerically, so a box that ends at -180 would miss a place stored at 180, and the reverse; widening by a degree past the seam keeps both. If now `west > 0 > east`, send them as they are (a crossing box). Otherwise, because snapping closed the gap or a side lies at or past 0, send `-180` and `180` instead: that contains the region and keeps the latitude band.
 6. Each number is written as a plain integer: no sign on zero, no decimal point, no exponent (`-0` is `0`).
 
-Every result satisfies the server's rules: integers, `south < north`, and `west < east` unless the box crosses with `west > 0 > east` and is not `180,…,-180`. It contains the region, up to the same 1e-9 tolerance as the 0.01° snap. A call with no region sends no `bbox` at all.
+Every result satisfies the server's rules: integers, `south < north`, and `west < east` unless the box crosses with `west > 0 > east` and is not `180,…,-180`. A box ends at 180 only if it starts at -180, so no place on the seam is missed. It contains the region, up to the same 1e-9 tolerance as the 0.01° snap. A call with no region sends no `bbox` at all.
 
 Worked examples, from `test/region.test.ts`:
 
@@ -182,8 +182,11 @@ Worked examples, from `test/region.test.ts`:
 | bbox [10, 20, 12, 22] | `10,20,12,22` |
 | bbox [10.00000001, 20, 12.00000001, 22] | `10,20,13,22` |
 | bbox [0, 90, 5, 90] | `0,89,5,90` |
-| bbox [180, 0, 180, 5] | `179,0,180,5` |
-| bbox [-180, 0, -180, 5] | `-180,0,-179,5` |
+| bbox [180, 0, 180, 5] | `179,0,-179,5` |
+| bbox [-180, 0, -180, 5] | `179,0,-179,5` |
+| bbox [170, 0, 180, 1] | `170,0,-179,1` |
+| bbox [-180, 0, -170, 1] | `179,0,-170,1` |
+| bbox [-10, 0, 180, 1] | `-180,0,180,1` |
 | bbox [170.5, 10, -170.5, 20] | `170,10,-170,20` |
 | bbox [180, 0, -180, 1] | `179,0,-179,1` |
 | bbox [5, 10.5, 3, 12.5] | `-180,10,180,13` |

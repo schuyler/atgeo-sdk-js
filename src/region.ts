@@ -117,17 +117,24 @@ export function degreeBbox(region: Region): string {
   const [s, n] = degreeSpan(minLat, maxLat, 90);
   let w: number;
   let e: number;
+  let crossing: boolean;
   if (minLon <= maxLon) {
     [w, e] = degreeSpan(minLon, maxLon, 180);
+    // The server compares stored longitudes numerically, so a box ending at 180 would miss a place
+    // stored at -180, and the reverse. A box on the seam at one side only goes a degree past it.
+    crossing = (e === 180) !== (w === -180);
+    if (e === 180 && crossing) e = -179;
+    if (w === -180 && crossing) w = 179;
   } else {
     w = down(minLon);
     e = up(maxLon);
     if (w === 180) w = 179;
     if (e === -180) e = -179;
-    if (!(w > 0 && e < 0)) {
-      w = -180;
-      e = 180;
-    }
+    crossing = true;
+  }
+  if (crossing && !(w > 0 && e < 0)) {
+    w = -180;
+    e = 180;
   }
   return [w, s, e, n].map(String).join(",");
 }
