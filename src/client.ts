@@ -3,13 +3,15 @@ import { collectionPrefix, copyAttribution, inCollection, mergeAttribution } fro
 import { dedupe, describe, inRegion, locate } from "./merge.js";
 import { normalize } from "./normalize.js";
 import { rank } from "./rank.js";
-import { queryBboxes, validateRegion } from "./region.js";
+import { degreeBbox, queryBboxes, validateRegion } from "./region.js";
 import { Transport, checkStatus, mapLimit, type HttpResponse } from "./transport.js";
-import { readPlace, readServiceDescription, readTileList, readTilePayload, readTileset } from "./wire.js";
+import { readPlace, readPlaceList, readServiceDescription, readTileList, readTilePayload, readTileset } from "./wire.js";
 import type {
   Attribution,
   ClientOptions,
   PlaceRecord,
+  PlaceSearchOptions,
+  PlaceSearchResult,
   SearchOptions,
   SearchResult,
   ServiceDescription,
@@ -34,14 +36,40 @@ export class AtgeoClient {
     this.tiles = new TileCache(options.cacheBudgetBytes ?? 50 * 1024 * 1024);
   }
 
-  searchPlaces(options: SearchOptions): Promise<SearchResult> {
+  searchNearby(options: SearchOptions): Promise<SearchResult> {
     // First, before the region and sort checks: a missing dataset is the caller's argument error (contract section 4.1).
-    if (typeof (options as { dataset?: unknown }).dataset !== "string") throw new TypeError("searchPlaces requires a dataset");
+    if (typeof (options as { dataset?: unknown }).dataset !== "string") throw new TypeError("searchNearby requires a dataset");
     validateRegion(options.region);
     const sort = options.sort ?? "fused";
     const query = normalize(options.text ?? "");
     if (sort === "similarity" && !query) throw new TypeError("sort 'similarity' requires text");
     return this.search(options, query, sort);
+  }
+
+  // Sends the keyword to the server; nothing is cached (contract section 9).
+  searchPlaces(options: PlaceSearchOptions): Promise<PlaceSearchResult> {
+    if (typeof (options as { dataset?: unknown }).dataset !== "string") throw new TypeError("searchPlaces requires a dataset");
+    if (typeof (options as { keyword?: unknown }).keyword !== "string") throw new TypeError("searchPlaces requires a keyword");
+    if (options.region) validateRegion(options.region);
+    return this.searchByKeyword(options);
+  }
+
+  private async searchByKeyword(options: PlaceSearchOptions): Promise<PlaceSearchResult> {
+    const { dataset, collection, keyword, region, signal } = options;
+    const params: Record<string, string> = { dataset };
+    if (collection !== undefined) params.collection = collection;
+    params.q = keyword;
+    if (region) params.bbox = degreeBbox(region);
+    const found = readPlaceList(await this.transport.xrpc("org.atgeo.searchPlaces", params, signal));
+    return {
+      places: found.map(({ uri, value, importance, attribution }) => ({
+        origin: uri,
+        place: value,
+        importance: importance ?? null,
+        attribution,
+        ...describe(value, locate(value)),
+      })),
+    };
   }
 
   private async search(options: SearchOptions, query: string, sort: NonNullable<SearchOptions["sort"]>): Promise<SearchResult> {
