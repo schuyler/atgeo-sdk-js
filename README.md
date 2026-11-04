@@ -199,7 +199,7 @@ console.log(places.map((p) => p.name));
 | Option | Meaning |
 |---|---|
 | `dataset` | Required, with no default. |
-| `keyword` | Required string, sent to the server exactly as you give it. A place matches when every word of the keyword begins a word of one of its names. The server decides what is valid (a keyword with no word of two or more characters among its first 12 is `KeywordRequired`); the client checks nothing. |
+| `keyword` | Required string, sent to the server exactly as you give it. A place matches when every word of the keyword begins a word of one of its names. The server decides what is valid (a keyword with no word of two or more characters among its first 12 distinct words is `KeywordRequired`); the client checks nothing. |
 | `collection` | Optional. Restricts the search to one collection of the dataset. |
 | `region` | Optional circle or bounding box, as for `searchNearby`. Only its enclosing box goes out, snapped outward to whole degrees (`[-122.42, 37.77, -122.41, 37.78]` becomes `-123,37,-122,38`), so the server learns at most the whole-degree box around your region, never anything finer. Without a region the whole world is searched. |
 | `signal` | Aborts the call. |
@@ -246,7 +246,7 @@ Returns the tileset's descriptor: `slug`, `collections` (each a `{ dataset, coll
 
 **`searchPlaces` sends your keyword to the server.** `searchNearby` never sends its text: your search text never leaves the device, and neither does your precise location. Pick the one that matches what you can tell the server.
 
-`searchPlaces` sends one GET with `dataset`, `collection` if you gave one, `q` (the keyword, verbatim) and, if you gave a region, `bbox` in whole degrees. Nothing else: no precise coordinates, no body. The server learns what was typed and, at most, a box a degree or more on a side. The region never reveals a point, but the keyword is sent verbatim, so anything typed into it (an address, coordinates) reaches the server. The client never logs the keyword. The server's spec says it keeps keywords in no log; the SDK can't check that for a server you don't run.
+`searchPlaces` sends one GET with `dataset`, `collection` if you gave one, `q` (the keyword, verbatim) and, if you gave a region, `bbox` in whole degrees. Nothing else: no precise coordinates, no body. The server learns what was typed and, at most, a box a degree or more on a side. The region never reveals more than which whole-degree box it is in, but the keyword is sent verbatim, so anything typed into it (an address, coordinates) reaches the server. The client never logs the keyword. The server's spec says it keeps keywords in no log; the SDK can't check that for a server you don't run.
 
 The rest of this section is about `searchNearby`.
 
