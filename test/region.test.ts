@@ -302,8 +302,8 @@ describe("degreeBbox", () => {
     ["widens a zero-height box at 90 south", box([0, 90, 5, 90]), "0,89,5,90"],
     ["widens a zero-height box at -90 north", box([0, -90, 5, -90]), "0,-90,5,-89"],
     ["widens a zero-width box east", box([10, 0, 10, 5]), "10,0,11,5"],
-    ["widens a zero-width box at 180 west", box([180, 0, 180, 5]), "179,0,180,5"],
-    ["widens a zero-width box at -180 east", box([-180, 0, -180, 5]), "-180,0,-179,5"],
+    ["widens a zero-width box at 180 across the seam", box([180, 0, 180, 5]), "179,0,-179,5"],
+    ["widens a zero-width box at -180 across the seam", box([-180, 0, -180, 5]), "179,0,-179,5"],
     ["snaps a sub-degree box outward to one degree on both axes", box([10.2, 20.2, 10.2, 20.2]), "10,20,11,21"],
   ] as [string, Region, string][])("%s", (_name, region, expected) => {
     expect(degreeBbox(region)).toBe(expected);
@@ -314,6 +314,11 @@ describe("degreeBbox", () => {
     ["clamps a west edge of 180 to 179", box([180, 0, -170, 1]), "179,0,-170,1"],
     ["clamps an east edge of -180 to -179", box([170, 0, -180, 1]), "170,0,-179,1"],
     ["clamps both seam edges", box([180, 0, -180, 1]), "179,0,-179,1"],
+    ["carries a box ending at 180 a degree past the seam", box([170, 0, 180, 1]), "170,0,-179,1"],
+    ["carries a box starting at -180 a degree past the seam", box([-180, 0, -170, 1]), "179,0,-170,1"],
+    ["sends full longitude when a box ending at 180 starts at or west of 0", box([-10, 0, 180, 1]), "-180,0,180,1"],
+    ["sends full longitude when a box starting at -180 ends at or east of 0", box([-180, 0, 10, 1]), "-180,0,180,1"],
+    ["keeps a box spanning -180 to 180", box([-180, 0, 180, 1]), "-180,0,180,1"],
     ["sends full longitude when snapping closes the gap", box([0.5, 0, 0.2, 1]), "-180,0,180,1"],
     ["sends full longitude when the east side snaps to 0", box([5, 0, -0.2, 1]), "-180,0,180,1"],
     ["sends full longitude when both sides are east of 0", box([5, 0, 3, 1]), "-180,0,180,1"],
@@ -351,6 +356,8 @@ describe("degreeBbox", () => {
       expect(out.split(",").every((c) => /^-?\d+$/.test(c) && c !== "-0")).toBe(true);
       expect(s).toBeLessThan(n);
       expect(w < e || (w > 0 && e < 0 && !(w === 180 && e === -180))).toBe(true);
+      // A box touches the seam on both sides or neither: one ending at 180 would miss a place stored at -180.
+      expect(w === -180).toBe(e === 180);
     };
     const lonIn = (lon: number, out: [number, number][]) => out.some(([a, b]) => lon >= a - TOL && lon <= b + TOL);
 
