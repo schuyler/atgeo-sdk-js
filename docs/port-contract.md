@@ -379,13 +379,19 @@ textScore(query, value):
 
 Words past the twelfth count only in the whole-query comparison. `variants` must be an array for its names to count; a variant that is not an object (`null` included), or whose `name` is not a string, is skipped.
 
-A record whose score is below `0.6` is dropped (exactly 0.6 is kept). Without text, the score is null and nothing is dropped.
+Whether a record is kept depends on its score and its match tier (below):
 
-Examples with the reference: for query `Starbux`, `Starbucks` scores `0.9048`, `Star Bakery` `0.8740`, `Stardust Bar` `0.8530`, and `Home Depot` is dropped. For `Munich`, a place named `München` with variant `Munich` scores `1`.
+- tier 1 (a word match): kept, whatever its score (#57);
+- tier 2 (fuzzy only): kept if its score is at least `0.8` (exactly 0.8 is kept; #53);
+- a query with text whose tokens all fold away (`&`), for which every record is tier 1: kept if its score is at least `0.6`, as before #53.
+
+Without text, the score is null and nothing is dropped. Tier 1 is exempt because a word match is what the user typed the start of, however short: `qu` scores only about 0.41 against `Bar & Grill at the Old Quarry`, and a partial name such as `in n out` against `In-N-Out Burger` (about 0.70) or `ferry` against `San Francisco Ferry Building` (about 0.79) is diluted by the whole-name half of the score. A fuzzy match needs 0.8 because below that a random string finds real names: `xqzjvkwpfhgy` scores 0.64 against `Qwizify`. One- and two-edit typos score above 0.82 (`cfae` against `Cafe` 0.93, `kostco` against `Costco` 0.89, `ph0` against `Pho` 0.82).
+
+Examples with the reference: for query `Starbux`, `Starbucks` scores `0.9048`, `Star Bakery` `0.8740`, `Stardust Bar` `0.8530` (all tier 2 and kept), and `Home Depot` is dropped. For `Munich`, a place named `München` with variant `Munich` scores `1`.
 
 ### Match tier
 
-A record that cleared the threshold has a match tier: 1 if the text matches one of its names word for word (each query word begins a word of that name), 2 if it matches only fuzzily. Ranking sorts by tier first (section 8). The tier is computed only for records that scored at least 0.6, and only when there is text.
+With text, every record has a match tier: 1 if the text matches one of its names word for word (each query word begins a word of that name), 2 if it matches only fuzzily. Ranking sorts by tier first (section 8). The tier is computed for every record when there is text, since it decides which threshold applies, and never without text.
 
 ```
 fold(s):
@@ -514,7 +520,7 @@ A port vendors, at a pinned atgeo-sdk-js commit recorded in a `SOURCE` file:
 
 - `fixtures/normalize.json` (41 cases, exact match),
 - `fixtures/jaro-winkler.json` (33 cases, within 5e-7),
-- `fixtures/ranking-scenarios.json` (19 scenarios, membership). Each scenario names the `dataset` and `collection` it is a search of, and the runner passes them (section 8).
+- `fixtures/ranking-scenarios.json` (22 scenarios, membership). Each scenario names the `dataset` and `collection` it is a search of, and the runner passes them (section 8).
 - `fixtures/match-tiers.json` (36 cases, exact match): the tier of section 7 for a query and a place, described there.
 - `fixtures/match-tiers-lone-surrogates.json` (4 cases, exact match, run only where a string can hold a lone surrogate): the same, for queries and names with lone surrogates.
 - `fixtures/qualifying-keywords.json` (23 cases, exact match): `{ name, keyword, qualifies }`, the qualifying predicate of section 17 on the raw keyword, including Hangul, spacing and enclosing marks, astral characters, duplicates and the twelve-word cap.
@@ -543,7 +549,7 @@ Three things the fixtures do not pin:
 
 ### The keyword scenarios
 
-`keyword-fallback.json` holds scenarios of `{ name, description, dataset, collection?, region, keyword, keywordRegion, sort?, tiles: [{ url, body }], keywordAnswer, expect: { keywordRequested, bbox?, origins, disclosed } }`. `keywordAnswer` is a `searchPlaces` body. They cover a tier-1 nearby hit (no request), tier-2 hits only (a request, the merge order, the dedupe), no nearby hits, an unqualified keyword (no request), `"none"` against `"degree"`, and a circle region's snapped box with a collection. The bodies need not validate against the lexicons, so the runner uses a raw request-capturing server, as the attribution scenarios do:
+`keyword-fallback.json` holds scenarios of `{ name, description, dataset, collection?, region, keyword, keywordRegion, sort?, tiles: [{ url, body }], keywordAnswer, expect: { keywordRequested, bbox?, origins, disclosed } }`. `keywordAnswer` is a `searchPlaces` body. They cover a tier-1 nearby hit (no request), a tier-1 nearby hit with a low score (no request), tier-2 hits only (a request, the merge order, the dedupe), no nearby hits, an unqualified keyword (no request), `"none"` against `"degree"`, and a circle region's snapped box with a collection. The bodies need not validate against the lexicons, so the runner uses a raw request-capturing server, as the attribution scenarios do:
 
 - A fresh client per scenario, for the reason given there.
 - The base server is `https://places.atgeo.org`. `getTiles` (any query) is answered with the scenario's tile URLs in listed order, each tile is served with its `body`, and `searchPlaces` (any query) is answered with `keywordAnswer`. Every request is recorded.
@@ -698,7 +704,7 @@ The predicate can still disagree with the server on compatibility characters tha
 7. The result is the nearby result with `places` replaced by the merged list (each hit keeping its `via`), `attribution` the union of the nearby and keyword attribution (deduplicated and sorted as in 4.10, the nearby entry winning a tie), and `disclosed = { keyword: true, region }` where `region` is the finest region sent during the call: `0.01` if the nearby search sent anything, else `1` for `"degree"`, else null. A cold `"degree"` fallback therefore reports `0.01` though the keyword travelled with a one-degree box. `complete`, `overview`, `tiles` and `tileFailures` are the nearby search's.
 8. A keyword request the server refuses with `KeywordRequired` (section 17's predicate let it through) does not fail the call: the result is the nearby result, as in step 4, except that `disclosed = { keyword: true, region }` with `region` as in step 7, since the keyword went out. Any other failed keyword request rejects the call, as a failed `getTiles` does, with the keyword request's own error, and the nearby results are lost. A cancelled keyword request does the same with the cancellation outcome. There is no result, so no `disclosed`, though the keyword may have gone out: a port's documentation says that a failure after the nearby half means the keyword may have reached the server. No port attaches `disclosed` to the error, so that the ports' error types stay alike (#58).
 
-A nearby search that had failed tiles (`complete = false`) and no tier-1 hit still falls back, though the missing tiles might have held one. The solid-hit test runs on the hits that cleared the 0.6 similarity threshold, so a short keyword whose only tier-1 place scored under 0.6 falls back. `fixtures/keyword-fallback.json` pins the decision and the merge.
+A nearby search that had failed tiles (`complete = false`) and no tier-1 hit still falls back, though the missing tiles might have held one. A tier-1 place is always a hit (section 7), so a short keyword such as `qu` whose only tier-1 place scores low (`Bar & Grill at the Old Quarry`, about 0.41) finds it and does not fall back (#57). `fixtures/keyword-fallback.json` pins the decision and the merge.
 
 ## 19. autocompleteByKeyword
 

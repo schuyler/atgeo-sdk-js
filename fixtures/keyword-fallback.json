@@ -78,8 +78,114 @@
     }
   },
   {
+    "name": "low-scoring word match: no keyword request",
+    "description": "A word match is a solid hit whatever its similarity score (#57): \"qu\" starts a word of \"Bar & Grill at the Old Quarry\", which scores only about 0.41, so the place is in the result and the keyword stays on the device.",
+    "dataset": "overturemaps.org",
+    "region": {
+      "bbox": [
+        -122.42,
+        37.76,
+        -122.41,
+        37.78
+      ]
+    },
+    "keyword": "qu",
+    "keywordRegion": "degree",
+    "tiles": [
+      {
+        "url": "https://places.atgeo.org/tiles/t.json",
+        "body": {
+          "publishedAt": "2026-01-01T00:00:00Z",
+          "records": [
+            {
+              "value": {
+                "$type": "org.atgeo.place",
+                "origin": "urn:atgeo:overturemaps.org:place:q",
+                "name": "Bar & Grill at the Old Quarry",
+                "locations": [
+                  {
+                    "$type": "community.lexicon.location.geo",
+                    "latitude": "37.770000",
+                    "longitude": "-122.415000"
+                  }
+                ]
+              }
+            },
+            {
+              "value": {
+                "$type": "org.atgeo.place",
+                "origin": "urn:atgeo:overturemaps.org:place:c",
+                "name": "Mexican Grill",
+                "locations": [
+                  {
+                    "$type": "community.lexicon.location.geo",
+                    "latitude": "37.770000",
+                    "longitude": "-122.415000"
+                  }
+                ]
+              }
+            }
+          ],
+          "attribution": [
+            {
+              "dataset": "overturemaps.org",
+              "collection": "place",
+              "release": "2026-01-01",
+              "source": "https://overturemaps.org",
+              "licenses": [
+                "CDLA-Permissive-2.0"
+              ],
+              "attribution": "Overture Maps Foundation"
+            }
+          ]
+        }
+      }
+    ],
+    "keywordAnswer": {
+      "places": [
+        {
+          "uri": "urn:atgeo:overturemaps.org:place:k",
+          "value": {
+            "$type": "org.atgeo.place",
+            "origin": "urn:atgeo:overturemaps.org:place:k",
+            "name": "Quarry Lane",
+            "locations": [
+              {
+                "$type": "community.lexicon.location.geo",
+                "latitude": "37.770000",
+                "longitude": "-122.415000"
+              }
+            ]
+          },
+          "attribution": [
+            {
+              "dataset": "overturemaps.org",
+              "collection": "place",
+              "release": "2026-01-01",
+              "source": "https://overturemaps.org",
+              "licenses": [
+                "CDLA-Permissive-2.0"
+              ],
+              "attribution": "Overture Maps Foundation"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": {
+      "keywordRequested": false,
+      "origins": [
+        "urn:atgeo:overturemaps.org:place:q"
+      ],
+      "disclosed": {
+        "keyword": false,
+        "region": 0.01
+      }
+    }
+  },
+  {
     "name": "tier-2 only, degree region: keyword hits lead, a shared origin is dropped from the nearby part",
-    "description": "Starbux matches Starbucks and Starlight Cafe only fuzzily, so the keyword request is made with the region snapped to 1 degree. The merge lists the keyword hits in server order, then the nearby hits in nearby order without any origin the keyword answer holds.",
+    "description": "Starbux matches Starbucks and Star Bakery only fuzzily, so the keyword request is made with the region snapped to 1 degree. The merge lists the keyword hits in server order, then the nearby hits in nearby order without any origin the keyword answer holds.",
     "dataset": "overturemaps.org",
     "region": {
       "bbox": [
@@ -115,7 +221,7 @@
               "value": {
                 "$type": "org.atgeo.place",
                 "origin": "urn:atgeo:overturemaps.org:place:b",
-                "name": "Starlight Cafe",
+                "name": "Star Bakery",
                 "locations": [
                   {
                     "$type": "community.lexicon.location.geo",
@@ -267,7 +373,7 @@
               "value": {
                 "$type": "org.atgeo.place",
                 "origin": "urn:atgeo:overturemaps.org:place:b",
-                "name": "Starlight Cafe",
+                "name": "Star Bakery",
                 "locations": [
                   {
                     "$type": "community.lexicon.location.geo",
@@ -541,7 +647,7 @@
               "value": {
                 "$type": "org.atgeo.place",
                 "origin": "urn:atgeo:overturemaps.org:place:b",
-                "name": "Starlight Cafe",
+                "name": "Star Bakery",
                 "locations": [
                   {
                     "$type": "community.lexicon.location.geo",
@@ -658,7 +764,7 @@
               "value": {
                 "$type": "org.atgeo.place",
                 "origin": "urn:atgeo:overturemaps.org:place:b",
-                "name": "Starlight Cafe",
+                "name": "Star Bakery",
                 "locations": [
                   {
                     "$type": "community.lexicon.location.geo",

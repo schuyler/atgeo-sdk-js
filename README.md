@@ -153,7 +153,7 @@ interface NearbyHit {
 }
 ```
 
-When `text` is given, places scoring below 0.6 are dropped. The rest rank in two tiers, whatever the sort mode: a place with a name (its own or a variant) that has every word of the query as the start of one of its words (apostrophes ignored, other punctuation splitting words, so `mcdonalds` finds `McDonald's` and `st louis` finds `St. Louis`) comes before one that matches only fuzzily. Within a tier, the sort mode decides.
+When `text` is given, places rank in two tiers, whatever the sort mode: a place with a name (its own or a variant) that has every word of the query as the start of one of its words (apostrophes ignored, other punctuation splitting words, so `mcdonalds` finds `McDonald's` and `st louis` finds `St. Louis`) comes before one that matches only fuzzily. A word match is always kept, however short the query, so `qu` finds `Bar & Grill at the Old Quarry`. A fuzzy match is kept only if it scores at least 0.8, which keeps typos (`starbux` finds `Starbucks`) and drops near-random matches (`xqzjvkwpfhgy` finds nothing). A query made only of punctuation, such as `&`, keeps places scoring at least 0.6. Within a tier, the sort mode decides.
 
 Sort modes:
 

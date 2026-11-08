@@ -264,7 +264,7 @@ describe("determinism", () => {
     {
       url: url("a"),
       records: [
-        record(place("dup", "Copy A", [point(37.775, -122.415)]), 5),
+        record(place("dup", "Alpha Copy A", [point(37.775, -122.415)]), 5),
         record(place("a1", "Alpha", [point(37.772, -122.412)]), 5),
         record(place("a2", "Alpha", [point(37.772, -122.412)]), 5),
       ],
@@ -272,14 +272,14 @@ describe("determinism", () => {
     {
       url: url("b"),
       records: [
-        record(place("dup", "Copy B", [point(37.775, -122.415)]), 5),
+        record(place("dup", "Alpha Copy B", [point(37.775, -122.415)]), 5),
         record(place("b1", "Alpha", [point(37.772, -122.412)]), 5),
       ],
     },
     {
       url: url("c"),
       records: [
-        record(place("dup", "Copy C", [point(37.775, -122.415)]), 5),
+        record(place("dup", "Alpha Copy C", [point(37.775, -122.415)]), 5),
         record(place("c1", "Alpha", [point(37.772, -122.412)]), 5),
       ],
     },
@@ -303,6 +303,6 @@ describe("determinism", () => {
     expect(new Set(outputs).size).toBe(1);
     const parsed = JSON.parse(outputs[0]);
     expect(parsed.places.map((h: { origin: string }) => idOf(h.origin)).sort()).toEqual(["a1", "a2", "b1", "c1", "dup"]);
-    expect(parsed.places.find((h: { origin: string }) => idOf(h.origin) === "dup").place.name).toBe("Copy A");
+    expect(parsed.places.find((h: { origin: string }) => idOf(h.origin) === "dup").place.name).toBe("Alpha Copy A");
   });
 });

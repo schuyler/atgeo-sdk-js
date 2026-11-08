@@ -46,7 +46,7 @@ function serverFor(s: Scenario) {
 
 describe("keyword fallback scenarios", () => {
   it("has the scenarios the contract describes", () => {
-    expect(scenarios).toHaveLength(6);
+    expect(scenarios).toHaveLength(7);
   });
 
   // A fresh client per scenario: scenarios reuse tile urls, and the caches are keyed by dataset, collection and bbox.
