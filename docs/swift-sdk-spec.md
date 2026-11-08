@@ -2,7 +2,7 @@
 
 A Swift port of `@atgeo/client`: a client for the atgeo gazetteer that searches nearby places without telling the server what you searched for, and says so in the method name when a search might. This document covers the Swift package, its public API, and the decisions that are specific to Swift. Behaviour (what a search sends, filters, scores and returns) is defined once, for every port, in [port-contract.md](port-contract.md); this document cites it by section and does not restate it.
 
-Status: the port in schuyler/atgeo-sdk-swift (PRs #5, #14 and others) implements this document up to `searchNearby`; `searchByKeyword`, `searchNearbyThenByKeyword` and `autocompleteByKeyword` are specified here (contract sections 16 to 19) and not yet built. The normalization, similarity, snapping and distance recipes in section 6 have been run from Swift 6.4.1 on Linux against the fixtures and the contract's worked tables, and pass. Swift's standard library does differ in one place, final sigma, and section 6 says how to handle it. Treat every version number below as a starting point.
+Status: the port in schuyler/atgeo-sdk-swift (PRs #5, #14 and others) implements this document up to the nearby search (named `searchPlaces` in the port); `searchByKeyword`, `searchNearbyThenByKeyword` and `autocompleteByKeyword` are specified here (contract sections 16 to 19) and not yet built. The normalization, similarity, snapping and distance recipes in section 6 have been run from Swift 6.4.1 on Linux against the fixtures and the contract's worked tables, and pass. Swift's standard library does differ in one place, final sigma, and section 6 says how to handle it. Treat every version number below as a starting point.
 
 ## 1. Goals
 
