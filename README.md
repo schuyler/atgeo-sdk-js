@@ -381,6 +381,7 @@ There are more scripts in `package.json`, including a browser smoke test and an 
 - `attribution-scenarios.json` is a set of tiles served by a raw server, with the `attribution` and each hit's `collection` a search over them must give.
 - `match-tiers.json` is a query, a place and the match tier (1 or 2) a port must give it. `match-tiers-lone-surrogates.json` adds cases with lone surrogates, for ports whose strings can hold one.
 - `keyword-fallback.json` is a set of nearby searches with a keyword, a tile set and a canned keyword answer, with whether the keyword request is made, the bbox it carries, the merged list of origins in order, and `disclosed`. It pins the solid-hit decision and the merge.
+- `qualifying-keywords.json` is a raw keyword and whether the fallback and the autocompleter would send it (contract section 17).
 - `keyword-regions.json` maps each input bbox to the whole-degree bbox string a keyword search sends, with every seam at 0, +/-90 and +/-180 and every sign combination of crossing boxes.
 - `ranking-scenarios.json` describes regions, text, and records, and asserts which places land in the top K. It checks membership, not exact order, since the weights are likely to change. Each scenario names the `dataset` and `collection` it searches, and `"overview": true` makes the fake server answer `getTiles` with an overview. Each record is `{ value, importance }`: `value` is an `org.atgeo.place` with an `origin`, and `importance` is an integer, as on the wire. The expectations name places by `origin`.
 
