@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AtgeoClient } from "../src/index.js";
 import { OVERTURE, fakeServer, overture, place, placeOrigin, point, record } from "./helpers/fakeServer.js";
 
@@ -88,5 +88,69 @@ describe("autocompleteByKeyword when the server refuses a keyword the SDK judged
     const region = { bbox: [-122.42, 37.77, -122.41, 37.78] as [number, number, number, number] };
     const result = await client.autocompleteByKeyword({ ...OVERTURE, region }).searchByKeyword("ﬁ");
     expect(result.disclosed).toEqual({ keyword: true, region: 1 });
+  });
+});
+
+// #60: rules of section 19 and section 11 that no test killed before.
+describe("autocompleteByKeyword cancellation", () => {
+  // A fetch whose searchPlaces requests wait for their signal, so a call stays in flight until something aborts it.
+  function hanging() {
+    const started: string[] = [];
+    const fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      started.push(new Request(input).url);
+      return new Promise<Response>((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true }));
+    }) as typeof globalThis.fetch;
+    return { fetch, started };
+  }
+
+  it("rejects with the caller's own reason, without a request, when the caller's signal is already aborted", async () => {
+    const { server, client } = setup();
+    const reason = new Error("caller gave up");
+    const controller = new AbortController();
+    controller.abort(reason);
+    await expect(client.autocompleteByKeyword(OVERTURE).searchByKeyword("Zan", { signal: controller.signal })).rejects.toBe(reason);
+    expect(server.requests).toHaveLength(0);
+  });
+
+  it("rejects with the caller's own reason when the caller aborts mid-flight", async () => {
+    const { fetch, started } = hanging();
+    const reason = new Error("caller gave up");
+    const controller = new AbortController();
+    const call = new AtgeoClient({ fetch }).autocompleteByKeyword(OVERTURE).searchByKeyword("Zan", { signal: controller.signal });
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    controller.abort(reason);
+    await expect(call).rejects.toBe(reason);
+  });
+
+  it("removes its listener from the caller's signal once the call settles", async () => {
+    const { client } = setup();
+    const controller = new AbortController();
+    const added = vi.spyOn(controller.signal, "addEventListener");
+    const removed = vi.spyOn(controller.signal, "removeEventListener");
+    await client.autocompleteByKeyword(OVERTURE).searchByKeyword("Zan", { signal: controller.signal });
+    expect(added).toHaveBeenCalledTimes(1);
+    expect(removed).toHaveBeenCalledWith("abort", added.mock.calls[0][1]);
+  });
+
+  it("does not supersede a call on another autocompleter of the same client", async () => {
+    const { server } = setup();
+    let calls = 0;
+    // The first request waits for its signal; the rest go to the fake.
+    const fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
+      ++calls > 1
+        ? server.fetch(input, init)
+        : new Promise<Response>((resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+            setTimeout(() => resolve(server.fetch(input, init)), 20);
+          })) as typeof globalThis.fetch;
+    const client = new AtgeoClient({ fetch });
+    const first = client.autocompleteByKeyword(OVERTURE).searchByKeyword("Za");
+    await client.autocompleteByKeyword(OVERTURE).searchByKeyword("Zan");
+    await expect(first).resolves.toMatchObject({ disclosed: { keyword: true } });
+  });
+
+  it("names the keyword in the error for a keyword that is not a string", async () => {
+    const { client } = setup();
+    await expect(client.autocompleteByKeyword(OVERTURE).searchByKeyword(5 as never)).rejects.toThrow(/string keyword/);
   });
 });

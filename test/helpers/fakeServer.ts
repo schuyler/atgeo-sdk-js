@@ -179,6 +179,14 @@ export function fakeServer(options: FakeServerOptions = {}): FakeServer {
 
   const getTilesAnswer = (params: Record<string, string>): Response => {
     const { dataset, collection, bbox } = params;
+    // The server refuses a coordinate with more than two decimals; the client always sends exactly two, so any
+    // other form is the client's bug, which the fake reports rather than answers (contract section 13).
+    if (bbox.split(",").some((c) => /\.\d{3,}$/.test(c))) {
+      return xrpcError("BboxTooPrecise", "One or more bbox coordinates have more than 2 decimal places");
+    }
+    if (!/^-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d$/.test(bbox)) {
+      return xrpcError("InvalidRequest", `fake: getTiles bbox ${bbox} is not the client's two-decimal form`);
+    }
     const selected = select(dataset, collection);
     if (selected instanceof Response) return selected;
     const urls = selected.flatMap((t) => t.tiles.map((tile) => tile.url)).sort();

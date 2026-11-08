@@ -39,3 +39,25 @@ describe("disclosed", () => {
     expect(result.disclosed).toEqual({ keyword: true, region: null });
   });
 });
+
+// #60: what counts as sent for the region (contract section 4.11).
+describe("disclosed region counting", () => {
+  it("counts a getTiles request as sent even when it lists no tiles", async () => {
+    const server = fakeServer({ tilesets: [overture(tiles)], tilesFor: () => [] });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ ...OVERTURE, region });
+    expect(server.requests).toHaveLength(1);
+    expect(result.disclosed).toEqual({ keyword: false, region: 0.01 });
+  });
+
+  it("does not count a tile the client refused to fetch", async () => {
+    // The tile list is cached by the first search, so the second sends nothing: its only tile is refused.
+    const server = fakeServer({ tilesets: [overture(tiles)], tilesFor: () => ["ftp://tiles.example/p.json"] });
+    const client = new AtgeoClient({ fetch: server.fetch });
+    await client.searchNearby({ ...OVERTURE, region });
+    const before = server.requests.length;
+    const warm = await client.searchNearby({ ...OVERTURE, region });
+    expect(server.requests).toHaveLength(before);
+    expect(warm.tileFailures.map((f) => f.kind)).toEqual(["refused"]);
+    expect(warm.disclosed).toEqual({ keyword: false, region: null });
+  });
+});
