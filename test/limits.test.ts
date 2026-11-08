@@ -479,13 +479,16 @@ describe("a caller's abort is not a timeout", () => {
       ["no stream", true],
     ])("a response with %s that stalls", (_name, withoutStream) => {
       it("rejects with the caller's reason promptly when the signal was aborted beforehand", async () => {
-        const { response, state } = deafBody({ withoutStream });
+        const { response } = deafBody({ withoutStream });
         const controller = new AbortController();
         controller.abort(reason);
         const started = Date.now();
-        await expect(getPlace(new AtgeoClient({ fetch: (async () => response) as typeof fetch, requestTimeoutMs: 5000 }), controller.signal)).rejects.toBe(reason);
+        let calls = 0;
+        const fetch = (async () => (calls++, response)) as typeof globalThis.fetch;
+        await expect(getPlace(new AtgeoClient({ fetch, requestTimeoutMs: 5000 }), controller.signal)).rejects.toBe(reason);
         expect(Date.now() - started).toBeLessThan(2000);
-        if (!withoutStream) expect(state.cancelled).toBe(true);
+        // The request never reaches fetch (#59), so there is no stream to let go of.
+        expect(calls).toBe(0);
       });
 
       it("rejects with the caller's reason when the caller aborts inside the fetch", async () => {

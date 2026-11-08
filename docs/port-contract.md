@@ -486,7 +486,7 @@ Expiry tests set the clock, so a port must take its time source from somewhere a
 
 ## 11. Cancellation
 
-Every network-touching call accepts the platform's cancellation mechanism. Cancellation surfaces as the platform's cancellation error, from whatever request was in flight. In the reference, a call answered entirely from cache completes normally even when already cancelled; a port should match this, but it is not a conformance requirement.
+Every network-touching call accepts the platform's cancellation mechanism. Cancellation surfaces as the platform's cancellation error, from whatever request was in flight. In the reference, a call answered entirely from cache completes normally even when already cancelled; a port should match this, but it is not a conformance requirement. A request whose cancellation has already happened must not reach the port's HTTP layer, or an app-supplied transport that ignores cancellation would send it: the fallback's keyword, say, after the caller cancelled between the nearby and keyword halves (#59). The reference checks the signal before calling `fetch`.
 
 An autocompleter's call (section 19) honours the caller's own cancellation as well as its own supersession: a caller that cancels its call gets the port's cancellation outcome, even if the autocompleter supersedes it afterwards. A port arranges that the call is a child of the caller's task, or wraps it in its cancellation handler, or combines the two signals. A call the autocompleter has superseded has already ended with the supersession outcome, so a later abort by the caller changes nothing.
 

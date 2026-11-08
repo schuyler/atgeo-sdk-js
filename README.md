@@ -320,7 +320,7 @@ Returns the tileset's descriptor: `slug`, `collections` (each a `{ dataset, coll
   - `transport`: `fetch` threw, the body couldn't be read, the body was over `maxBodyBytes` (`BodyTooLargeError`), or the request ran past `requestTimeoutMs` (a `TimeoutError`). `error` is whatever it threw, as is.
 
   The kind comes from which step failed, not from the error's type: a custom `fetch` that throws an `AtgeoError` of its own is still `transport`. An entry holds the tile URL and what fetching it produced, never your search text or region, and the SDK doesn't log it or send it anywhere. What you do with it is up to you.
-- Aborting rejects with your signal's reason, from whatever request was in flight, and never with a timeout: when `requestTimeoutMs` runs out and your signal has not aborted, the request fails with a `TimeoutError` instead (a failed tile, if it was a tile). A call answered entirely from cache completes normally, even with an already-aborted signal. Network errors from `fetch` propagate as-is.
+- Aborting rejects with your signal's reason, from whatever request was in flight, and never with a timeout: when `requestTimeoutMs` runs out and your signal has not aborted, the request fails with a `TimeoutError` instead (a failed tile, if it was a tile). A call answered entirely from cache completes normally, even with an already-aborted signal. A request whose signal has already aborted is never handed to `fetch`, so a custom fetch that ignores its signal can't send it. Network errors from `fetch` propagate as-is.
 
 ## Privacy
 
