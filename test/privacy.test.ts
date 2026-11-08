@@ -116,3 +116,18 @@ describe("failed tiles carry no search text", () => {
     }
   });
 });
+
+// Section 12, item 7 (#60): when the fallback does send its keyword, no nearby-half request carries it.
+describe("the fallback's nearby half keeps the keyword local", () => {
+  it("puts the keyword in the searchPlaces request only", async () => {
+    const { server, client } = setup();
+    const keyword = "Kumquat Lagoon";
+    await client.searchNearbyThenByKeyword({ ...OVERTURE, region: { lat: 37.7749295, lon: -122.4194155, radius: 500 }, keyword, keywordRegion: "none" });
+    const search = server.requests.filter((r) => r.url.includes("org.atgeo.searchPlaces"));
+    const nearby = server.requests.filter((r) => !r.url.includes("org.atgeo.searchPlaces"));
+    expect(search).toHaveLength(1);
+    expect(nearby.length).toBeGreaterThan(0);
+    const needles = ["kumquat lagoon", "kumquat", "lagoon", "kumqu"];
+    for (const haystack of wire(nearby)) for (const needle of needles) expect(haystack).not.toContain(needle);
+  });
+});

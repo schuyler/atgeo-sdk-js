@@ -110,6 +110,9 @@ export class Transport {
     }, this.requestTimeoutMs);
     let pending: Promise<Response> | undefined;
     try {
+      // A caller who has already aborted gets the abort without a request: a fetch that ignores its signal
+      // would otherwise send it, such as the fallback's keyword after the caller cancelled (#59).
+      if (callerAborted) throw signal?.reason;
       pending = Promise.resolve(this.fetchImpl(url, { signal: controller.signal }));
       // Either ends the wait for headers if a custom fetch ignores its signal.
       const response = await Promise.race([pending, stop]);

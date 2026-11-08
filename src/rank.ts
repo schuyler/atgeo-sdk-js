@@ -7,7 +7,10 @@ import { jaroWinkler } from "./similarity.js";
 import type { Attribution, PlaceValue, Region, NearbyHit, SortMode } from "./types.js";
 import { isObject } from "./wire.js";
 
+// Contract section 7: a word match (tier 1) is kept whatever its score (#57); a fuzzy-only match (tier 2) needs
+// FUZZY_THRESHOLD (#53). A query whose words all fold away has no tokens to match, so it falls back to JW_THRESHOLD.
 const JW_THRESHOLD = 0.6;
+const FUZZY_THRESHOLD = 0.8;
 const MAX_QUERY_TOKENS = 12;
 
 function scoreName(query: string, tokens: string[], name: string): number {
@@ -40,12 +43,15 @@ const fold = (word: string): string[] =>
 
 // Tier 1 when every query token starts some token of one single name, else 2 (contract section 7).
 // `query` is already normalized.
+// The tokens match tier compares: each of the first 12 words of the normalized query, folded.
+const queryTokens = (query: string): string[] => query.split(" ").slice(0, MAX_QUERY_TOKENS).flatMap(fold);
+
 export function matchTier(query: string, value: PlaceValue): 1 | 2 {
-  const queryTokens = query.split(" ").slice(0, MAX_QUERY_TOKENS).flatMap(fold);
-  if (queryTokens.length === 0) return 1;
+  const tokens = queryTokens(query);
+  if (tokens.length === 0) return 1;
   const exact = nameList(value).some((name) => {
     const nameTokens = fold(name);
-    return queryTokens.every((q) => nameTokens.some((n) => n.startsWith(q)));
+    return tokens.every((q) => nameTokens.some((n) => n.startsWith(q)));
   });
   return exact ? 1 : 2;
 }
@@ -82,14 +88,16 @@ export function rank(
   overview: boolean,
 ): NearbyHit[] {
   const middle = center(region);
+  // A query with text but no tokens after folding (such as "&"): every record is tier 1 for it.
+  const wordless = query !== "" && queryTokens(query).length === 0;
   const hits: NearbyHit[] = [];
   const area = new Map<NearbyHit, number>();
   const tier = new Map<NearbyHit, 1 | 2>();
   for (const { record, attribution } of items) {
     const { value } = record;
     const score = query ? textScore(query, value) : null;
-    if (score !== null && score < JW_THRESHOLD) continue;
     const matchedTier = score === null ? null : matchTier(query, value);
+    if (score !== null && score < (wordless ? JW_THRESHOLD : matchedTier === 2 ? FUZZY_THRESHOLD : 0)) continue;
     if (matchedTier === 2 && overview) continue;
     const locations = locate(value);
     const hit = {

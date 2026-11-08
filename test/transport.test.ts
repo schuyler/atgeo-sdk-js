@@ -344,3 +344,42 @@ describe("XRPC URLs", () => {
     expect(server.requests.map((r) => r.url)).toContain(`${base}/tiles/a.json`);
   });
 });
+
+// #59: a request whose caller already aborted never reaches the app's fetch, so a fetch that ignores its
+// signal cannot send it anyway.
+describe("an already-aborted request", () => {
+  const region = { bbox: [-122.42, 37.77, -122.41, 37.78] as [number, number, number, number] };
+  const tiles = [{ url: "https://tiles.example/p.json", records: [record(place("zc", "Zanzibar Cafe", [point(37.772, -122.412)]), 5)] }];
+
+  // A fetch that ignores init.signal, as some app-supplied fetches do.
+  function deafFetch() {
+    const server = fakeServer({ tilesets: [overture(tiles)] });
+    const fetch = ((input: RequestInfo | URL) => server.fetch(input)) as typeof globalThis.fetch;
+    return { server, fetch };
+  }
+
+  it("is not handed to fetch by searchByKeyword", async () => {
+    const { server, fetch } = deafFetch();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(new AtgeoClient({ fetch }).searchByKeyword({ ...OVERTURE, keyword: "Quokka", signal: controller.signal })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(server.requests).toHaveLength(0);
+  });
+
+  it("keeps the fallback's keyword off the wire when the caller aborted before the keyword half", async () => {
+    const { server, fetch } = deafFetch();
+    const client = new AtgeoClient({ fetch });
+    // Warm the cache, so the nearby half is answered without a request and completes though the signal is aborted
+    // (contract section 11); the keyword half is then the first request made under the aborted signal.
+    await client.searchNearby({ ...OVERTURE, region });
+    const before = server.requests.length;
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      client.searchNearbyThenByKeyword({ ...OVERTURE, region, keyword: "Quokka", keywordRegion: "none", signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(server.requests.slice(before).filter((r) => r.url.includes("org.atgeo.searchPlaces"))).toHaveLength(0);
+  });
+});

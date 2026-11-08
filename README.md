@@ -153,7 +153,7 @@ interface NearbyHit {
 }
 ```
 
-When `text` is given, places scoring below 0.6 are dropped. The rest rank in two tiers, whatever the sort mode: a place with a name (its own or a variant) that has every word of the query as the start of one of its words (apostrophes ignored, other punctuation splitting words, so `mcdonalds` finds `McDonald's` and `st louis` finds `St. Louis`) comes before one that matches only fuzzily. Within a tier, the sort mode decides.
+When `text` is given, places rank in two tiers, whatever the sort mode: a place with a name (its own or a variant) that has every word of the query as the start of one of its words (apostrophes ignored, other punctuation splitting words, so `mcdonalds` finds `McDonald's` and `st louis` finds `St. Louis`) comes before one that matches only fuzzily. A word match is always kept, however short the query, so `qu` finds `Bar & Grill at the Old Quarry`. A fuzzy match is kept only if it scores at least 0.8, which keeps typos (`starbux` finds `Starbucks`) and drops near-random matches (`xqzjvkwpfhgy` finds nothing). A query made only of punctuation, such as `&`, keeps places scoring at least 0.6. Within a tier, the sort mode decides.
 
 Sort modes:
 
@@ -263,6 +263,7 @@ Limits worth knowing:
 - A nearby search with failed tiles (`complete: false`) and no solid hit still falls back, though the missing tiles might have held one.
 - A misspelling is not a solid hit, so `Starbux` sends the keyword to the server for an answer that is almost certainly empty.
 - A keyword over 256 bytes gets `InvalidRequest` from the server, which is a failed keyword request (next).
+- A keyword the SDK judged sendable but the server refuses as too short (`KeywordRequired`; a compatibility character such as `ﬁ`, which the SDK reads as two letters and the server as one) is not a failure here: the call returns the nearby result, with `disclosed.keyword` true, since the keyword went out.
 - If the keyword request fails, or is aborted, the call rejects with that error, as a failed `getTiles` does, and the nearby results are lost with it. There is no result, so no `disclosed`, though the keyword may have gone out.
 
 ### `autocompleteByKeyword(options): KeywordAutocomplete`
@@ -283,6 +284,7 @@ input.addEventListener("input", async () => {
 **Every string that qualifies and is passed to `searchByKeyword` here goes to the server as typed, prefixes included.** The server keeps no log of what it is sent (garganorn's privacy design says so), but an operator who is hostile can record what it receives. Whether to debounce is up to your app; debouncing reduces how many prefixes go out, and nothing here does it for you.
 
 - Input that can't pass the server's two-character rule (`a`, a single Hangul syllable, a consonant with its vowel sign) makes no request and resolves `{ places: [], attribution: [], disclosed: { keyword: false, region: null } }`. It still supersedes the previous call.
+- Input the SDK judged sendable but the server refuses as too short (`KeywordRequired`, from a compatibility character such as `ﬁ`) resolves the same empty result, except that `disclosed.keyword` is true, since the request went out, and `disclosed.region` is `1` if the autocompleter has a region.
 - Each call aborts the previous call on the same autocompleter, which rejects with an `AbortError`. Unless your own signal aborted, that means a newer call replaced it, and ignoring it is right either way. Your own `signal` aborts the call as it would any other, with your signal's reason; if it is already aborted and the keyword can't pass the two-character rule, the call resolves the empty result and makes no request.
 - The "previous call" belongs to the autocompleter, not the client, so make one per text field. The factory validates `dataset` and `region` as `searchByKeyword` does and throws `TypeError` at once. A call with a keyword that isn't a string rejects with `TypeError` (the method is async, so it never throws synchronously), after superseding the previous call.
 
@@ -318,7 +320,7 @@ Returns the tileset's descriptor: `slug`, `collections` (each a `{ dataset, coll
   - `transport`: `fetch` threw, the body couldn't be read, the body was over `maxBodyBytes` (`BodyTooLargeError`), or the request ran past `requestTimeoutMs` (a `TimeoutError`). `error` is whatever it threw, as is.
 
   The kind comes from which step failed, not from the error's type: a custom `fetch` that throws an `AtgeoError` of its own is still `transport`. An entry holds the tile URL and what fetching it produced, never your search text or region, and the SDK doesn't log it or send it anywhere. What you do with it is up to you.
-- Aborting rejects with your signal's reason, from whatever request was in flight, and never with a timeout: when `requestTimeoutMs` runs out and your signal has not aborted, the request fails with a `TimeoutError` instead (a failed tile, if it was a tile). A call answered entirely from cache completes normally, even with an already-aborted signal. Network errors from `fetch` propagate as-is.
+- Aborting rejects with your signal's reason, from whatever request was in flight, and never with a timeout: when `requestTimeoutMs` runs out and your signal has not aborted, the request fails with a `TimeoutError` instead (a failed tile, if it was a tile). A call answered entirely from cache completes normally, even with an already-aborted signal. A request whose signal has already aborted is never handed to `fetch`, so a custom fetch that ignores its signal can't send it. Network errors from `fetch` propagate as-is.
 
 ## Privacy
 
@@ -358,6 +360,8 @@ The server's own side of this, and why it was built as it was, is in garganorn's
 
 `getTiles` responses and the service description are cached for an hour. Tiles are cached in memory, least recently used out first, up to `cacheBudgetBytes` (measured as the tile's response length in characters). Searching a region again while its tile list and tiles are warm makes no requests at all. `getPlace` checks cached tiles before asking the server.
 
+The default budget, 50 MiB, holds about 50 Overture place tiles (about 1 MB each on places.atgeo.org's 2026-10-26 builds; OSM tiles are about 0.4 MB). A server whose tile budget lets one search fetch more tiles than that (garganorn's default is moving from 50 to 75, about 70 MB of Overture tiles) overflows it, and because the cache evicts the least recently used tile first and a search reads tiles in URL order, searching the same dense area again re-downloads every tile, not just the overflow. If your app searches dense areas repeatedly, raise `cacheBudgetBytes` to cover a full search (about 100 MiB for 75 Overture tiles). Memory is the cost: the budget counts response text, and parsed tiles take several times that (a 47-tile search added about 170 MB of heap in Node), so weigh it on phones (#52).
+
 Keyword calls (`searchByKeyword`, the keyword half of `searchNearbyThenByKeyword`, and autocomplete) are not cached: each is one request.
 
 There is no persistence; a new client starts cold.
@@ -379,6 +383,7 @@ There are more scripts in `package.json`, including a browser smoke test and an 
 - `attribution-scenarios.json` is a set of tiles served by a raw server, with the `attribution` and each hit's `collection` a search over them must give.
 - `match-tiers.json` is a query, a place and the match tier (1 or 2) a port must give it. `match-tiers-lone-surrogates.json` adds cases with lone surrogates, for ports whose strings can hold one.
 - `keyword-fallback.json` is a set of nearby searches with a keyword, a tile set and a canned keyword answer, with whether the keyword request is made, the bbox it carries, the merged list of origins in order, and `disclosed`. It pins the solid-hit decision and the merge.
+- `qualifying-keywords.json` is a raw keyword and whether the fallback and the autocompleter would send it (contract section 17).
 - `keyword-regions.json` maps each input bbox to the whole-degree bbox string a keyword search sends, with every seam at 0, +/-90 and +/-180 and every sign combination of crossing boxes.
 - `ranking-scenarios.json` describes regions, text, and records, and asserts which places land in the top K. It checks membership, not exact order, since the weights are likely to change. Each scenario names the `dataset` and `collection` it searches, and `"overview": true` makes the fake server answer `getTiles` with an overview. Each record is `{ value, importance }`: `value` is an `org.atgeo.place` with an `origin`, and `importance` is an integer, as on the wire. The expectations name places by `origin`.
 

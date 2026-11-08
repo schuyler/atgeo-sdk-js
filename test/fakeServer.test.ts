@@ -38,6 +38,20 @@ describe("fake server requests", () => {
     expect(await response.json()).toMatchObject({ error: "InvalidRequest" });
   });
 
+  // The server refuses a coordinate finer than 0.01 degrees; the contract's minimum (section 13) is that the fake
+  // accepts only the two-decimal form the client sends (#60).
+  it.each(["-122.4194,37.77,-122.41,37.78", "-122.42,37.77,-122.41,37.7801"])("answers 400 BboxTooPrecise to getTiles with %s", async (bbox) => {
+    const response = await get(build([record(ok)]), `/xrpc/org.atgeo.getTiles?dataset=overturemaps.org&bbox=${bbox}`);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "BboxTooPrecise" });
+  });
+
+  it.each(["-122.4,37.77,-122.41,37.78", "-122,37.77,-122.41,37.78"])("answers 400 InvalidRequest to getTiles with %s, which the client never sends", async (bbox) => {
+    const response = await get(build([record(ok)]), `/xrpc/org.atgeo.getTiles?dataset=overturemaps.org&bbox=${bbox}`);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "InvalidRequest" });
+  });
+
   it("answers 400 InvalidRequest to getPlace with a non-URI uri", async () => {
     const response = await get(build([record(ok)]), "/xrpc/org.atgeo.getPlace?uri=not%20a%20uri");
     expect(response.status).toBe(400);

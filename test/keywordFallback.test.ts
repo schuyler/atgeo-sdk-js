@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import fixture from "../fixtures/keyword-fallback.json" with { type: "json" };
 import { AtgeoClient } from "../src/index.js";
 import type { Region } from "../src/index.js";
+import { OVERTURE, fakeServer, overture, place, point, record } from "./helpers/fakeServer.js";
 
 // fixtures/keyword-fallback.json: searchNearbyThenByKeyword (contract: the solid-hit decision and the
 // merge). The bodies need not validate against the lexicons, so the server here is raw: it answers
@@ -45,7 +46,7 @@ function serverFor(s: Scenario) {
 
 describe("keyword fallback scenarios", () => {
   it("has the scenarios the contract describes", () => {
-    expect(scenarios).toHaveLength(6);
+    expect(scenarios).toHaveLength(7);
   });
 
   // A fresh client per scenario: scenarios reuse tile urls, and the caches are keyed by dataset, collection and bbox.
@@ -97,5 +98,102 @@ describe("searchNearbyThenByKeyword arguments", () => {
     await expect(outcome).rejects.toThrow(TypeError);
     await expect(outcome).rejects.toThrow(message);
     expect(requests).toHaveLength(0);
+  });
+});
+
+// Contract section 18 step 8 (#56): the qualifying predicate (section 17) can judge a keyword sendable that the
+// server refuses. NFKD turns "ﬁ" into "fi", two characters, but the server keeps the ligature whole, one
+// character, and answers KeywordRequired. The fallback then keeps its nearby result instead of failing.
+describe("searchNearbyThenByKeyword when the server refuses a keyword the SDK judged qualifying", () => {
+  const region = { bbox: [-122.42, 37.77, -122.41, 37.78] as [number, number, number, number] };
+  const tiles = [{ url: "https://tiles.example/p.json", records: [record(place("zc", "Zanzibar Cafe", [point(37.772, -122.412)]), 5)] }];
+
+  it("returns the nearby result, disclosing the keyword it sent", async () => {
+    const server = fakeServer({ tilesets: [overture(tiles)] });
+    const client = new AtgeoClient({ fetch: server.fetch });
+    const nearby = await new AtgeoClient({ fetch: fakeServer({ tilesets: [overture(tiles)] }).fetch }).searchNearby({
+      ...OVERTURE,
+      region,
+      text: "ﬁ",
+    });
+    const result = await client.searchNearbyThenByKeyword({ ...OVERTURE, region, keyword: "ﬁ", keywordRegion: "degree" });
+    // The keyword went out and was refused; everything else is the nearby search's.
+    expect(server.requests.filter((r) => r.url.includes("org.atgeo.searchPlaces"))).toHaveLength(1);
+    expect(result).toEqual({ ...nearby, disclosed: { keyword: true, region: 0.01 } });
+  });
+
+  it("still rejects with any other refusal of the keyword request", async () => {
+    const server = fakeServer({ tilesets: [overture(tiles)] });
+    // The nearby half goes to the fake; searchPlaces is refused with a code other than KeywordRequired.
+    const fetch = (async (input: RequestInfo | URL, init?: RequestInit) =>
+      new Request(input).url.includes("org.atgeo.searchPlaces")
+        ? new Response(JSON.stringify({ error: "InvalidRequest", message: "q is too long" }), { status: 400 })
+        : server.fetch(input, init)) as typeof globalThis.fetch;
+    const client = new AtgeoClient({ fetch });
+    await expect(
+      client.searchNearbyThenByKeyword({ ...OVERTURE, region, keyword: "Quokka", keywordRegion: "none" }),
+    ).rejects.toMatchObject({ name: "AtgeoError", code: "InvalidRequest" });
+  });
+});
+
+// #60: fallback rules no test killed before. A raw server, so bodies and attribution can be chosen freely.
+describe("searchNearbyThenByKeyword pins", () => {
+  const region = { bbox: [-122.42, 37.77, -122.41, 37.78] as [number, number, number, number] };
+  const TILE = "https://places.atgeo.org/tiles/t.json";
+  const loc = [{ $type: "community.lexicon.location.geo", latitude: "37.775000", longitude: "-122.415000" }];
+  const entry = (attribution: string) => ({ dataset: "overturemaps.org", collection: "place", attribution });
+
+  function raw(tile: unknown, answer: unknown, onSearch?: (init?: RequestInit) => Promise<Response>) {
+    const requests: string[] = [];
+    const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const href = new Request(input).url;
+      requests.push(href);
+      if (href.includes("org.atgeo.getTiles")) return new Response(JSON.stringify({ tiles: [TILE] }));
+      if (href.includes("org.atgeo.searchPlaces")) return onSearch ? onSearch(init) : new Response(JSON.stringify(answer));
+      return href === TILE ? new Response(JSON.stringify(tile)) : new Response("Not found", { status: 404 });
+    }) as typeof globalThis.fetch;
+    return { fetch, requests };
+  }
+
+  it("never leaves out a nearby hit with no origin, even when a keyword hit has none either", async () => {
+    // Neither record has an origin or a uri, so both hits have origin null.
+    const tile = { records: [{ value: { name: "Quokka Lounge", locations: loc } }], attribution: [] };
+    const answer = { places: [{ value: { name: "Qwokka Bar", locations: loc }, attribution: [] }] };
+    const { fetch } = raw(tile, answer);
+    const result = await new AtgeoClient({ fetch }).searchNearbyThenByKeyword({ dataset: "overturemaps.org", region, keyword: "Qwokka", keywordRegion: "none" });
+    expect(result.places.map((h) => [h.via, h.name])).toEqual([
+      ["keyword", "Qwokka Bar"],
+      ["tiles", "Quokka Lounge"],
+    ]);
+  });
+
+  it("keeps the nearby attribution entry when both halves carry the same collection", async () => {
+    const tile = { records: [], attribution: [entry("from the tiles")] };
+    const answer = { places: [{ value: { origin: "urn:atgeo:overturemaps.org:place:k", name: "Kumquat", locations: loc }, attribution: [entry("from the keyword answer")] }] };
+    const { fetch } = raw(tile, answer);
+    const result = await new AtgeoClient({ fetch }).searchNearbyThenByKeyword({ dataset: "overturemaps.org", region, keyword: "Kumquat", keywordRegion: "none" });
+    expect(result.attribution).toEqual([entry("from the tiles")]);
+  });
+
+  it("passes the caller's signal to the keyword request", async () => {
+    const tile = { records: [], attribution: [] };
+    let searching!: () => void;
+    const searchStarted = new Promise<void>((resolve) => (searching = resolve));
+    const { fetch } = raw(tile, null, (init) => {
+      searching();
+      return new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true }));
+    });
+    const controller = new AbortController();
+    const reason = new Error("caller gave up");
+    const call = new AtgeoClient({ fetch }).searchNearbyThenByKeyword({
+      dataset: "overturemaps.org",
+      region,
+      keyword: "Kumquat",
+      keywordRegion: "none",
+      signal: controller.signal,
+    });
+    await searchStarted;
+    controller.abort(reason);
+    await expect(call).rejects.toBe(reason);
   });
 });
