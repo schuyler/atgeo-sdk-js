@@ -43,25 +43,25 @@ afterEach(() => {
 describe("warm regions", () => {
   it("answers an identical second search offline", async () => {
     const { server, client } = setup();
-    const first = await client.searchPlaces({ ...OVERTURE, region, text: "Alpha" });
+    const first = await client.searchNearby({ ...OVERTURE, region, text: "Alpha" });
     server.goOffline();
-    const second = await client.searchPlaces({ ...OVERTURE, region, text: "Alpha" });
-    expect(second).toEqual(first);
+    const second = await client.searchNearby({ ...OVERTURE, region, text: "Alpha" });
+    expect(second).toEqual({ ...first, disclosed: { keyword: false, region: null } });
     expect(first.places.length).toBeGreaterThan(0);
   });
 
   it("reuses tiles for a different text over the same region", async () => {
     const { server, client } = setup();
-    await client.searchPlaces({ ...OVERTURE, region });
+    await client.searchNearby({ ...OVERTURE, region });
     const before = server.requests.length;
-    await client.searchPlaces({ ...OVERTURE, region, text: "Alpha" });
+    await client.searchNearby({ ...OVERTURE, region, text: "Alpha" });
     expect(server.requests.length).toBe(before);
   });
 
   it("makes no tile request for a repeated search", async () => {
     const { server, client } = setup();
-    await client.searchPlaces({ ...OVERTURE, region });
-    await client.searchPlaces({ ...OVERTURE, region });
+    await client.searchNearby({ ...OVERTURE, region });
+    await client.searchNearby({ ...OVERTURE, region });
     expect(server.requests.filter((r) => r.url === url("a"))).toHaveLength(1);
   });
 });
@@ -69,12 +69,12 @@ describe("warm regions", () => {
 describe("attribution in the tile cache", () => {
   it("gives a warm offline search the same, non-empty attribution and hit collections", async () => {
     const { server, client } = setup();
-    const first = await client.searchPlaces({ ...OVERTURE, region });
+    const first = await client.searchNearby({ ...OVERTURE, region });
     expect(first.attribution.length).toBeGreaterThan(0);
     expect(first.places.length).toBeGreaterThan(0);
     for (const hit of first.places) expect(hit.collection).toStrictEqual({ dataset: "overturemaps.org", collection: "place" });
     server.goOffline();
-    const second = await client.searchPlaces({ ...OVERTURE, region });
+    const second = await client.searchNearby({ ...OVERTURE, region });
     expect(second.attribution).toStrictEqual(first.attribution);
     expect(second.places.map((h) => h.collection)).toStrictEqual(first.places.map((h) => h.collection));
   });
@@ -96,8 +96,8 @@ describe("attribution in the tile cache", () => {
     });
     const client = new AtgeoClient({ fetch: server.fetch });
     const place_ = { dataset: "overturemaps.org", collection: "place" };
-    const a = await client.searchPlaces({ ...OVERTURE, region });
-    const b = await client.searchPlaces({ ...OVERTURE, region: { bbox: [-100.5, 10.5, -100.4, 10.6] } });
+    const a = await client.searchNearby({ ...OVERTURE, region });
+    const b = await client.searchNearby({ ...OVERTURE, region: { bbox: [-100.5, 10.5, -100.4, 10.6] } });
     expect(a.attribution).toStrictEqual([place_, entryA]);
     expect(b.attribution).toStrictEqual([place_, entryB]);
   });
@@ -108,15 +108,15 @@ describe("tile-list expiry", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
     const { server, client } = setup();
-    await client.searchPlaces({ ...OVERTURE, region });
+    await client.searchNearby({ ...OVERTURE, region });
     const base = server.requests.length;
 
     vi.setSystemTime(new Date("2026-01-01T00:59:59Z"));
-    await client.searchPlaces({ ...OVERTURE, region });
+    await client.searchNearby({ ...OVERTURE, region });
     expect(server.requests.length).toBe(base);
 
     vi.setSystemTime(new Date("2026-01-01T01:00:01Z"));
-    await client.searchPlaces({ ...OVERTURE, region });
+    await client.searchNearby({ ...OVERTURE, region });
     expect(tileListCount(server.requests)).toBe(2);
     expect(server.requests.filter((r) => r.url === url("a"))).toHaveLength(1);
   });
@@ -125,10 +125,10 @@ describe("tile-list expiry", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
     const { server, client } = setup();
-    await client.searchPlaces({ ...OVERTURE, region });
+    await client.searchNearby({ ...OVERTURE, region });
     server.goOffline();
     vi.setSystemTime(new Date("2026-01-01T01:00:01Z"));
-    await expect(client.searchPlaces({ ...OVERTURE, region })).rejects.toThrow();
+    await expect(client.searchNearby({ ...OVERTURE, region })).rejects.toThrow();
   });
 
   it("caches describeService for 3600 s", async () => {
@@ -148,7 +148,7 @@ describe("tile-list expiry", () => {
 describe("getPlace cache scan", () => {
   it("answers from an already-fetched tile without a request", async () => {
     const { server, client } = setup();
-    await client.searchPlaces({ ...OVERTURE, region });
+    await client.searchNearby({ ...OVERTURE, region });
     const before = server.requests.length;
     const found = await client.getPlace({ origin: placeOrigin("a") });
     expect(server.requests.length).toBe(before);
@@ -164,7 +164,7 @@ describe("getPlace cache scan", () => {
 
   it("answers offline for a cached origin", async () => {
     const { server, client } = setup();
-    await client.searchPlaces({ ...OVERTURE, region });
+    await client.searchNearby({ ...OVERTURE, region });
     server.goOffline();
     await expect(client.getPlace({ origin: placeOrigin("shared") })).resolves.toMatchObject({
       place: { name: "Shared in A" },
@@ -173,7 +173,7 @@ describe("getPlace cache scan", () => {
 
   it("matches the whole origin, not a shared id", async () => {
     const { server, client } = setup();
-    await client.searchPlaces({ ...OVERTURE, region });
+    await client.searchNearby({ ...OVERTURE, region });
     const before = server.requests.length;
     const found = await client.getPlace({ origin: OTHER_ORIGIN });
     const getPlaces = server.requests.slice(before).map((r) => new URL(r.url)).filter((u) => u.pathname === "/xrpc/org.atgeo.getPlace");
@@ -209,9 +209,9 @@ describe("getPlace cache scan", () => {
     });
     const client = new AtgeoClient({ fetch: server.fetch });
     // b, then a, then c: the lowest URL is neither the first nor the last cached.
-    await client.searchPlaces({ ...OVERTURE, region: { bbox: [-100.5, 10.5, -100.4, 10.6] } });
-    await client.searchPlaces({ ...OVERTURE, region });
-    await client.searchPlaces({ ...OVERTURE, region: { bbox: [-90.5, 10.5, -90.4, 10.6] } });
+    await client.searchNearby({ ...OVERTURE, region: { bbox: [-100.5, 10.5, -100.4, 10.6] } });
+    await client.searchNearby({ ...OVERTURE, region });
+    await client.searchNearby({ ...OVERTURE, region: { bbox: [-90.5, 10.5, -90.4, 10.6] } });
     server.goOffline();
     const answer = await client.getPlace({ origin: placeOrigin("x") });
     expect(answer.attribution).toStrictEqual([{ dataset: "overturemaps.org", collection: "place" }, ...references]);
@@ -232,7 +232,7 @@ describe("getPlace cache scan", () => {
       return new Response(JSON.stringify({ records: [{ value, importance: 3 }], ...(attribution === undefined ? {} : { attribution }) }));
     }) as typeof globalThis.fetch;
     const client = new AtgeoClient({ fetch });
-    const { places } = await client.searchPlaces({ ...OVERTURE, region });
+    const { places } = await client.searchNearby({ ...OVERTURE, region });
     expect(places).toHaveLength(1);
     expect(places[0].collection).toBeNull();
     const before = requests.length;
@@ -254,9 +254,9 @@ describe("getPlace cache scan", () => {
       tilesFor: (bbox) => [bbox.startsWith("-122") ? url("a") : url("b")],
     });
     const client = new AtgeoClient({ fetch: server.fetch });
-    await client.searchPlaces({ ...OVERTURE, region: { bbox: [-100.5, 10.5, -100.4, 10.6] } });
+    await client.searchNearby({ ...OVERTURE, region: { bbox: [-100.5, 10.5, -100.4, 10.6] } });
     expect((await client.getPlace({ origin: placeOrigin("x") })).place.name).toBe("Copy B");
-    await client.searchPlaces({ ...OVERTURE, region });
+    await client.searchNearby({ ...OVERTURE, region });
     server.goOffline();
     expect((await client.getPlace({ origin: placeOrigin("x") })).place.name).toBe("Copy A");
   });

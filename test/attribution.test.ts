@@ -3,7 +3,7 @@ import fixture from "../fixtures/attribution-scenarios.json" with { type: "json"
 import { AtgeoClient } from "../src/index.js";
 import type { Region } from "../src/index.js";
 
-// fixtures/attribution-scenarios.json: SearchResult.attribution and SearchHit.collection (contract
+// fixtures/attribution-scenarios.json: NearbySearchResult.attribution and NearbyHit.collection (contract
 // sections 4.10 and 8). The bodies need not validate against the lexicons, so the server here is raw.
 
 interface Scenario {
@@ -52,7 +52,7 @@ describe("attribution scenarios", () => {
   // cache is keyed by dataset, collection and bbox.
   it.each(scenarios)("$name", async (s) => {
     const client = new AtgeoClient({ fetch: serverFor(s) });
-    const result = await client.searchPlaces({
+    const result = await client.searchNearby({
       dataset: s.dataset,
       ...(s.collection === undefined ? {} : { collection: s.collection }),
       region: s.region,
@@ -77,7 +77,7 @@ describe("attribution scenarios, tiles arriving in reverse URL order", () => {
   it.each(multi)("$name", async (s) => {
     const urls = s.tiles.map((t) => t.url).sort();
     const delays = Object.fromEntries(urls.map((u, i) => [u, (urls.length - 1 - i) * 25]));
-    const result = await new AtgeoClient({ fetch: serverFor(s, delays) }).searchPlaces({
+    const result = await new AtgeoClient({ fetch: serverFor(s, delays) }).searchNearby({
       dataset: s.dataset,
       ...(s.collection === undefined ? {} : { collection: s.collection }),
       region: s.region,
@@ -112,7 +112,7 @@ describe("a hit's collection comes from its own tile", () => {
   };
 
   it("gives each hit the collection of its own tile, not of the first tile used", async () => {
-    const result = await new AtgeoClient({ fetch: serverFor(s) }).searchPlaces({ dataset: "d", region: s.region });
+    const result = await new AtgeoClient({ fetch: serverFor(s) }).searchNearby({ dataset: "d", region: s.region });
     const byOrigin = Object.fromEntries(result.places.map((h) => [h.origin, h.collection]));
     expect(byOrigin).toStrictEqual({
       "urn:atgeo:d:c1:1": { dataset: "d", collection: "c1" },
@@ -121,7 +121,7 @@ describe("a hit's collection comes from its own tile", () => {
   });
 
   it("keeps each surviving hit with its own tile when the text drops another record", async () => {
-    const result = await new AtgeoClient({ fetch: serverFor(s) }).searchPlaces({ dataset: "d", region: s.region, text: "Cafe" });
+    const result = await new AtgeoClient({ fetch: serverFor(s) }).searchNearby({ dataset: "d", region: s.region, text: "Cafe" });
     expect(result.places.map((h) => [h.origin, h.collection])).toStrictEqual([["urn:atgeo:d:c2:2", { dataset: "d", collection: "c2" }]]);
   });
 });

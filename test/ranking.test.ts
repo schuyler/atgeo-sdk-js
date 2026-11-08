@@ -29,7 +29,7 @@ describe("ranking scenarios", () => {
         ]),
       ],
     });
-    const { places } = await new AtgeoClient({ fetch }).searchPlaces({
+    const { places } = await new AtgeoClient({ fetch }).searchNearby({
       dataset: s.dataset,
       collection: s.collection,
       region: s.region,
