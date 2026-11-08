@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import { AtgeoClient } from "../src/index.js";
-import type { PlaceLocation, PlaceRecord, PlaceValue, SearchHit } from "../src/index.js";
+import type { PlaceLocation, PlaceRecord, PlaceValue, NearbyHit } from "../src/index.js";
 import { OVERTURE, bboxLocation, fakeServer, overture, place, placeOrigin, point, record } from "./helpers/fakeServer.js";
 
 // Contract section 5: `location.point` is the first usable geo, `location.bbox` the first usable bbox.
@@ -33,7 +33,7 @@ async function seen(value: PlaceValue): Promise<Seen[]> {
       return counting(input, init);
     }) as typeof fetch,
   });
-  const hit = (await warm.searchPlaces({ ...OVERTURE, region })).places[0];
+  const hit = (await warm.searchNearby({ ...OVERTURE, region })).places[0];
   const before = requests.length;
   const cached = await warm.getPlace({ origin: placeOrigin("x") });
   // The warm getPlace is answered from the cache: no request of any kind.
@@ -125,17 +125,17 @@ describe("location", () => {
 });
 
 describe("types", () => {
-  it("gives SearchHit and PlaceRecord a required name and location", () => {
-    expectTypeOf<SearchHit["name"]>().toEqualTypeOf<string | null>();
+  it("gives NearbyHit and PlaceRecord a required name and location", () => {
+    expectTypeOf<NearbyHit["name"]>().toEqualTypeOf<string | null>();
     expectTypeOf<PlaceRecord["name"]>().toEqualTypeOf<string | null>();
-    expectTypeOf<SearchHit["location"]>().toEqualTypeOf<PlaceLocation>();
+    expectTypeOf<NearbyHit["location"]>().toEqualTypeOf<PlaceLocation>();
     expectTypeOf<PlaceRecord["location"]>().toEqualTypeOf<PlaceLocation>();
     expectTypeOf<PlaceLocation>().toEqualTypeOf<{
       point: { lat: number; lon: number } | null;
       bbox: { south: number; west: number; north: number; east: number } | null;
     }>();
-    expectTypeOf<SearchHit>().toHaveProperty("name");
-    expectTypeOf<SearchHit>().toHaveProperty("location");
+    expectTypeOf<NearbyHit>().toHaveProperty("name");
+    expectTypeOf<NearbyHit>().toHaveProperty("location");
     expectTypeOf<PlaceRecord>().toHaveProperty("name");
     expectTypeOf<PlaceRecord>().toHaveProperty("location");
   });

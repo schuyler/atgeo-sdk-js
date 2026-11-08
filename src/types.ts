@@ -82,7 +82,7 @@ export type Region =
 
 export type SortMode = "fused" | "distance" | "similarity";
 
-export interface SearchOptions {
+export interface NearbySearchOptions {
   dataset: string;
   collection?: string;
   region: Region;
@@ -91,27 +91,75 @@ export interface SearchOptions {
   signal?: AbortSignal;
 }
 
-export interface SearchHit {
+export interface KeywordSearchOptions {
+  dataset: string;
+  collection?: string;
+  keyword: string;
+  // Sent snapped outward to whole degrees. A bbox only: a circle is refused.
+  region?: { bbox: [west: number, south: number, east: number, north: number] };
+  signal?: AbortSignal;
+}
+
+export interface FallbackSearchOptions {
+  dataset: string;
+  collection?: string;
+  region: Region;
+  keyword: string;
+  // Whether the keyword request carries the nearby region, snapped to whole degrees.
+  keywordRegion: "none" | "degree";
+  sort?: SortMode;
+  signal?: AbortSignal;
+}
+
+export interface KeywordAutocompleteOptions {
+  dataset: string;
+  collection?: string;
+  region?: { bbox: [west: number, south: number, east: number, north: number] };
+}
+
+export interface KeywordAutocomplete {
+  // Every keyword that qualifies is sent to the server as given. A call aborts the previous call on this
+  // autocompleter, which rejects with an AbortError; a keyword the server would refuse resolves empty, unsent.
+  searchByKeyword(keyword: string, options?: { signal?: AbortSignal }): Promise<KeywordSearchResult>;
+}
+
+// What the server learned during one call.
+export interface Disclosure {
+  // The keyword was sent.
+  keyword: boolean;
+  // The grid, in degrees, of the finest region sent; null if none was.
+  region: 0.01 | 1 | null;
+}
+
+export interface HitBase {
   origin: string | null;
-  // The collection the hit belongs to, matched against its tile's attribution (contract section 8); null when
-  // none matches. Always present. A fresh object.
+  // The collection the hit belongs to, matched against the attribution of its tile (a nearby hit) or of the place
+  // (a keyword hit) (contract section 8); null when none matches. Always present. A fresh object.
   collection: CollectionKey | null;
-  // The record value as served. It is frozen (shallowly) and is the very object the tile cache holds, shared by
-  // every later search over the same tile and by getPlace, so assigning to it, deleting from it or defining a
+  // The record value as served. It is frozen (shallowly); a nearby hit's is the very object the tile cache holds,
+  // shared by every later search over the same tile and by getPlace. Assigning to it, deleting from it or defining a
   // property on it throws a TypeError in strict mode (and does nothing in sloppy mode). Nested objects and
   // arrays (locations, variants, attributes, ...) are not frozen and are shared too: do not change them either.
   // For a copy you can change, use structuredClone(place) (deep) or { ...place } (shallow, nested values still shared).
   place: PlaceValue;
   importance: number | null;
-  distance: number;
-  score: number | null;
   // The place's `name` when it is a string, else null.
   name: string | null;
   location: PlaceLocation;
 }
 
-export interface SearchResult {
-  places: SearchHit[];
+export interface NearbyHit extends HitBase {
+  via: "tiles";
+  distance: number;
+  score: number | null;
+}
+
+export interface KeywordHit extends HitBase {
+  via: "keyword";
+}
+
+export interface NearbySearchResult {
+  places: NearbyHit[];
   complete: boolean;
   overview: boolean;
   tiles: { fetched: number; failed: number };
@@ -120,6 +168,18 @@ export interface SearchResult {
   // The union of the attribution of every tile the search used, one entry per (dataset, collection), sorted by
   // dataset then collection. Always a list. A copy: changing it changes nothing cached.
   attribution: Attribution[];
+  disclosed: Disclosure;
+}
+
+export interface KeywordSearchResult {
+  places: KeywordHit[];
+  // The union of the attribution of every place, as in NearbySearchResult.
+  attribution: Attribution[];
+  disclosed: Disclosure;
+}
+
+export interface FallbackSearchResult extends Omit<NearbySearchResult, "places"> {
+  places: (NearbyHit | KeywordHit)[];
 }
 
 // refused: not an absolute http(s) URL, or it carries credentials; no request was made.

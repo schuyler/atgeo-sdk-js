@@ -12,7 +12,7 @@ function setup() {
 
 async function emitted(region: Region): Promise<string[]> {
   const { server, client } = setup();
-  await client.searchPlaces({ ...OVERTURE, region });
+  await client.searchNearby({ ...OVERTURE, region });
   return server.requests
     .filter((r) => r.url.includes("org.atgeo.getTiles"))
     .map((r) => new URL(r.url).searchParams.get("bbox") ?? "");
@@ -41,7 +41,7 @@ describe("coordinate serialization", () => {
 
   it.each(adversarial)("emits only two-decimal coordinates: %s", async (_name, region) => {
     const { server, client } = setup();
-    await client.searchPlaces({ ...OVERTURE, region });
+    await client.searchNearby({ ...OVERTURE, region });
     const tileLists = server.requests.filter((r) => r.url.includes("org.atgeo.getTiles"));
     expect(tileLists.length).toBeGreaterThan(0);
     for (const r of tileLists) {
@@ -231,7 +231,7 @@ describe("antimeridian", () => {
       tilesFor: (bbox) => (bbox.startsWith("170") ? [west] : [east]),
     });
     const client = new AtgeoClient({ fetch: server.fetch });
-    const result = await client.searchPlaces({ ...OVERTURE, region: { bbox: [170, 10, -170, 20] } });
+    const result = await client.searchNearby({ ...OVERTURE, region: { bbox: [170, 10, -170, 20] } });
     expect(result.places.map((h) => h.origin).sort()).toEqual([placeOrigin("e"), placeOrigin("w")]);
     expect(result.complete).toBe(true);
   });
@@ -261,23 +261,23 @@ describe("invalid regions", () => {
 
   it.each(bad)("throws TypeError synchronously before any request: %s", (_name, region) => {
     const { server, client } = setup();
-    expect(() => client.searchPlaces({ ...OVERTURE, region })).toThrow(TypeError);
-    expect(() => client.searchPlaces({ ...OVERTURE, region })).toThrow(/^invalid (bbox|circle)$/);
+    expect(() => client.searchNearby({ ...OVERTURE, region })).toThrow(TypeError);
+    expect(() => client.searchNearby({ ...OVERTURE, region })).toThrow(/^invalid (bbox|circle)$/);
     expect(server.requests).toHaveLength(0);
   });
 
   it("accepts minLon > maxLon", async () => {
     const { client } = setup();
-    await expect(client.searchPlaces({ ...OVERTURE, region: { bbox: [170, 0, -170, 1] } })).resolves.toBeDefined();
+    await expect(client.searchNearby({ ...OVERTURE, region: { bbox: [170, 0, -170, 1] } })).resolves.toBeDefined();
   });
 
   it("throws TypeError synchronously for similarity sort without text", () => {
     const { server, client } = setup();
     expect(() =>
-      client.searchPlaces({ ...OVERTURE, region: { bbox: [0, 0, 1, 1] }, sort: "similarity" }),
+      client.searchNearby({ ...OVERTURE, region: { bbox: [0, 0, 1, 1] }, sort: "similarity" }),
     ).toThrow(TypeError);
     expect(() =>
-      client.searchPlaces({ ...OVERTURE, region: { bbox: [0, 0, 1, 1] }, sort: "similarity" }),
+      client.searchNearby({ ...OVERTURE, region: { bbox: [0, 0, 1, 1] }, sort: "similarity" }),
     ).toThrow(/similarity/);
     expect(server.requests).toHaveLength(0);
   });

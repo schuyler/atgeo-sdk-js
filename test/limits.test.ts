@@ -48,7 +48,7 @@ const bodyOf = (bytes: Uint8Array, chunkSize: number) =>
     },
   });
 
-const search = (client: AtgeoClient, signal?: AbortSignal) => client.searchPlaces({ ...OVERTURE, region, signal });
+const search = (client: AtgeoClient, signal?: AbortSignal) => client.searchNearby({ ...OVERTURE, region, signal });
 
 describe("maxBodyBytes", () => {
   it("fails a body over the cap as a transport failure, with BodyTooLargeError", async () => {
@@ -426,7 +426,7 @@ describe("a caller's abort is not a timeout", () => {
     const deaf = (() => new Promise<Response>(() => {})) as unknown as typeof fetch;
     const calls: [string, (client: AtgeoClient, signal: AbortSignal) => Promise<unknown>][] = [
       ["getPlace", (client, signal) => client.getPlace({ origin: "urn:atgeo:overturemaps.org:place:x", signal })],
-      ["searchPlaces", (client, signal) => search(client, signal)],
+      ["searchNearby", (client, signal) => search(client, signal)],
     ];
 
     it.each(calls)("%s rejects with the caller's reason, not a timeout, when the caller aborts first", async (_name, call) => {
@@ -450,7 +450,7 @@ describe("a caller's abort is not a timeout", () => {
         (value) => value,
         (error) => error,
       );
-      // searchPlaces reports the timed-out tile; getPlace rejects with the timeout.
+      // searchNearby reports the timed-out tile; getPlace rejects with the timeout.
       const timeout = outcome?.tileFailures?.[0]?.error ?? outcome;
       expect(timeout).toMatchObject({ name: "TimeoutError" });
     });

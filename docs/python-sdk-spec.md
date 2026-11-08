@@ -1,13 +1,13 @@
 # Python SDK specification
 
-A Python port of `@atgeo/client`: a client for the atgeo gazetteer that searches places without telling the server what you searched for. This document covers the package, its public API, and the decisions that are specific to Python. Behaviour (what a search sends, filters, scores and returns) is defined once, for every port, in [port-contract.md](port-contract.md); this document cites it by section and does not restate it.
+A Python port of `@atgeo/client`: a client for the atgeo gazetteer that searches nearby places without telling the server what you searched for, and says so in the method name when a search might. This document covers the package, its public API, and the decisions that are specific to Python. Behaviour (what a search sends, filters, scores and returns) is defined once, for every port, in [port-contract.md](port-contract.md); this document cites it by section and does not restate it.
 
-Status: implemented in [schuyler/atgeo-sdk-python](https://github.com/schuyler/atgeo-sdk-python) (PR #1), which follows this document. Building it, and three independent reviews of the result, found the places this text was wrong or silent, corrected below: `total_timeout` did not bound redirects or headers (section 4, `Urllib3Transport`); responses outside a search were parsed on the app's thread, which crashes on a small stack (section 5); the requests adapter's recipe still read redirect bodies and leaked the session's credentials (section 4); aiohttp's proxy credentials reached exception messages (section 4); credentials in URLs (section 4, URLs); out-of-range coordinates raised from `math.sqrt` (section 6); the circle box needs the reference's own float expressions (section 6); a Jaro-Winkler value (section 6); and the dependency floors (section 2). On the same server answers for six searches around Philadelphia, replayed to both, the port and the reference returned the same 25,830 hits in the same order. The port's `CONFORMANCE.md` lists where it reads malformed input differently from the reference. The proposal's recipes in section 6 were run against the fixtures at `dae7995` and the contract's worked tables on CPython 3.11, 3.12, 3.13, 3.14 and 3.15.0b4 and on PyPy 3.11, and pass: `normalize.json` 41/41 on every one of them, `jaro-winkler.json` 33/33 (worst distance from the fixture 4.8e-7), the contract's §3 bbox table, the exact expectations in `region.test.ts` and its 93-box grid test, the §6 distance table (bit-identical on x86_64 Linux), and the 12 ranking scenarios through a transcription of §4.6 to §4.9. The transport and concurrency claims in sections 4 and 5 were measured against a loopback server, with urllib3 2.8.0 and aiohttp 3.14.5 on CPython 3.11 to 3.14. An independent review then re-ran the recipes and the measurements; its findings are folded in, among them a Jaro-Winkler shortcut that scored 0 whenever only one string held a character above U+FFFF, redirect bodies that slipped past the body cap, and a crash on deeply nested JSON in small thread stacks. Treat every version number below as a starting point.
+Status: the port in [schuyler/atgeo-sdk-python](https://github.com/schuyler/atgeo-sdk-python) (PR #1) implements this document up to the nearby search (named `search_places` in the port); `search_by_keyword`, `search_nearby_then_by_keyword` and `autocomplete_by_keyword` are specified here (contract sections 16 to 19) and not yet built. Building it, and three independent reviews of the result, found the places this text was wrong or silent, corrected below: `total_timeout` did not bound redirects or headers (section 4, `Urllib3Transport`); responses outside a search were parsed on the app's thread, which crashes on a small stack (section 5); the requests adapter's recipe still read redirect bodies and leaked the session's credentials (section 4); aiohttp's proxy credentials reached exception messages (section 4); credentials in URLs (section 4, URLs); out-of-range coordinates raised from `math.sqrt` (section 6); the circle box needs the reference's own float expressions (section 6); a Jaro-Winkler value (section 6); and the dependency floors (section 2). On the same server answers for six searches around Philadelphia, replayed to both, the port and the reference returned the same 25,830 hits in the same order. The port's `CONFORMANCE.md` lists where it reads malformed input differently from the reference. The proposal's recipes in section 6 were run against the fixtures at `dae7995` and the contract's worked tables on CPython 3.11, 3.12, 3.13, 3.14 and 3.15.0b4 and on PyPy 3.11, and pass: `normalize.json` 41/41 on every one of them, `jaro-winkler.json` 33/33 (worst distance from the fixture 4.8e-7), the contract's §3 bbox table, the exact expectations in `region.test.ts` and its 93-box grid test, the §6 distance table (bit-identical on x86_64 Linux), and the 12 ranking scenarios through a transcription of §4.6 to §4.9. The transport and concurrency claims in sections 4 and 5 were measured against a loopback server, with urllib3 2.8.0 and aiohttp 3.14.5 on CPython 3.11 to 3.14. An independent review then re-ran the recipes and the measurements; its findings are folded in, among them a Jaro-Winkler shortcut that scored 0 whenever only one string held a character above U+FFFF, redirect bodies that slipped past the body cap, and a crash on deeply nested JSON in small thread stacks. Treat every version number below as a starting point.
 
 ## 1. Goals
 
 - Same results as the TypeScript client for the same server answers, verified by the shared fixtures.
-- Same privacy properties: search text and precise coordinates never leave the device.
+- Same privacy properties: `search_nearby` never sends search text or precise coordinates; text leaves the device only through the methods whose names contain `keyword`, and every result's `disclosed` says what the call sent.
 - Idiomatic Python: a blocking client for scripts, notebooks and WSGI servers and an asyncio client for async servers, with the same methods, arguments and results; type hints throughout, checked with `mypy --strict`; frozen dataclasses for everything the client returns.
 - Few dependencies: urllib3, which has none of its own, for the blocking client's HTTP, `truststore` for the operating system's certificates, and aiohttp for the async client's HTTP, behind an `async` extra. Everything else (`json`, `unicodedata`, `threading`, `asyncio`) is the standard library.
 
@@ -40,7 +40,7 @@ src/atgeo/
   _threads.py           start_daemon: threads with 8 MiB stacks (section 5)
   _urllib3.py           Urllib3Transport, the blocking client's default
   _aiohttp.py           AiohttpTransport, the async client's default; imported only when it is used
-  types.py              Circle, Bbox, SortMode, SearchResult, TileCounts, SearchHit, PlaceRecord, PlaceLocation, Point, Box, the describe types
+  types.py              Circle, Bbox, SortMode, NearbySearchResult, TileCounts, NearbyHit, KeywordSearchResult, KeywordHit, FallbackSearchResult, Disclosure, PlaceRecord, PlaceLocation, Point, Box, the describe types
   errors.py             AtgeoError, AtgeoDecodingError
   py.typed
 tests/
@@ -74,7 +74,9 @@ Distribution during beta mirrors the JS client: not on PyPI. Install from GitHub
 
 ## 3. Public API
 
-Names follow PEP 8: methods and attributes are `snake_case`, so the lexicon's `recordCount` is `record_count` here. `get_place` keeps the verb, as in the JS and Kotlin clients and the XRPC query it wraps.
+Names follow PEP 8: methods and attributes are `snake_case`, so the lexicon's `recordCount` is `record_count` here and the JS client's `searchNearby`, `searchByKeyword`, `searchNearbyThenByKeyword` and `autocompleteByKeyword` are `search_nearby`, `search_by_keyword`, `search_nearby_then_by_keyword` and `autocomplete_by_keyword`. `get_place` keeps the verb, as in the JS and Kotlin clients and the XRPC query it wraps.
+
+Naming rule: every method whose name contains `keyword` may send search text to the server; no other method does. The parameter that carries text is `text` where it never leaves the device (`search_nearby`) and `keyword` where it may. `search_nearby_then_by_keyword` sends the keyword only when the nearby results have no solid hit, and the autocompleter's `search_by_keyword` sends every keyword that qualifies. Which server call each method makes, and what it sends, is in port-contract.md (sections 16 to 19 for the keyword methods).
 
 ```python
 class AtgeoClient:
@@ -90,7 +92,7 @@ class AtgeoClient:
         clock: Callable[[], float] = time.time,      # seconds since the epoch; for tests (section 6, Caches)
     ) -> None: ...
 
-    def search_places(
+    def search_nearby(
         self,
         region: Circle | Bbox,
         *,
@@ -98,7 +100,27 @@ class AtgeoClient:
         text: str | None = None,
         collection: str | None = None,
         sort: SortMode | str = SortMode.FUSED,
-    ) -> SearchResult: ...
+    ) -> NearbySearchResult: ...
+
+    def search_by_keyword(
+        self,
+        keyword: str,
+        *,
+        dataset: str,
+        collection: str | None = None,
+        region: Bbox | None = None,                 # a box only, never a Circle; sent snapped outward to whole degrees
+    ) -> KeywordSearchResult: ...
+
+    def search_nearby_then_by_keyword(
+        self,
+        region: Circle | Bbox,
+        *,
+        dataset: str,
+        keyword: str,
+        keyword_region: Literal["none", "degree"],  # required: whether the keyword request carries the nearby region
+        collection: str | None = None,
+        sort: SortMode | str = SortMode.FUSED,
+    ) -> FallbackSearchResult: ...
 
     def get_place(self, origin: str) -> PlaceRecord: ...
     def describe_service(self) -> ServiceDescription: ...
@@ -112,7 +134,10 @@ class AtgeoClient:
 class AsyncAtgeoClient:
     # The same constructor, with transport: AsyncTransport | None (default AiohttpTransport(), which needs
     # the async extra).
-    async def search_places(self, region: Circle | Bbox, *, dataset: str, text=..., collection=..., sort=...) -> SearchResult: ...
+    async def search_nearby(self, region: Circle | Bbox, *, dataset: str, text=..., collection=..., sort=...) -> NearbySearchResult: ...
+    async def search_by_keyword(self, keyword: str, *, dataset: str, collection=..., region=...) -> KeywordSearchResult: ...
+    async def search_nearby_then_by_keyword(self, region: Circle | Bbox, *, dataset: str, keyword: str, keyword_region: Literal["none", "degree"], collection=..., sort=...) -> FallbackSearchResult: ...
+    def autocomplete_by_keyword(self, *, dataset: str, collection: str | None = None, region: Bbox | None = None) -> KeywordAutocomplete: ...
     async def get_place(self, origin: str) -> PlaceRecord: ...
     async def describe_service(self) -> ServiceDescription: ...
     async def describe_tileset(self, slug: str) -> Tileset: ...
@@ -121,7 +146,7 @@ class AsyncAtgeoClient:
     async def __aexit__(self, *exc: object) -> None: ...
 ```
 
-Every argument after `region` is keyword-only, so that `search_places(region, "Starbux")` is an error rather than a guess at which string is which. `server` must be an absolute http or https URL with a host and no credentials, or the constructor raises `ValueError` (section 4, URLs). `dataset` is a required keyword-only argument, so a call without it raises `TypeError`, and it is never defaulted. The other optional arguments are absent only when they are `None`, as the reference's `??` has it. An empty `dataset=""` is still a dataset, sent as given, with a collection prefix of `urn:atgeo::…`. Each client is safe to share and meant to be: one per server for the life of the process, or of the event loop. `AtgeoClient` may be called from many threads at once. `AsyncAtgeoClient` may be called from many tasks at once. Its own state is not bound to an event loop, but its default transport's aiohttp session is from the first request on (aiohttp cannot use a session in another loop: measured, `RuntimeError: Event loop is closed`), so a client using the default transport belongs to the loop of its first call, and using it from another raises a `RuntimeError` that says so. The client checks this itself, at the top of every call and before any request, rather than leaving it to the transport: a search from a second loop whose tile lists are still cached makes only tile requests, and the transport's `RuntimeError` there would count every tile as failed and return no places without an error. A script that calls `asyncio.run` more than once makes a client inside each. The test suite's fake transport is not loop-bound, which is what lets its harness run each call under its own `asyncio.run` (section 7). Both default transports pool connections, so use a client in a `with` (or `async with`) block or call `close()` (`aclose()`) when done with it; an unclosed aiohttp session logs a warning when it is collected. A client closes only a transport it created. An `AsyncAtgeoClient` that has closed its own transport raises `RuntimeError` on any later call, before any request, and `AiohttpTransport` refuses requests once closed: the port first opened a fresh session after `aclose()`, which nothing would close. `cache_budget_bytes` must be a non-negative integer (an `int` or an int-like through `operator.index`, not a `bool`), checked by both constructors (`TypeError`, `ValueError`): unchecked, a `None` or a string failed inside every tile store, where the error counted as a failed tile and every search came back empty without raising. `AiohttpTransport` is importable from `atgeo` but not listed in `__all__`, so that `from atgeo import *` works without the async extra.
+Every argument after `region` (after `keyword`, in `search_by_keyword`) is keyword-only, so that `search_nearby(region, "Starbux")` is an error rather than a guess at which string is which. `server` must be an absolute http or https URL with a host and no credentials, or the constructor raises `ValueError` (section 4, URLs). `dataset` is a required keyword-only argument, so a call without it raises `TypeError`, and it is never defaulted. The other optional arguments are absent only when they are `None`, as the reference's `??` has it. An empty `dataset=""` is still a dataset, sent as given, with a collection prefix of `urn:atgeo::…`. Each client is safe to share and meant to be: one per server for the life of the process, or of the event loop. `AtgeoClient` may be called from many threads at once. `AsyncAtgeoClient` may be called from many tasks at once. Its own state is not bound to an event loop, but its default transport's aiohttp session is from the first request on (aiohttp cannot use a session in another loop: measured, `RuntimeError: Event loop is closed`), so a client using the default transport belongs to the loop of its first call, and using it from another raises a `RuntimeError` that says so. The client checks this itself, at the top of every call and before any request, rather than leaving it to the transport: a search from a second loop whose tile lists are still cached makes only tile requests, and the transport's `RuntimeError` there would count every tile as failed and return no places without an error. A script that calls `asyncio.run` more than once makes a client inside each. The test suite's fake transport is not loop-bound, which is what lets its harness run each call under its own `asyncio.run` (section 7). Both default transports pool connections, so use a client in a `with` (or `async with`) block or call `close()` (`aclose()`) when done with it; an unclosed aiohttp session logs a warning when it is collected. A client closes only a transport it created. An `AsyncAtgeoClient` that has closed its own transport raises `RuntimeError` on any later call, before any request, and `AiohttpTransport` refuses requests once closed: the port first opened a fresh session after `aclose()`, which nothing would close. `cache_budget_bytes` must be a non-negative integer (an `int` or an int-like through `operator.index`, not a `bool`), checked by both constructors (`TypeError`, `ValueError`): unchecked, a `None` or a string failed inside every tile store, where the error counted as a failed tile and every search came back empty without raising. `AiohttpTransport` is importable from `atgeo` but not listed in `__all__`, so that `from atgeo import *` works without the async extra.
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -143,18 +168,26 @@ class SortMode(StrEnum):
     SIMILARITY = "similarity"
 ```
 
-Neither region class validates in `__post_init__`: `Circle(math.nan, 0, 10)` constructs, and `search_places` rejects it (Errors, below), so that the contract's order of checks (§3) holds whichever fault a call has. `sort` takes a `SortMode` or its string value; any other string is a `ValueError` before any request.
+Neither region class validates in `__post_init__`: `Circle(math.nan, 0, 10)` constructs, and `search_nearby` rejects it (Errors, below), so that the contract's order of checks (§3) holds whichever fault a call has. `sort` takes a `SortMode` or its string value; any other string is a `ValueError` before any request.
 
 ```python
 @dataclass(frozen=True, slots=True, kw_only=True)
-class SearchResult:
-    places: list[SearchHit]
+class Disclosure:
+    """What the server learned during one call."""
+    keyword: bool                 # the keyword was sent
+    region: float | None          # grid in degrees of the finest region sent: 0.01 or 1; None if none
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NearbySearchResult:
+    places: list[NearbyHit]
     complete: bool
     overview: bool
     tiles: TileCounts             # TileCounts(fetched: int, failed: int)
+    disclosed: Disclosure
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class SearchHit:
+class NearbyHit:
+    via: Literal["tiles"]
     origin: str | None
     place: Mapping[str, Any]      # the record value as served, a dict at run time; read-only (Place values, below)
     importance: int | None
@@ -167,11 +200,40 @@ class SearchHit:
     def location(self) -> PlaceLocation: ...  # locate(place), contract §5
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class KeywordHit:
+    """No distance or score: the server ranks by neither, and the app can compute distance from `location`."""
+    via: Literal["keyword"]
+    origin: str | None
+    place: Mapping[str, Any]
+    importance: int | None
+    # name and location, as on NearbyHit
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class KeywordSearchResult:
+    places: list[KeywordHit]
+    attribution: tuple[CollectionAttribution, ...]
+    disclosed: Disclosure
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FallbackSearchResult:
+    """The nearby result's fields, with `places` holding both kinds of hit; `via` tells them apart."""
+    places: list[NearbyHit | KeywordHit]
+    complete: bool
+    overview: bool
+    tiles: TileCounts
+    disclosed: Disclosure
+
+class KeywordAutocomplete:
+    """Returned by `AsyncAtgeoClient.autocomplete_by_keyword`; see section 5."""
+    async def search_by_keyword(self, keyword: str) -> KeywordSearchResult:
+        """Every keyword that qualifies is sent to the server as given, prefixes included."""
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PlaceRecord:
     origin: str
     place: Mapping[str, Any]
     importance: int | None
-    # name and location, as on SearchHit
+    # name and location, as on NearbyHit
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PlaceLocation:
@@ -222,11 +284,11 @@ class AtgeoDecodingError(Exception):
     __cause__ is the parser's exception when there was one."""
 ```
 
-Bad arguments raise `ValueError` from the top of `search_places`, in the contract's order (§3), before anything is looked up or fetched: a non-finite or out-of-range coordinate, `south > north`, a negative or non-finite radius, an unknown `sort`, then `similarity` with no text. A `region` that is neither a `Circle` nor a `Bbox` raises `TypeError`, Python's convention for the wrong type. This matches the JS client's `TypeError` in spirit: a programming error, kept out of `AtgeoError`'s code namespace.
+Bad arguments raise `ValueError` from the top of each search method, in the contract's order (§3), before anything is looked up or fetched: a non-finite or out-of-range coordinate, `south > north`, a negative or non-finite radius, an unknown `sort`, then `similarity` with no text; `search_nearby_then_by_keyword` checks `dataset`, `keyword`, `keyword_region` (it must be `"none"` or `"degree"`), `region`, then `sort` and similarity, in that order. A `region` that is neither a `Circle` nor a `Bbox` raises `TypeError`, Python's convention for the wrong type, and so does a non-string `keyword` in any of the keyword methods and the autocompleter, as a non-string `dataset` does; a `Circle` passed to `search_by_keyword` or `autocomplete_by_keyword` is a region of the wrong type. A keyword that cannot qualify is not an argument error in `search_by_keyword`: it goes to the server, which answers `AtgeoError` with code `KeywordRequired`. A keyword over 256 UTF-8 bytes is `InvalidRequest`; contract section 1 lists the call's other codes. This matches the JS client's `TypeError` in spirit: a programming error, kept out of `AtgeoError`'s code namespace.
 
-`AtgeoDecodingError` is its own type, not a `ValueError` subclass, for the reason Kotlin's is not a `SerializationException`: `json.JSONDecodeError` is a `ValueError`, so an `except ValueError` written for a bad region would also swallow a garbled answer. A 2xx body that is not JSON, or has no usable body in the contract's narrow sense (§1: no `tiles` list, no `value` object, a describe body that is not an object), raises `AtgeoDecodingError` from the parser's error; nothing else about a body's shape raises. Inside a tile fetch either counts as a failed tile.
+`AtgeoDecodingError` is its own type, not a `ValueError` subclass, for the reason Kotlin's is not a `SerializationException`: `json.JSONDecodeError` is a `ValueError`, so an `except ValueError` written for a bad region would also swallow a garbled answer. A 2xx body that is not JSON, or has no usable body in the contract's narrow sense (§1: no `tiles` list, no `value` object, no `places` list in a keyword answer, a describe body that is not an object), raises `AtgeoDecodingError` from the parser's error; nothing else about a body's shape raises. Inside a tile fetch either counts as a failed tile.
 
-Network failures raise whatever the transport raises, unwrapped. Before a response arrives, `Urllib3Transport` raises a `MaxRetryError` whose `reason` is what went wrong (a `NewConnectionError`, a `ConnectTimeoutError`, a `ReadTimeoutError` while waiting for the headers, an `SSLError`), and `AiohttpTransport` an `aiohttp.ClientError` (connection and DNS failures are `OSError`s as well; `ServerDisconnectedError` is not) or a `TimeoutError`. urllib3's exceptions are not `OSError`s. Once a body has started, both transports raise their own `BodyError`, an `OSError`, for anything that stops it arriving whole, and `RedirectError`, an `OSError` too, for a bad or endless redirect (section 4). When `total_timeout` runs out before a response, `Urllib3Transport` raises `TimeoutError`, an `OSError`. The README tells callers to catch `(urllib3.exceptions.HTTPError, OSError)` or `(aiohttp.ClientError, OSError)` for "no answer arrived", and to add `httpx.HTTPError` with the httpx adapter, whose errors before a response (`httpx.ReadTimeout`, `httpx.ConnectError`) are not `OSError`s. Cancelling the task running an `AsyncAtgeoClient` call raises `asyncio.CancelledError`; interrupting a blocking call with Ctrl-C raises `KeyboardInterrupt` (section 5).
+Network failures raise whatever the transport raises, unwrapped. Before a response arrives, `Urllib3Transport` raises a `MaxRetryError` whose `reason` is what went wrong (a `NewConnectionError`, a `ConnectTimeoutError`, a `ReadTimeoutError` while waiting for the headers, an `SSLError`), and `AiohttpTransport` an `aiohttp.ClientError` (connection and DNS failures are `OSError`s as well; `ServerDisconnectedError` is not) or a `TimeoutError`. urllib3's exceptions are not `OSError`s. Once a body has started, both transports raise their own `BodyError`, an `OSError`, for anything that stops it arriving whole, and `RedirectError`, an `OSError` too, for a bad or endless redirect (section 4). When `total_timeout` runs out before a response, `Urllib3Transport` raises `TimeoutError`, an `OSError`. The README tells callers to catch `(urllib3.exceptions.HTTPError, OSError)` or `(aiohttp.ClientError, OSError)` for "no answer arrived", and to add `httpx.HTTPError` with the httpx adapter, whose errors before a response (`httpx.ReadTimeout`, `httpx.ConnectError`) are not `OSError`s. Cancelling the task running an `AsyncAtgeoClient` call raises `asyncio.CancelledError`, as does a call an autocompleter superseded (section 5); interrupting a blocking call with Ctrl-C raises `KeyboardInterrupt` (section 5).
 
 ## 4. Transport
 
@@ -486,7 +548,7 @@ Every thread the clients start for this work is started with an 8 MiB stack, and
 
 ### `AtgeoClient`
 
-- Validate and plan in the caller's thread; an invalid argument raises `ValueError` with no request made.
+- Validate and plan in the caller's thread; an invalid argument raises `ValueError` with no request made. The blocking client offers no autocompleter: it cannot cancel a call in flight, and autocomplete is a UI behaviour whose UIs use the async client.
 - The one or two tile lists, then the tiles, are fetched by worker threads that the search starts and owns: for the tiles, `min(8, n)` daemon threads (`threading.Thread(daemon=True)`), each claiming the next index from a counter under a lock and writing that index's slot. That is the reference's `mapLimit`: URLs claimed in order, at most 8 in flight, completion order irrelevant (§4.4). A lock rather than `next()` on an `itertools.count`, so that nothing depends on the GIL under free-threaded CPython. Each worker checks the tile cache when it reaches a URL, as the reference does, so a cached tile never becomes a request and recency is touched in the reference's order; otherwise it calls the transport and parses and stores the tile. Any `Exception` from the request or the parse leaves the slot empty, a failed tile; `MemoryError` is re-raised in the caller instead, for the reason Kotlin's tile loop does not catch `Throwable`. `fetched` is the count of filled slots and `failed` the rest. For a crossing region the two tile lists are fetched on two such threads; the first failure is raised as soon as it is known, and a failed getTiles caches nothing. URLs are claimed in order, but eight threads then call the transport at once, so requests can arrive interleaved: free-threaded 3.14t and PyPy reordered them, so a test can pin the first eight as a set, not the order.
 - Assemble in the caller's thread.
 
@@ -506,6 +568,13 @@ Under the GIL the worker threads overlap their I/O, not their parsing; free-thre
 The parsing and the assembly run on daemon threads the client starts itself, with the 8 MiB stack above, one per job and so at most eight at a time; the awaiting coroutine waits on an `asyncio.Future` that the thread resolves through `loop.call_soon_threadsafe`. They do not go through `run_in_executor`: the loop's default executor starts its threads with the platform's default stack, and an executor passed in by an app could be a `ProcessPoolExecutor`, which fails every job (pickling the closure raised `AttributeError`, an `Exception`, so every tile would have counted as failed and the search returned nothing without an error; measured).
 
 The threads are there to keep the event loop free. Measured with a 1 ms ticker on the loop while parsing the 42 Philadelphia tiles and then scoring for about a second: run on the loop, the ticker stalled for up to 1.3 s on every CPython version; run in a worker thread, the longest stall was 18 to 46 ms and the median 5.4 ms, the GIL's switch interval (the long stalls are single `json.loads` calls, which hold the GIL for up to 26 ms); on free-threaded 3.13t the longest was 5.0 ms and the median 0.17 ms.
+
+`autocomplete_by_keyword` validates `dataset` and `region` as `search_by_keyword` does, when it is called, and raises `ValueError` or `TypeError` there. The `KeywordAutocomplete` it returns holds the previous call's `asyncio.Task`. Each `search_by_keyword(keyword)` call cancels that previous task, then checks that `keyword` is a string (`TypeError` otherwise), and runs its own work (the call itself, or the no-request answer for a keyword that cannot qualify) as a new `asyncio.Task`, and awaits it. Two rules follow.
+
+- A superseded call raises `asyncio.CancelledError` although the caller's own task is not cancelled: `task.cancelling()` is 0 in the caller. Callers must catch and ignore an autocompleter's `CancelledError` (it means "superseded"), and must not swallow a `CancelledError` that arrives while `task.cancelling()` is above 0.
+- The caller's own cancellation still counts. Cancelling a task that is awaiting another task cancels the awaited one, so cancelling the caller cancels the request (contract §11).
+
+A keyword that cannot qualify (contract section 17) resolves with an empty result and `disclosed` of `keyword=False, region=None`, without a request, and still cancels the previous call. Debouncing is the app's. The docstring on `KeywordAutocomplete.search_by_keyword` states that every qualifying keyword goes to the server as typed, prefixes included, that the server keeps no log of it, that a hostile operator can record what it receives, and that debouncing reduces how many prefixes go out and is the app's choice (contract section 19). It neither recommends nor discourages any of it.
 
 Cancellation: cancelling the calling task raises `CancelledError` in it at once, and aiohttp closes the connections in flight (section 4). A parse already running on its thread runs to its end, and the tile it stores is consistent. A call answered entirely from cache still awaits its assembly thread, so from an already-cancelled task it raises `CancelledError` rather than completing; the contract allows either (§14), and tests must not assert either.
 
@@ -697,7 +766,9 @@ The fake server is one routing core with two faces, a `Transport` (`fake.transpo
 - is configured with tilesets (slug, collections, tiles whose records are given as plain dicts; the construction-time checks below still require well-formed records, so malformed ones are served through the raw-response override), a `tiles_for` override returning one of the three shapes the reference's tests use (a URL list, `{"tiles": ..., "overview": ...}`, or `{"error": ..., "message": ...}`), a `fail_tiles` list, a `server` base, `go_offline()`, a `responses: dict[str, HttpResponse]` override of raw responses by URL that bypasses routing and validation (how `test_robustness.py` serves the malformed bodies of contract §1), and a `delays: dict[str, float]` by URL, slept with `time.sleep` on the sync face and `asyncio.sleep` on the async one, with a count of the peak number of requests in flight;
 - routes `/xrpc/org.atgeo.*` and tile URLs the way `test/helpers/fakeServer.ts` does, including the dataset and collection selection errors, and raises `ConnectionError("network disabled")` when offline, or for any URL in its `network_errors` list, which the reference's "tile fetch rejects" test needs;
 - records every request URL for the privacy tests (§12), in a list guarded by a `threading.Lock` along with the offline flag and the in-flight count, since the sync client calls it from several threads. The transport seam carries a URL and nothing else: the method is always GET and there is never a body, so those are fixed by construction rather than recorded; the ported tests that assert them keep their names and their remaining assertions so the by-eye diff still lines up. Headers belong to the real transports, which `test_transports.py` checks (below);
-- validates its own traffic. There is no Python validator for atproto lexicons, so the fake implements the contract's minimum (§13) plus what `fakeServer.test.ts` asserts, as the Kotlin spec lists it: at construction, a string `slug` on every tileset, an object `value` with a string `name` on every record, and an integral `importance` when present (the failure message contains "integer"); for requests, unknown and missing parameter names (`dataset` and `bbox` for getTiles, `uri` for getPlace, `slug` for describeTileset) are a 400 `InvalidRequest`, `bbox` must match the §13 regular expression, and `uri` must have a scheme, a colon and no spaces, so that `not a uri` fails. Its own responses carry the lexicon's required fields. The lexicon JSON stays vendored, with its own `SOURCE`, so that a validator can be added later.
+- validates its own traffic. There is no Python validator for atproto lexicons, so the fake implements the contract's minimum (§13) plus what `fakeServer.test.ts` asserts, as the Kotlin spec lists it: at construction, a string `slug` on every tileset, an object `value` with a string `name` on every record, and an integral `importance` when present (the failure message contains "integer"); for requests, unknown and missing parameter names (`dataset` and `bbox` for getTiles, `uri` for getPlace, `slug` for describeTileset) are a 400 `InvalidRequest`, `bbox` must match the §13 regular expression (the whole-degree form for `org.atgeo.searchPlaces`, which it answers with the server's `KeywordRequired`, `InvalidBbox` and `BboxTooPrecise` checks), and `uri` must have a scheme, a colon and no spaces, so that `not a uri` fails. Its own responses carry the lexicon's required fields. The lexicon JSON stays vendored, with its own `SOURCE`, so that a validator can be added later.
+
+The fixture tests include `keyword-fallback.json` (the solid-hit decision, the merge order and `disclosed`, through the request-capturing fake of contract §13), `keyword-regions.json` (whole-degree snapping of a keyword region) and the `searchPlaces` reader cases in `lenient-readers.json`. Autocomplete tests run against the async client only: a one-character prefix makes no request, and a second call cancels the first with `CancelledError`.
 
 Both clients through one fixture: `client` is parametrized over `"sync"` and `"async"` and yields a thin adapter whose methods block, calling the sync client directly or the async one under `asyncio.run`. A failure names the client it happened on.
 
@@ -728,7 +799,9 @@ CI: GitHub Actions. A lint job runs `ruff check`, `ruff format --check` and `myp
 | CPU work (both clients) | every response parsed on daemon threads the client starts, with 8 MiB stacks | parsing and ranking on the loop stalled it for 1.3 s; a 1 MiB stack let deep JSON crash CPython 3.12 and 3.13; an app's `ProcessPoolExecutor` would have failed every tile silently |
 | Place representation | the `dict` from `json.loads`, shared and read-only by contract | untouched JSON; copying measured at three times the cost of parsing |
 | Importance type | `int`, read through `float` | contract §1's precision rule; Python `int`s do not overflow |
-| Argument errors | `ValueError`, or `TypeError` for a region of the wrong type | Python convention; keeps `AtgeoError.code` the server's namespace |
+| Autocompleter | async client only; an `asyncio.Task` per call, cancelled by the next | superseded call raises `CancelledError`; a blocking call cannot be cancelled in flight |
+| Combined search's keyword region | required `keyword_region` | the disclosure is the developer's choice every time |
+| Argument errors | `ValueError`, or `TypeError` for a region or keyword of the wrong type | Python convention; keeps `AtgeoError.code` the server's namespace |
 | Decoding errors | `AtgeoDecodingError`, not a `ValueError` | `except ValueError` for a bad region must not catch a garbled answer |
 | Ranking | a stable sort on key tuples | faster than `cmp_to_key`; no integer overflow; NaN last |
 | Tile cache | bodies and key sets, plus the latest search's parsed tiles | a parsed tile is 3.5 times its body on CPython |
@@ -745,4 +818,4 @@ Open:
 5. More cases in the shared fixtures, so that every port runs them. `jaro-winkler.json` has nothing outside the BMP, so the bug section 6 describes passes it; the four cases this port tests are proposed for it. `normalize.json` passes a port that skips the first lowercase (NFKD first, then lowercase once); `ΑΣ㎏` → `αςkg` and `ΑΣ™` → `αςtm` catch it, since NFKD would otherwise split the compatibility character before the sigma is judged word-final.
 6. Stale pooled connections. With no retries, a request sent on a keep-alive connection the server has just closed fails, and inside a search that is a failed tile. Retrying a GET that never reached the server is not retrying a tile, but telling the two apart needs care; revisit if failed tiles show up in practice.
 7. Reserving `atgeo` on PyPI before the beta ends. A name nobody holds can be taken; publishing a placeholder is the maintainer's call.
-8. Reporting failed tiles (contract §4.4). `SearchResult` gains `tile_failures: tuple[TileFailure, ...] = ()` as its last field, so keyword construction keeps working. `TileFailure` is a frozen `kw_only` dataclass with `url: str`, `kind: TileFailureKind` (a `StrEnum`: `refused`, `status`, `decode`, `transport`), `status: int | None` and `error: Exception = field(compare=False)`, which keeps the error out of `==` and `hash` as the contract asks. The guarded region shrinks: today `is_tile_failure` accepts any `Exception` from `_tile`, and that includes `store_tile`'s cache insert, which is how `cache_budget_bytes=None` emptied every search (section 3). Decoding stays guarded and the insert moves outside it, in both clients; a refused URL becomes a `refused` entry through its own path rather than by catching the `ValueError` `tile_request` raises. A custom transport that throws a `TypeError` on tile URLs is still a failed tile, now reported as `transport` with the `TypeError` attached, traceback and all (a `refused` or `status` error is built, not raised, so it has none). The traceback holds the `_tile` frame and so the client, which a client meant to live for the process makes harmless. Each failure is also logged with `logging.getLogger("atgeo").debug(...)`, carrying the entry's fields, by the drivers in URL order after `assemble` has returned (in the async client, after the `await`), so a search that fails or is cancelled logs nothing; the URL is logged with `%r`, so a server-chosen URL cannot forge log lines. No `NullHandler` is added: the records are silent unless the app enables debug logging for `atgeo`, since Python's last-resort handler shows only warnings and above. `error` stays in `repr`, which is for debugging; `dataclasses.asdict` would copy it, but the port defines no serialization of its own.
+8. Reporting failed tiles (contract §4.4). `NearbySearchResult` gains `tile_failures: tuple[TileFailure, ...] = ()` as its last field, so keyword construction keeps working. `TileFailure` is a frozen `kw_only` dataclass with `url: str`, `kind: TileFailureKind` (a `StrEnum`: `refused`, `status`, `decode`, `transport`), `status: int | None` and `error: Exception = field(compare=False)`, which keeps the error out of `==` and `hash` as the contract asks. The guarded region shrinks: today `is_tile_failure` accepts any `Exception` from `_tile`, and that includes `store_tile`'s cache insert, which is how `cache_budget_bytes=None` emptied every search (section 3). Decoding stays guarded and the insert moves outside it, in both clients; a refused URL becomes a `refused` entry through its own path rather than by catching the `ValueError` `tile_request` raises. A custom transport that throws a `TypeError` on tile URLs is still a failed tile, now reported as `transport` with the `TypeError` attached, traceback and all (a `refused` or `status` error is built, not raised, so it has none). The traceback holds the `_tile` frame and so the client, which a client meant to live for the process makes harmless. Each failure is also logged with `logging.getLogger("atgeo").debug(...)`, carrying the entry's fields, by the drivers in URL order after `assemble` has returned (in the async client, after the `await`), so a search that fails or is cancelled logs nothing; the URL is logged with `%r`, so a server-chosen URL cannot forge log lines. No `NullHandler` is added: the records are silent unless the app enables debug logging for `atgeo`, since Python's last-resort handler shows only warnings and above. `error` stays in `repr`, which is for debugging; `dataclasses.asdict` would copy it, but the port defines no serialization of its own.

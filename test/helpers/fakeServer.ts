@@ -9,6 +9,7 @@ import geo from "../lexicon/geo.json" with { type: "json" };
 import getPlace from "../lexicon/getPlace.json" with { type: "json" };
 import getTiles from "../lexicon/getTiles.json" with { type: "json" };
 import placeLexicon from "../lexicon/place.json" with { type: "json" };
+import searchPlaces from "../lexicon/searchPlaces.json" with { type: "json" };
 import tilePayload from "../lexicon/tilePayload.json" with { type: "json" };
 
 const lexicons = new Lexicons([
@@ -21,6 +22,7 @@ const lexicons = new Lexicons([
   getPlace,
   getTiles,
   placeLexicon,
+  searchPlaces,
   tilePayload,
 ] as unknown as LexiconDoc[]);
 
@@ -73,6 +75,20 @@ const json = (body: unknown, status = 200) =>
 
 const xrpcError = (error: string, message: string, status = 400) => json({ error, message }, status);
 
+// The server's name_tokens (search_index.sql): lowercase, accents (all marks) stripped, apostrophes dropped,
+// punctuation runs to spaces, final sigma folded, split on whitespace.
+const nameTokens = (s: string): string[] =>
+  s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .normalize("NFC")
+    .replace(/['\u2019\u02BC]/g, "")
+    .replace(/\p{P}+/gu, " ")
+    .replace(/\u03C2/g, "\u03C3")
+    .split(/[\p{Z}\s]+/u)
+    .filter((t) => t !== "");
+
 const wire = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
 export const placeOrigin = (id: string) => `urn:atgeo:overturemaps.org:place:${id}`;
@@ -104,7 +120,7 @@ export function record(value: PlaceValue, importance?: number, uri?: string): Ti
   return { value, ...(importance === undefined ? {} : { importance }), ...(uri === undefined ? {} : { uri }) };
 }
 
-// The dataset and collection a search names; searchPlaces has no defaults (contract section 4.1).
+// The dataset and collection a search names; searchNearby has no defaults (contract section 4.1).
 export const OVERTURE = { dataset: "overturemaps.org", collection: "place" } as const;
 
 export function overture(tiles: FakeTileset["tiles"]): FakeTileset {
@@ -150,14 +166,21 @@ export function fakeServer(options: FakeServerOptions = {}): FakeServer {
     return json(body);
   };
 
-  const getTilesAnswer = (params: Record<string, string>): Response => {
-    const { dataset, collection, bbox } = params;
+  // The tilesets carrying the dataset (and collection), or the error answer; shared by getTiles and searchPlaces.
+  const select = (dataset: string, collection: string | undefined): FakeTileset[] | Response => {
     const withDataset = tilesets.filter((t) => t.collections.some((c) => c.dataset === dataset));
     if (withDataset.length === 0) return xrpcError("DatasetNotFound", `Dataset ${dataset} not found`);
     const selected = withDataset.filter((t) =>
       t.collections.some((c) => c.dataset === dataset && (collection === undefined || c.collection === collection)),
     );
     if (selected.length === 0) return xrpcError("CollectionNotFound", `Collection ${collection} not found`);
+    return selected;
+  };
+
+  const getTilesAnswer = (params: Record<string, string>): Response => {
+    const { dataset, collection, bbox } = params;
+    const selected = select(dataset, collection);
+    if (selected instanceof Response) return selected;
     const urls = selected.flatMap((t) => t.tiles.map((tile) => tile.url)).sort();
     const tiles = options.tilesFor ? options.tilesFor(bbox) : urls;
     if (Array.isArray(tiles)) return answer("org.atgeo.getTiles", { tiles });
@@ -165,22 +188,68 @@ export function fakeServer(options: FakeServerOptions = {}): FakeServer {
     return answer("org.atgeo.getTiles", tiles);
   };
 
-  const getPlaceAnswer = (origin: string): Response => {
+  const placeView = (tileset: FakeTileset, found: TileRecord, origin: string) => {
     const [, , dataset, collection, ...rest] = origin.split(":");
+    return {
+      uri: origin,
+      url: `${server}/${dataset}/${collection}/${rest.join(":")}`,
+      ...(found.importance === undefined ? {} : { importance: found.importance }),
+      value: found.value,
+      attribution: attributionList(tileset),
+    };
+  };
+
+  const searchPlacesAnswer = (params: Record<string, string>): Response => {
+    const { dataset, collection, q, bbox } = params;
+    if (bbox !== undefined) {
+      const parts = bbox.split(",");
+      // Server order: the precision check, then the bbox rules.
+      if (parts.length === 4 && parts.some((p) => /e/i.test(p) || (p.includes(".") && p.length - p.indexOf(".") - 1 > 0))) {
+        return xrpcError("BboxTooPrecise", "bbox coordinate has more than 0 decimal places; snap to 1° grid");
+      }
+      const invalid = (message: string) => xrpcError("InvalidBbox", message);
+      if (parts.length !== 4 || !parts.every((p) => /^[+-]?(\d+\.?\d*|\.\d+)$/.test(p.trim()))) {
+        return invalid("bbox must be four comma-separated numbers");
+      }
+      const [west, south, east, north] = parts.map(Number);
+      if (![west, east].every((x) => Math.abs(x) <= 180) || ![south, north].every((y) => Math.abs(y) <= 90)) {
+        return invalid("bbox out of range");
+      }
+      if (south >= north) return invalid("bbox requires south < north");
+      if (west >= east && !(west > 0 && east < 0 && west - east < 360)) return invalid("bbox requires west < east");
+    }
+    const selected = select(dataset, collection);
+    if (selected instanceof Response) return selected;
+    const words = [...new Set(nameTokens(q))].slice(0, 12);
+    if (!words.some((w) => [...w].length >= 2)) return xrpcError("KeywordRequired", "q needs a word of two or more characters");
+
+    const prefix = collection === undefined ? undefined : `urn:atgeo:${dataset}:${collection}:`;
+    const matches = new Map<string, { tileset: FakeTileset; found: TileRecord }>();
+    for (const tileset of selected) {
+      for (const tile of tileset.tiles) {
+        for (const found of tile.records) {
+          const origin = found.value.origin;
+          if (typeof origin !== "string" || (prefix !== undefined && !origin.startsWith(prefix)) || matches.has(origin)) continue;
+          const variants = Array.isArray(found.value.variants) ? (found.value.variants as { name?: unknown }[]) : [];
+          const names = [found.value.name, ...variants.map((v) => v.name)].filter((n): n is string => typeof n === "string");
+          if (names.some((n) => words.every((w) => nameTokens(n).some((t) => t.startsWith(w))))) matches.set(origin, { tileset, found });
+        }
+      }
+    }
+    const places = [...matches]
+      .sort(([ao, a], [bo, b]) => (b.found.importance ?? 0) - (a.found.importance ?? 0) || (ao < bo ? -1 : ao > bo ? 1 : 0))
+      .map(([origin, { tileset, found }]) => placeView(tileset, found, origin));
+    return answer("org.atgeo.searchPlaces", { places });
+  };
+
+  const getPlaceAnswer = (origin: string): Response => {
+    const [, , dataset, collection] = origin.split(":");
     const notFound = () => xrpcError("PlaceNotFound", `Place ${origin} not found`);
     for (const tileset of tilesets) {
       if (!tileset.collections.some((c) => c.dataset === dataset && c.collection === collection)) continue;
       for (const tile of tileset.tiles) {
         const found = tile.records.find((r) => r.value.origin === origin);
-        if (found) {
-          return answer("org.atgeo.getPlace", {
-            uri: origin,
-            url: `${server}/${dataset}/${collection}/${rest.join(":")}`,
-            ...(found.importance === undefined ? {} : { importance: found.importance }),
-            value: found.value,
-            attribution: attributionList(tileset),
-          });
-        }
+        if (found) return answer("org.atgeo.getPlace", placeView(tileset, found, origin));
       }
     }
     return notFound();
@@ -192,6 +261,7 @@ export function fakeServer(options: FakeServerOptions = {}): FakeServer {
       const handlers: Record<string, (params: Record<string, string>) => Response> = {
         "org.atgeo.getTiles": getTilesAnswer,
         "org.atgeo.getPlace": (params) => getPlaceAnswer(params.uri),
+        "org.atgeo.searchPlaces": searchPlacesAnswer,
         "org.atgeo.describeService": () =>
           answer("org.atgeo.describeService", {
             did,

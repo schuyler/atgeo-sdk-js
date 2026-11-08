@@ -123,6 +123,29 @@ export function readPlace(body: unknown): { value: PlaceValue; importance?: numb
   });
 }
 
+/** A searchPlaces answer: the elements of `places` that are objects with an object `value` (frozen), each with its
+ * origin (`value.origin` if a string, else `uri` if a string, else null), `importance` and `attribution` (empty
+ * unless an array). `url` is not read. */
+export function readSearchPlaces(body: unknown): {
+  places: { origin: string | null; value: PlaceValue; importance?: number; attribution: Attribution[] }[];
+} {
+  if (!isObject(body) || !Array.isArray(body.places)) return unusable("searchPlaces body has no places array");
+  return {
+    places: body.places.filter(isObject).flatMap((p) =>
+      isObject(p.value)
+        ? [
+            present({
+              origin: readString(p.value.origin) ?? readString(p.uri) ?? null,
+              value: freezePlace(p.value),
+              importance: readInteger(p.importance),
+              attribution: readAttributionList(p.attribution) ?? [],
+            }),
+          ]
+        : [],
+    ),
+  };
+}
+
 const readCollectionRef = (o: Record<string, unknown>): CollectionRef =>
   present({ dataset: readString(o.dataset), collection: readString(o.collection) });
 

@@ -4,7 +4,7 @@ import { describe, distanceTo, locate, recordKey, type Locations } from "./merge
 import { normalize } from "./normalize.js";
 import { center } from "./region.js";
 import { jaroWinkler } from "./similarity.js";
-import type { Attribution, PlaceValue, Region, SearchHit, SortMode } from "./types.js";
+import type { Attribution, PlaceValue, Region, NearbyHit, SortMode } from "./types.js";
 import { isObject } from "./wire.js";
 
 const JW_THRESHOLD = 0.6;
@@ -50,6 +50,18 @@ export function matchTier(query: string, value: PlaceValue): 1 | 2 {
   return exact ? 1 : 2;
 }
 
+// Whether the server's keyword search would accept the keyword: after folding, dropping spacing and enclosing marks
+// (which normalize leaves), recomposing and deduplicating, one of its first 12 words has two code points. Not
+// matchTier's tokenization.
+export function qualifies(keyword: string): boolean {
+  const words = normalize(keyword)
+    .split(" ")
+    .flatMap(fold)
+    .map((w) => w.replace(/[\p{Mc}\p{Me}]/gu, "").normalize("NFC"))
+    .filter((w) => w !== "");
+  return [...new Set(words)].slice(0, MAX_QUERY_TOKENS).some((w) => [...w].length >= 2);
+}
+
 // Relative spherical area; a point is 0, so it ranks before any box containing it.
 function specificity({ point, bbox }: Locations): number {
   if (point || !bbox) return 0;
@@ -68,11 +80,11 @@ export function rank(
   query: string,
   sort: SortMode,
   overview: boolean,
-): SearchHit[] {
+): NearbyHit[] {
   const middle = center(region);
-  const hits: SearchHit[] = [];
-  const area = new Map<SearchHit, number>();
-  const tier = new Map<SearchHit, 1 | 2>();
+  const hits: NearbyHit[] = [];
+  const area = new Map<NearbyHit, number>();
+  const tier = new Map<NearbyHit, 1 | 2>();
   for (const { record, attribution } of items) {
     const { value } = record;
     const score = query ? textScore(query, value) : null;
@@ -82,6 +94,7 @@ export function rank(
     const locations = locate(value);
     const hit = {
       origin: recordKey(record),
+      via: "tiles" as const,
       collection: collectionOf(value, attribution),
       place: value,
       importance: record.importance ?? null,
@@ -95,12 +108,12 @@ export function rank(
     area.set(hit, specificity(locations));
   }
 
-  const byTier = (a: SearchHit, b: SearchHit) => (tier.get(a) ?? 0) - (tier.get(b) ?? 0);
-  const byScore = (a: SearchHit, b: SearchHit) => round3(b.score ?? 0) - round3(a.score ?? 0);
-  const byImportance = (a: SearchHit, b: SearchHit) => (b.importance ?? 0) - (a.importance ?? 0);
-  const byDistance = (a: SearchHit, b: SearchHit) => a.distance - b.distance;
-  const bySpecificity = (a: SearchHit, b: SearchHit) => area.get(a)! - area.get(b)!;
-  const byOrigin = (a: SearchHit, b: SearchHit) =>
+  const byTier = (a: NearbyHit, b: NearbyHit) => (tier.get(a) ?? 0) - (tier.get(b) ?? 0);
+  const byScore = (a: NearbyHit, b: NearbyHit) => round3(b.score ?? 0) - round3(a.score ?? 0);
+  const byImportance = (a: NearbyHit, b: NearbyHit) => (b.importance ?? 0) - (a.importance ?? 0);
+  const byDistance = (a: NearbyHit, b: NearbyHit) => a.distance - b.distance;
+  const bySpecificity = (a: NearbyHit, b: NearbyHit) => area.get(a)! - area.get(b)!;
+  const byOrigin = (a: NearbyHit, b: NearbyHit) =>
     a.origin === b.origin ? 0 : a.origin === null ? 1 : b.origin === null ? -1 : a.origin < b.origin ? -1 : 1;
   const order =
     sort === "distance"

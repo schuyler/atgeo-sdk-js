@@ -66,7 +66,7 @@ describe("getPlace", () => {
     const { fake, client } = setup();
     const network = await client.getPlace({ origin });
     const fresh = new AtgeoClient({ fetch: fake.fetch });
-    await fresh.searchPlaces({ ...OVERTURE, region: { bbox: [-122.40, 37.79, -122.39, 37.80] } });
+    await fresh.searchNearby({ ...OVERTURE, region: { bbox: [-122.40, 37.79, -122.39, 37.80] } });
     const before = fake.requests.length;
     expect(await fresh.getPlace({ origin })).toEqual(network);
     expect(fake.requests.length).toBe(before);
@@ -74,7 +74,7 @@ describe("getPlace", () => {
 
   it("makes no request for the origin of a hit from an earlier search", async () => {
     const { fake, client } = setup();
-    const { places } = await client.searchPlaces({ ...OVERTURE, region: { bbox: [-122.40, 37.79, -122.39, 37.80] } });
+    const { places } = await client.searchNearby({ ...OVERTURE, region: { bbox: [-122.40, 37.79, -122.39, 37.80] } });
     const before = fake.requests.length;
     await client.getPlace({ origin: places[0].origin as string });
     expect(fake.requests.length).toBe(before);
@@ -86,7 +86,7 @@ describe("getPlace", () => {
       tilesets: [overture([{ url: url("a"), records: [record(uriOnly, 4, "https://example.org/r/u")] }])],
     });
     const client = new AtgeoClient({ fetch: fake.fetch });
-    const { places } = await client.searchPlaces({ dataset: "overturemaps.org", region });
+    const { places } = await client.searchNearby({ dataset: "overturemaps.org", region });
     expect(places[0].origin).toBe("https://example.org/r/u");
     fake.goOffline();
     expect(await client.getPlace({ origin: places[0].origin as string })).toEqual({
@@ -123,7 +123,7 @@ describe("getPlace", () => {
 
   it("returns the tile's attribution from the cache in served order, duplicates included, unsorted", async () => {
     const { fake, client } = withReferences();
-    await client.searchPlaces({ ...OVERTURE, region: { bbox: [-122.40, 37.79, -122.39, 37.80] } });
+    await client.searchNearby({ ...OVERTURE, region: { bbox: [-122.40, 37.79, -122.39, 37.80] } });
     fake.goOffline();
     const answer = await client.getPlace({ origin });
     expect(answer.attribution).toStrictEqual(SERVED);
@@ -138,7 +138,7 @@ describe("getPlace", () => {
 
   it("changing a getPlace answer's attribution changes nothing cached", async () => {
     const { fake, client } = withReferences();
-    const first = await client.searchPlaces({ ...OVERTURE, region: { bbox: [-122.40, 37.79, -122.39, 37.80] } });
+    const first = await client.searchNearby({ ...OVERTURE, region: { bbox: [-122.40, 37.79, -122.39, 37.80] } });
     const original = structuredClone(first.attribution);
     fake.goOffline();
     const answer = await client.getPlace({ origin });
@@ -146,7 +146,7 @@ describe("getPlace", () => {
     entry.licenses!.push("https://l.example/changed");
     entry.release = "x";
     answer.attribution.reverse();
-    expect((await client.searchPlaces({ ...OVERTURE, region: { bbox: [-122.40, 37.79, -122.39, 37.80] } })).attribution).toStrictEqual(original);
+    expect((await client.searchNearby({ ...OVERTURE, region: { bbox: [-122.40, 37.79, -122.39, 37.80] } })).attribution).toStrictEqual(original);
     expect((await client.getPlace({ origin })).attribution).toStrictEqual(SERVED);
   });
 
@@ -211,7 +211,7 @@ describe("describeService and describeTileset", () => {
   });
 });
 
-describe("searchPlaces results", () => {
+describe("searchNearby results", () => {
   const records = [
     record(place("cafe", "Zanzibar Cafe", [point(0.001, 0)], { futureKey: { a: 1 }, variants: [{ name: "ZC" }] }), 2),
     record(place("shop", "Corner Shop", [point(0.002, 0)]), 9),
@@ -225,7 +225,7 @@ describe("searchPlaces results", () => {
   }
 
   it("returns origin, the wire place, importance, meters distance and null score without text", async () => {
-    const result = await setup().searchPlaces({ ...OVERTURE, region: circle });
+    const result = await setup().searchNearby({ ...OVERTURE, region: circle });
     const cafe = result.places.find((h) => h.origin === placeOrigin("cafe"));
     expect(cafe?.place).toEqual(records[0].value);
     expect(cafe?.place).not.toHaveProperty("importance");
@@ -236,12 +236,12 @@ describe("searchPlaces results", () => {
   });
 
   it("gives distance 0 to a bbox containing the center", async () => {
-    const result = await setup().searchPlaces({ ...OVERTURE, region: circle });
+    const result = await setup().searchNearby({ ...OVERTURE, region: circle });
     expect(result.places.find((h) => h.origin === placeOrigin("division"))?.distance).toBe(0);
   });
 
   it("returns a numeric score with text", async () => {
-    const result = await setup().searchPlaces({ ...OVERTURE, region: circle, text: "Zanzibar Cafe" });
+    const result = await setup().searchNearby({ ...OVERTURE, region: circle, text: "Zanzibar Cafe" });
     const cafe = result.places.find((h) => h.origin === placeOrigin("cafe"));
     expect(cafe?.score).toBeCloseTo(1, 2);
     expect(result.places.every((h) => typeof h.score === "number")).toBe(true);
@@ -249,20 +249,20 @@ describe("searchPlaces results", () => {
 
   it("treats text that normalizes to empty as no text", async () => {
     const client = setup();
-    const none = await client.searchPlaces({ ...OVERTURE, region: circle });
-    const blank = await client.searchPlaces({ ...OVERTURE, region: circle, text: "   " });
+    const none = await client.searchNearby({ ...OVERTURE, region: circle });
+    const blank = await client.searchNearby({ ...OVERTURE, region: circle, text: "   " });
     expect(blank.places.length).toBeGreaterThan(0);
-    expect(blank).toEqual(none);
+    expect(blank).toEqual({ ...none, disclosed: { keyword: false, region: null } });
     expect(blank.places.every((h) => h.score === null)).toBe(true);
   });
 });
 
 describe("ordering among places containing the center", () => {
-  const ids = async (values: { value: PlaceValue; importance?: number }[], search: Omit<Parameters<AtgeoClient["searchPlaces"]>[0], "dataset" | "collection">) => {
+  const ids = async (values: { value: PlaceValue; importance?: number }[], search: Omit<Parameters<AtgeoClient["searchNearby"]>[0], "dataset" | "collection">) => {
     const server = fakeServer({
       tilesets: [overture([{ url: url("a"), records: values.map((v) => record(v.value, v.importance)) }])],
     });
-    const { places } = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, ...search });
+    const { places } = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ ...OVERTURE, ...search });
     return places.map((h) => String(h.origin).slice(placeOrigin("").length));
   };
 
@@ -333,9 +333,9 @@ describe("datasets and collections", () => {
 
   it("keys the tile list on dataset and collection", async () => {
     const { fake, client } = setup();
-    await client.searchPlaces({ dataset: "openstreetmap.org", collection: "way", region });
-    await client.searchPlaces({ dataset: "openstreetmap.org", region });
-    await client.searchPlaces({ dataset: "overturemaps.org", region });
+    await client.searchNearby({ dataset: "openstreetmap.org", collection: "way", region });
+    await client.searchNearby({ dataset: "openstreetmap.org", region });
+    await client.searchNearby({ dataset: "overturemaps.org", region });
     expect(tileListRequests(fake).map((p) => `${p.get("dataset")}|${p.get("collection")}`)).toEqual([
       "openstreetmap.org|way",
       "openstreetmap.org|null",
@@ -353,7 +353,7 @@ describe("datasets and collections", () => {
         },
       ],
     });
-    const { places } = await new AtgeoClient({ fetch: fake.fetch }).searchPlaces({
+    const { places } = await new AtgeoClient({ fetch: fake.fetch }).searchNearby({
       dataset: "openstreetmap.org",
       collection: "way",
       region,
@@ -363,7 +363,7 @@ describe("datasets and collections", () => {
 
   it("searches a whole dataset when only the dataset is named", async () => {
     const { fake, client } = setup();
-    const { places } = await client.searchPlaces({ dataset: "openstreetmap.org", region });
+    const { places } = await client.searchNearby({ dataset: "openstreetmap.org", region });
     expect(places.map((h) => h.origin).sort()).toEqual([
       "https://example.org/r/u",
       "urn:atgeo:openstreetmap.org:node:1",
@@ -376,21 +376,21 @@ describe("datasets and collections", () => {
 
   it("filters to one collection, dropping records with no origin", async () => {
     const { fake, client } = setup();
-    const { places } = await client.searchPlaces({ dataset: "openstreetmap.org", collection: "way", region });
+    const { places } = await client.searchNearby({ dataset: "openstreetmap.org", collection: "way", region });
     expect(places.map((h) => h.origin)).toEqual(["urn:atgeo:openstreetmap.org:way:2"]);
     expect(params(fake).get("collection")).toBe("way");
   });
 
   it("rejects a search with no dataset, synchronously, before any request, with a dataset message", () => {
     const { fake, client } = setup();
-    expect(() => client.searchPlaces({ region } as never)).toThrow(TypeError);
-    expect(() => client.searchPlaces({ region } as never)).toThrow(/dataset/);
+    expect(() => client.searchNearby({ region } as never)).toThrow(TypeError);
+    expect(() => client.searchNearby({ region } as never)).toThrow(/dataset/);
     expect(fake.requests).toHaveLength(0);
   });
 
   it("rejects a collection named without a dataset", () => {
     const { fake, client } = setup();
-    expect(() => client.searchPlaces({ collection: "division", region } as never)).toThrow(/dataset/);
+    expect(() => client.searchNearby({ collection: "division", region } as never)).toThrow(/dataset/);
     expect(fake.requests).toHaveLength(0);
   });
 
@@ -398,33 +398,33 @@ describe("datasets and collections", () => {
     const { client } = setup();
     expect(() => {
       // @ts-expect-error dataset is required
-      client.searchPlaces({ region });
+      client.searchNearby({ region });
     }).toThrow(TypeError);
   });
 
   it("reports a missing dataset before an invalid region", () => {
-    expect(() => setup().client.searchPlaces({ region: { bbox: [0, 10, 1, 5] } } as never)).toThrow(/dataset/);
-    expect(() => setup().client.searchPlaces({ region, sort: "similarity" } as never)).toThrow(/dataset/);
+    expect(() => setup().client.searchNearby({ region: { bbox: [0, 10, 1, 5] } } as never)).toThrow(/dataset/);
+    expect(() => setup().client.searchNearby({ region, sort: "similarity" } as never)).toThrow(/dataset/);
   });
 
   it.each([["null", null], ["a number", 5], ["an array", ["overturemaps.org"]]])("treats a dataset that is %s as missing", (_name, dataset) => {
     const { fake, client } = setup();
-    expect(() => client.searchPlaces({ dataset, region } as never)).toThrow(TypeError);
-    expect(() => client.searchPlaces({ dataset, region } as never)).toThrow(/dataset/);
+    expect(() => client.searchNearby({ dataset, region } as never)).toThrow(TypeError);
+    expect(() => client.searchNearby({ dataset, region } as never)).toThrow(/dataset/);
     expect(fake.requests).toHaveLength(0);
   });
 
   it.each([["null", null], ["a number", 5]])("treats a dataset that is %s as missing when a collection is named", (_name, dataset) => {
     const { fake, client } = setup();
-    expect(() => client.searchPlaces({ dataset, collection: "place", region } as never)).toThrow(TypeError);
-    expect(() => client.searchPlaces({ dataset, collection: "place", region } as never)).toThrow(/dataset/);
+    expect(() => client.searchNearby({ dataset, collection: "place", region } as never)).toThrow(TypeError);
+    expect(() => client.searchNearby({ dataset, collection: "place", region } as never)).toThrow(/dataset/);
     expect(fake.requests).toHaveLength(0);
   });
 
   // Guard: an empty dataset is a string and goes to the server, which is the authority on what exists.
   it("sends an empty dataset to the server", async () => {
     const { fake, client } = setup();
-    await expect(client.searchPlaces({ dataset: "", region })).rejects.toBeInstanceOf(AtgeoError);
+    await expect(client.searchNearby({ dataset: "", region })).rejects.toBeInstanceOf(AtgeoError);
     const lists = tileListRequests(fake);
     expect(lists).toHaveLength(1);
     expect(lists[0].get("dataset")).toBe("");
@@ -432,7 +432,7 @@ describe("datasets and collections", () => {
 
   it("gives each hit the collection its origin names, by prefix, and null to a hit keyed by uri", async () => {
     const { client } = setup();
-    const { places } = await client.searchPlaces({ dataset: "openstreetmap.org", region });
+    const { places } = await client.searchNearby({ dataset: "openstreetmap.org", region });
     const byOrigin = Object.fromEntries(places.map((h) => [h.origin, h.collection]));
     expect(byOrigin).toStrictEqual({
       "urn:atgeo:openstreetmap.org:node:1": { dataset: "openstreetmap.org", collection: "node" },
@@ -453,7 +453,7 @@ describe("datasets and collections", () => {
         },
       ],
     });
-    const { places } = await new AtgeoClient({ fetch: fake.fetch }).searchPlaces({ dataset: "openstreetmap.org", region });
+    const { places } = await new AtgeoClient({ fetch: fake.fetch }).searchNearby({ dataset: "openstreetmap.org", region });
     expect(Object.fromEntries(places.map((h) => [h.origin, h.collection?.collection]))).toEqual({
       "urn:atgeo:openstreetmap.org:way:2": "way",
       "urn:atgeo:openstreetmap.org:wayside:9": "wayside",
@@ -474,7 +474,7 @@ describe("datasets and collections", () => {
         },
       ],
     });
-    const result = await new AtgeoClient({ fetch: fake.fetch }).searchPlaces({ dataset: "openstreetmap.org", collection: "way", region });
+    const result = await new AtgeoClient({ fetch: fake.fetch }).searchNearby({ dataset: "openstreetmap.org", collection: "way", region });
     expect(result.attribution).toStrictEqual([
       { dataset: "openstreetmap.org", collection: "node", source: "https://www.openstreetmap.org" },
       { dataset: "openstreetmap.org", collection: "relation" },

@@ -10,7 +10,7 @@ const idOf = (origin: string | null) => String(origin).slice(placeOrigin("").len
 async function search(records: PlaceValue[], region: Region) {
   const server = fakeServer({ tilesets: [overture([{ url: url("t"), records: records.map((v) => record(v)) }])] });
   const client = new AtgeoClient({ fetch: server.fetch });
-  const result = await client.searchPlaces({ ...OVERTURE, region });
+  const result = await client.searchNearby({ ...OVERTURE, region });
   return result.places.map((h) => idOf(h.origin)).sort();
 }
 
@@ -33,7 +33,7 @@ describe("deduplication", () => {
         ]),
       ],
     });
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ ...OVERTURE, region });
     expect(result.places.map((h) => idOf(h.origin)).sort()).toEqual(["a-only", "b-only", "dup"]);
   });
 
@@ -41,7 +41,7 @@ describe("deduplication", () => {
     const server = fakeServer({
       tilesets: [overture([{ url: url("a"), records: [record(first)] }, { url: url("b"), records: [record(second)] }])],
     });
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ ...OVERTURE, region });
     expect(result.places.map((h) => h.place.name)).toEqual(["First copy"]);
   });
 
@@ -54,7 +54,7 @@ describe("deduplication", () => {
         ]),
       ],
     });
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchNearby({
       dataset: "overturemaps.org",
       collection: "division",
       region,
@@ -76,7 +76,7 @@ describe("deduplication", () => {
       ],
       tilesFor: (bbox) => [bbox.startsWith("170") ? url(eastName) : url(westName)],
     });
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region: { bbox: [170, 10, -170, 20] } });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ ...OVERTURE, region: { bbox: [170, 10, -170, 20] } });
     expect(result.places.map((h) => h.place.name)).toEqual([winner]);
   });
 
@@ -85,7 +85,7 @@ describe("deduplication", () => {
     const server = fakeServer({
       tilesets: [overture([{ url: url("a"), records: [record(anonymous("One")), record(anonymous("Two"))] }])],
     });
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ dataset: "overturemaps.org", region });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ dataset: "overturemaps.org", region });
     expect(result.places.map((h) => h.place.name).sort()).toEqual(["One", "Two"]);
     expect(result.places.every((h) => h.origin === null)).toBe(true);
   });
@@ -95,7 +95,7 @@ describe("deduplication", () => {
     const server = fakeServer({
       tilesets: [overture([{ url: url("a"), records: [record(value, undefined, "https://example.org/r/1")] }])],
     });
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ dataset: "overturemaps.org", region });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ dataset: "overturemaps.org", region });
     expect(result.places.map((h) => h.origin)).toEqual(["https://example.org/r/1"]);
   });
 });
@@ -112,7 +112,7 @@ describe("ordering ties", () => {
         ]),
       ],
     });
-    const result = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ dataset: "overturemaps.org", region });
+    const result = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ dataset: "overturemaps.org", region });
     expect(result.places.map((h) => h.origin)).toEqual([placeOrigin("a"), placeOrigin("b"), placeOrigin("c"), null]);
   });
 });
@@ -226,7 +226,7 @@ describe("region filtering: circle", () => {
     const box = place("clipping", "Clipping", [bboxLocation(89, 80, 50, 40)]);
     expect(haversine(lat, 0, lat, 40)).toBeGreaterThan(radius);
     const server = fakeServer({ tilesets: [overture([{ url: url("t"), records: [record(box)] }])] });
-    const { places } = await new AtgeoClient({ fetch: server.fetch }).searchPlaces({ ...OVERTURE, region: { lat, lon: 0, radius } });
+    const { places } = await new AtgeoClient({ fetch: server.fetch }).searchNearby({ ...OVERTURE, region: { lat, lon: 0, radius } });
     expect(places.map((h) => idOf(h.origin))).toEqual(["clipping"]);
     expect(places[0].distance).toBeLessThanOrEqual(radius);
   });
@@ -295,7 +295,7 @@ describe("determinism", () => {
       return server.fetch(input, init);
     };
     const client = new AtgeoClient({ fetch: delayed });
-    return JSON.stringify(await client.searchPlaces({ ...OVERTURE, region, text }));
+    return JSON.stringify(await client.searchNearby({ ...OVERTURE, region, text }));
   }
 
   it.each([undefined, "Alpha"])("gives identical output for every tile arrival order (text %j)", async (text) => {

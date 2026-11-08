@@ -53,7 +53,7 @@ export function lonSegmentsOverlap(a: LonSegment[], b: LonSegment[]): boolean {
 }
 
 // The circle's enclosing box; minLon > maxLon when it wraps the antimeridian.
-function circleBox(lat: number, lon: number, radius: number): [number, number, number, number] {
+export function circleBox(lat: number, lon: number, radius: number): [number, number, number, number] {
   const half = radius / DEG_TO_M;
   const minLat = Math.max(lat - half, -90);
   const maxLat = Math.min(lat + half, 90);
@@ -95,4 +95,29 @@ export function queryBboxes(region: Region): string[] {
     const [lon0, lon1] = snapSpan(lo, hi, 180);
     return [lon0, lat0, lon1, lat1].map(fixed).join(",");
   });
+}
+
+// The smallest whole-degree box the server accepts that covers the box (design: whole-degree snapping), as the
+// `bbox` string. Zero-width spans widen by one cell; a crossing box whose snapped edges no longer cross
+// validly becomes the full band.
+export function keywordBbox([west, south, east, north]: [number, number, number, number]): string {
+  const span = (lo: number, hi: number, limit: number): [number, number] => {
+    lo = Math.floor(lo);
+    hi = Math.ceil(hi);
+    if (lo === hi) {
+      if (hi < limit) hi++;
+      else lo--;
+    }
+    return [lo, hi];
+  };
+  const [s, n] = span(south, north, 90);
+  // A crossing box is decided on its input values first: west at 180 or east at -180 makes it a plain box.
+  if (west === 180 && west > east) west = -180;
+  if (east === -180 && west > east) east = 180;
+  if (west > east) {
+    const [w, e] = [Math.floor(west), Math.ceil(east)];
+    return w > 0 && e < 0 ? [w, s, e, n].join() : [-180, s, 180, n].join();
+  }
+  const [w, e] = span(west, east, 180);
+  return [w, s, e, n].join();
 }
