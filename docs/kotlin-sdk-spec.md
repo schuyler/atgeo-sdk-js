@@ -1,13 +1,13 @@
 # Kotlin SDK specification
 
-A Kotlin port of `@atgeo/client`: a client for the atgeo gazetteer that searches places without telling the server what you searched for. This document covers the library, its public API, and the decisions that are specific to Kotlin and the JVM. Behaviour (what a search sends, filters, scores and returns) is defined once, for every port, in [port-contract.md](port-contract.md); this document cites it by section and does not restate it.
+A Kotlin port of `@atgeo/client`: a client for the atgeo gazetteer that searches nearby places without telling the server what you searched for, and says so in the method name when a search might. This document covers the library, its public API, and the decisions that are specific to Kotlin and the JVM. Behaviour (what a search sends, filters, scores and returns) is defined once, for every port, in [port-contract.md](port-contract.md); this document cites it by section and does not restate it.
 
-Status: implemented in [schuyler/atgeo-sdk-kotlin](https://github.com/schuyler/atgeo-sdk-kotlin) (PR #1), which follows this document. Building it found three places where this text was wrong about the JDK or about coroutines, corrected below: the cancellation handler (section 4), the extra headers `useCaches = false` brings (section 4), and what the `withTimeout` trap actually does in the worker design (section 5). A review after it merged changed four more, in the port's `review-fixes` branch and below: the default transport asks for gzip (section 4), a transport's own timeout outside the tile loop becomes `SocketTimeoutException` (section 3, Errors), the tile loop catches `Exception` rather than `Throwable` (section 5), and `TtlCache` prunes expired entries (section 6). Later, contract §12 item 5 made the default transport send a fixed `User-Agent` (section 4; atgeo-sdk-kotlin#10). The port's `CONFORMANCE.md` lists where it reads malformed input differently from the reference. Treat every version number below as a starting point.
+Status: the port in [schuyler/atgeo-sdk-kotlin](https://github.com/schuyler/atgeo-sdk-kotlin) (PR #1) implements this document up to `searchNearby`; `searchByKeyword`, `searchNearbyThenByKeyword` and `autocompleteByKeyword` are specified here (contract sections 16 to 19) and not yet built. Building it found three places where this text was wrong about the JDK or about coroutines, corrected below: the cancellation handler (section 4), the extra headers `useCaches = false` brings (section 4), and what the `withTimeout` trap actually does in the worker design (section 5). A review after it merged changed four more, in the port's `review-fixes` branch and below: the default transport asks for gzip (section 4), a transport's own timeout outside the tile loop becomes `SocketTimeoutException` (section 3, Errors), the tile loop catches `Exception` rather than `Throwable` (section 5), and `TtlCache` prunes expired entries (section 6). Later, contract §12 item 5 made the default transport send a fixed `User-Agent` (section 4; atgeo-sdk-kotlin#10). The port's `CONFORMANCE.md` lists where it reads malformed input differently from the reference. Treat every version number below as a starting point.
 
 ## 1. Goals
 
 - Same results as the TypeScript client for the same server answers, verified by the shared fixtures.
-- Same privacy properties: search text and precise coordinates never leave the device.
+- Same privacy properties: `searchNearby` never sends search text or precise coordinates; text leaves the device only through the methods whose names contain `Keyword`, and every result's `disclosed` says what the call sent.
 - Idiomatic Kotlin: `suspend` functions, structured concurrency, coroutine cancellation, immutable data classes, no checked-exception ceremony.
 - Android and plain JVM from one artifact, with the smallest dependency footprint that gets there: `kotlinx-coroutines-core` and `kotlinx-serialization-json`, and nothing for HTTP by default.
 
@@ -29,8 +29,9 @@ src/main/kotlin/org/atgeo/client/
   Rank.kt               hit construction and comparators (§8)
   Cache.kt              TileCache (LRU of tile bodies), ParsedTiles and TtlCache (§10)
   Transport.kt          HttpTransport, HttpUrlConnectionTransport, XRPC URL building, AtgeoException, AtgeoDecodingException (§1)
-  Wire.kt               lenient readers from JsonElement: tile payloads, getTiles, getPlace, the describe types (§1)
-  Types.kt              SearchResult, SearchHit, PlaceRecord, ServiceDescription, Tileset, …
+  Wire.kt               lenient readers from JsonElement: tile payloads, getTiles, getPlace, searchPlaces, the describe types (§1)
+  Types.kt              NearbySearchResult, NearbyHit, KeywordSearchResult, KeywordHit, Disclosure, PlaceRecord, ServiceDescription, Tileset, …
+  KeywordAutocomplete.kt  the autocompleter (section 5)
 src/test/kotlin/org/atgeo/client/
   FakeServer.kt         request-capturing HttpTransport (§13)
   *Test.kt              one file per reference test file, plus WireTest, RobustnessTest and HttpUrlConnectionTransportTest (section 7)
@@ -52,7 +53,9 @@ Distribution during beta mirrors the JS client: not on Maven Central. Options, c
 
 ## 3. Public API
 
-Names match the JS client where Kotlin convention allows. `getPlace` stays `getPlace` (Kotlin has no objection to the verb, and it is what the XRPC query is called).
+Names match the JS client where Kotlin convention allows: `searchNearby`, `searchByKeyword`, `searchNearbyThenByKeyword` and `autocompleteByKeyword`. `getPlace` stays `getPlace` (Kotlin has no objection to the verb, and it is what the XRPC query is called).
+
+Naming rule: every method whose name contains `Keyword` may send search text to the server; no other method does. The parameter that carries text is `text` where it never leaves the device (`searchNearby`) and `keyword` where it may. `searchNearbyThenByKeyword` sends the keyword only when the nearby results have no solid hit, and `autocompleteByKeyword`'s `searchByKeyword` sends every keyword that qualifies. Which server call each method makes, and what it sends, is in port-contract.md (sections 16 to 19 for the keyword methods).
 
 ```kotlin
 class AtgeoClient(
@@ -66,13 +69,35 @@ class AtgeoClient(
         const val DEFAULT_CACHE_BUDGET_BYTES = 50L * 1024 * 1024
     }
 
-    suspend fun searchPlaces(
+    suspend fun searchNearby(
         region: Region,
         dataset: String,
         text: String? = null,
         collection: String? = null,
         sort: SortMode = SortMode.FUSED,
-    ): SearchResult
+    ): NearbySearchResult
+
+    suspend fun searchByKeyword(
+        keyword: String,
+        dataset: String,
+        collection: String? = null,
+        region: KeywordRegion? = null,
+    ): KeywordSearchResult
+
+    suspend fun searchNearbyThenByKeyword(
+        region: Region,
+        dataset: String,
+        keyword: String,
+        keywordRegion: KeywordRegionMode,
+        collection: String? = null,
+        sort: SortMode = SortMode.FUSED,
+    ): FallbackSearchResult
+
+    fun autocompleteByKeyword(
+        dataset: String,
+        collection: String? = null,
+        region: KeywordRegion? = null,
+    ): KeywordAutocomplete
 
     suspend fun getPlace(origin: String): PlaceRecord
     suspend fun describeService(): ServiceDescription
@@ -84,7 +109,7 @@ The client is thread-safe and meant to be shared: one per server for the life of
 
 ```kotlin
 sealed interface Region {
-    /** Radius in metres. Neither class validates in `init`: `Circle(Double.NaN, 0.0, 10.0)` constructs, and `searchPlaces` rejects it (Errors, below). */
+    /** Radius in metres. Neither class validates in `init`: `Circle(Double.NaN, 0.0, 10.0)` constructs, and `searchNearby` rejects it (Errors, below). */
     data class Circle(val lat: Double, val lon: Double, val radius: Double) : Region
     /** Degrees. west > east crosses the antimeridian. */
     data class Bbox(val west: Double, val south: Double, val east: Double, val north: Double) : Region
@@ -92,23 +117,71 @@ sealed interface Region {
 
 enum class SortMode { FUSED, DISTANCE, SIMILARITY }
 
+/** A bounding box in degrees, for the keyword search: a bbox only, never a circle. Sent snapped outward to whole degrees. */
+data class KeywordRegion(val west: Double, val south: Double, val east: Double, val north: Double)
+
+/** Whether the combined search's keyword request carries the nearby region, snapped to whole degrees. */
+enum class KeywordRegionMode { NONE, DEGREE }
+
+enum class Via { TILES, KEYWORD }
+
 // Plain classes with internal constructors, not data classes (below).
-class SearchResult internal constructor(
-    val places: List<SearchHit>,
+
+/** What the server learned during one call. `region` is the grid in degrees of the finest region sent: 0.01 or 1; null if none. */
+class Disclosure internal constructor(val keyword: Boolean, val region: Double?)
+
+class NearbySearchResult internal constructor(
+    val places: List<NearbyHit>,
     val complete: Boolean,
     val overview: Boolean,
     val tiles: TileCounts,
+    val disclosed: Disclosure,
 ) { class TileCounts internal constructor(val fetched: Int, val failed: Int) }
 
-class SearchHit internal constructor(
-    val origin: String?,
-    val place: JsonObject,
-    val importance: Long?,
+sealed interface PlaceHit { val via: Via; val origin: String?; val place: JsonObject; val importance: Long? }
+
+class NearbyHit internal constructor(
+    override val origin: String?,
+    override val place: JsonObject,
+    override val importance: Long?,
     val distance: Double,      // metres
     val score: Double?,        // 0..1, null without text
-) {
+) : PlaceHit {
+    override val via: Via get() = Via.TILES
     val name: String?          // computed: place["name"].stringOrNull()
     val location: PlaceLocation  // computed: locate(place), section 6
+}
+
+/** No distance or score: the server ranks by neither, and the app can compute distance from `location`. */
+class KeywordHit internal constructor(
+    override val origin: String?,
+    override val place: JsonObject,
+    override val importance: Long?,
+) : PlaceHit {
+    override val via: Via get() = Via.KEYWORD
+    val name: String?
+    val location: PlaceLocation
+}
+
+class KeywordSearchResult internal constructor(
+    val places: List<KeywordHit>,
+    val attribution: List<CollectionAttribution>,
+    val disclosed: Disclosure,
+)
+
+/** The nearby result's fields, with `places` holding both kinds of hit (`PlaceHit`, to be narrowed by `via` or `is`). */
+class FallbackSearchResult internal constructor(
+    val places: List<PlaceHit>,
+    val complete: Boolean,
+    val overview: Boolean,
+    val tiles: NearbySearchResult.TileCounts,
+    val disclosed: Disclosure,
+)
+
+/** Returned by `autocompleteByKeyword`; see section 5. */
+class KeywordAutocomplete internal constructor(/* … */) {
+    /** Every keyword that qualifies is sent to the server as given, prefixes included. */
+    suspend fun searchByKeyword(keyword: String): KeywordSearchResult
 }
 
 class PlaceRecord internal constructor(val origin: String, val place: JsonObject, val importance: Long?) {
@@ -161,7 +234,7 @@ Every field of the describe types is nullable with a null default, and the three
 
 ### Place values
 
-A place is arbitrary JSON and must be surfaced untouched (contract §1). `kotlinx.serialization.json.JsonObject` is exactly that: immutable, structurally equal, and preserving every key and nested value as served, including key order. An app reads a field with the public `JsonElement?.stringOrNull()` (`hit.place["cuisine"].stringOrNull()`), never `.jsonPrimitive`, which throws on an object or array, nor kotlinx's `contentOrNull`, which turns the number 5 into "5". `SearchHit` and `PlaceRecord` also have `name` and `location` (contract §8 and §9 require them): `location` is a `PlaceLocation` built by the same `locate()` the ranker uses, so it cannot disagree with `distance`, and it is computed on each access rather than stored, so the classes' shape does not change. `PlaceLocation` is not called `Location`, which would collide with `android.location.Location` in app code; its box keeps the lexicon's names rather than adding a third argument order next to `Region.Circle` and `Region.Bbox`. A typed `Place` class is a reasonable later addition on top of `JsonObject`, not a replacement for it.
+A place is arbitrary JSON and must be surfaced untouched (contract §1). `kotlinx.serialization.json.JsonObject` is exactly that: immutable, structurally equal, and preserving every key and nested value as served, including key order. An app reads a field with the public `JsonElement?.stringOrNull()` (`hit.place["cuisine"].stringOrNull()`), never `.jsonPrimitive`, which throws on an object or array, nor kotlinx's `contentOrNull`, which turns the number 5 into "5". `NearbyHit`, `KeywordHit` and `PlaceRecord` also have `name` and `location` (contract §8 and §9 require them): `location` is a `PlaceLocation` built by the same `locate()` the ranker uses, so it cannot disagree with `distance`, and it is computed on each access rather than stored, so the classes' shape does not change. `PlaceLocation` is not called `Location`, which would collide with `android.location.Location` in app code; its box keeps the lexicon's names rather than adding a third argument order next to `Region.Circle` and `Region.Bbox`. A typed `Place` class is a reasonable later addition on top of `JsonObject`, not a replacement for it.
 
 Tile records are read from the parsed `JsonObject` into an internal `TileRecord(value: JsonObject, uri: String?, importance: Long?)`; the rest of the payload is dropped. A record that is not an object, or whose `value` is not one, is skipped and the tile stays used (contract §4.4); a `uri` that is not a string and an `importance` that is a string primitive or not a number read as null, and a non-integer importance truncates toward zero: read it as `takeUnless { it.isString }?.doubleOrNull?.takeIf { it.isFinite() && abs(it) < 9.223372036854775807E18 }?.toLong()`, since `longOrNull` returns null for `1.9` and reads `"7"` as 7, and `Double.toLong()` saturates where the contract wants absent (§1). A `getTiles` body with no `tiles` array has no usable tile list and raises `AtgeoDecodingException` (§1); entries of `tiles` that are not strings are skipped. `overview` follows the contract's truthiness rule (§1), which no single `kotlinx.serialization` accessor gives (`booleanOrNull` reads `0` and `""` as null, not false): an absent key and `JsonNull` are false; a string primitive is `content.isNotEmpty()`; a non-string primitive is `booleanOrNull ?: doubleOrNull?.let { it != 0.0 } ?: true`, which covers `-0` and treats an unquoted literal the tree parser let through (section 6) as true; a `JsonObject` or `JsonArray` is true.
 
@@ -175,9 +248,9 @@ class AtgeoException(val code: String, message: String, val status: Int) : Runti
 class AtgeoDecodingException(message: String, cause: Throwable? = null) : IOException(message, cause)
 ```
 
-Bad arguments (contract §3) throw `IllegalArgumentException` from `require()` calls at the top of `searchPlaces`, in the contract's order, before anything is looked up or fetched; the observable rule is that no request is made. This matches the JS client's `TypeError` in spirit: a programming error, kept out of `AtgeoException`'s code namespace.
+Bad arguments (contract §3) throw `IllegalArgumentException` from `require()` calls at the top of each search method, in the contract's order, before anything is looked up or fetched; the observable rule is that no request is made. The types rule out some of the contract's argument errors: `keyword` is a `String`, `keywordRegion` is an enum, and a keyword region cannot be a circle. A keyword that cannot qualify is not an argument error in `searchByKeyword`: it goes to the server, which answers `AtgeoException` with code `KeywordRequired`. A keyword over 256 UTF-8 bytes is `InvalidRequest`; contract section 1 lists the call's other codes. The qualifying predicate (contract section 17) decides only which keywords are skipped. Its length test counts code points (`codePointCount`), not `String.length`'s UTF-16 units. This matches the JS client's `TypeError` in spirit: a programming error, kept out of `AtgeoException`'s code namespace.
 
-Network failures throw `IOException` (or whatever the injected transport throws) unwrapped, with one exception: a `CancellationException` from the transport while the caller is still active (the transport's own `withTimeout`, say) is rethrown by the XRPC layer as `SocketTimeoutException` for a `TimeoutCancellationException` and as `IOException` otherwise, each with the original as its cause. Left as it is, it would end the caller's `launch {}` silently, and contract §14 calls a timeout a network failure. A 2xx body that is not JSON, or has no usable body in the contract's narrow sense (§1: no `tiles` array, no `value` object, a describe body that is not an object), throws `AtgeoDecodingException`, with kotlinx's `SerializationException` as its cause when the parser threw one; nothing else about a body's shape throws. It is the port's own type, as §1 allows, because `SerializationException` is an `IllegalArgumentException`, so a `catch` meant for a bad region would also catch a garbled answer; as an `IOException` it lands with the network failures, which is what it is to a caller: no usable answer arrived. For tiles, either counts as a failed tile. The search's own cancellation must propagate anywhere the client catches `Exception` (the tile-fetch loop and the XRPC layer are the two such places; neither catches `Throwable`, so that an `OutOfMemoryError` while parsing a tile fails the search instead of passing for one bad tile); section 5 gives the exact rule, which is not "rethrow every `CancellationException`".
+Network failures throw `IOException` (or whatever the injected transport throws) unwrapped, with one exception: a `CancellationException` from the transport while the caller is still active (the transport's own `withTimeout`, say) is rethrown by the XRPC layer as `SocketTimeoutException` for a `TimeoutCancellationException` and as `IOException` otherwise, each with the original as its cause. Left as it is, it would end the caller's `launch {}` silently, and contract §14 calls a timeout a network failure. A 2xx body that is not JSON, or has no usable body in the contract's narrow sense (§1: no `tiles` array, no `value` object, no `places` array in a keyword answer, a describe body that is not an object), throws `AtgeoDecodingException`, with kotlinx's `SerializationException` as its cause when the parser threw one; nothing else about a body's shape throws. It is the port's own type, as §1 allows, because `SerializationException` is an `IllegalArgumentException`, so a `catch` meant for a bad region would also catch a garbled answer; as an `IOException` it lands with the network failures, which is what it is to a caller: no usable answer arrived. For tiles, either counts as a failed tile. The search's own cancellation must propagate anywhere the client catches `Exception` (the tile-fetch loop and the XRPC layer are the two such places; neither catches `Throwable`, so that an `OutOfMemoryError` while parsing a tile fails the search instead of passing for one bad tile); section 5 gives the exact rule, which is not "rethrow every `CancellationException`".
 
 ## 4. Transport
 
@@ -212,12 +285,19 @@ The tile cache measures a tile as `body.size` bytes (§10).
 
 ## 5. Concurrency and cancellation
 
-- `searchPlaces` runs inside `coroutineScope`. The two `getTiles` calls for an antimeridian-crossing region are `async` siblings; if one throws, structured concurrency cancels the other and the search fails with the first error (allowed, §14).
+- `searchNearby` runs inside `coroutineScope`. The two `getTiles` calls for an antimeridian-crossing region are `async` siblings; if one throws, structured concurrency cancels the other and the search fails with the first error (allowed, §14).
 - Tiles are fetched by `min(8, urls.size)` worker coroutines started with `launch(computeDispatcher)`, each taking the next index from a shared `AtomicInteger` and writing its result into that index's slot: the reference's `mapLimit`. URLs are claimed in order with at most 8 in flight (the first calls can still interleave on a multi-threaded dispatcher; nothing in the suite asserts request order), and completion order never affects results (§4.3). `async` children behind a `Semaphore(8)` look equivalent but are not: on a multi-threaded dispatcher, permits are not acquired in launch order (a probe observed `0..6, 8, 7, 9, 11, 10`), so a test asserting request order would be flaky, and one coroutine per tile up front is heavier for a large region. Each worker catches `Exception` around one tile, calls `coroutineContext.ensureActive()` inside the catch so that its own cancellation propagates, and otherwise leaves the slot null. The slots are an `arrayOfNulls<TileOutcome>(urls.size)`, a sealed type: `Used` holds a used tile's cache entry and its records (an empty list for a tile whose every record was skipped), `Failed` holds its `TileFailure` (contract §4.4). The entry goes with the records so that the search can hand both to `ParsedTiles` when it ends (section 6). After the workers' `coroutineScope` returns, `fetched` is the count of `Used` slots and `tileFailures` the `Failed` ones in slot order, which is URL order, so `failed` is its size, so no counter is shared between threads (the reference's `failed++` would be a data race here). Catching everything but `CancellationException` is not the same rule: a transport that uses `withTimeout` throws `TimeoutCancellationException`, which is a `CancellationException`. In this worker design rethrowing it does not fail the search, because a `launch` child that completes with a `CancellationException` ends without failing its parent; the worker just stops, and the others go on claiming URLs. The damage is quieter: when every worker hits a timeout at once, the URLs after them are never claimed, and they are counted as failed without ever being requested. A test for this needs more timeouts than workers (8 timing-out tiles and a ninth that answers); with fewer, both rules give the same counts. The reference's check is `signal.aborted`, the search's own cancellation and nothing else.
 - A worker checks the tile cache under the mutex when it reaches a URL, as the reference does, so a cached tile never becomes a request and recency is touched in the same order as in the reference. Writes happen under the mutex as tiles arrive. The mutex is never held across a transport call.
 - Nothing blocks a dispatcher thread except the default transport's request task, which runs on `Dispatchers.IO` threads (section 4). The CPU work does not run on the caller's dispatcher either: the workers run on `computeDispatcher`, so a tile body is parsed and mapped off the calling thread, and dedupe, filtering, scoring and ranking run inside `withContext(computeDispatcher)`. `computeDispatcher` is a constructor parameter defaulting to `Dispatchers.Default`, following the Android convention of injecting dispatchers. The ported test suite constructs every client with `computeDispatcher = StandardTestDispatcher(testScheduler)` inside `runTest`: the workers then run single-threaded on virtual time, the fake server sees one request at a time, the `determinism` test's staggered delays cost nothing, and the two `getTiles` calls of a crossing region start in order, which `region.test.ts` asserts. The TTL clock is separate from virtual time: expiry tests use the `internal` constructor's `clock` (section 6). `getPlace`'s cache scan (section 6) also runs inside `withContext(computeDispatcher)`, since it walks every cached tile's keys and may parse the tile that holds the match. The reason is Android: an app searches from `Dispatchers.Main`, and child coroutines otherwise inherit that context, which would put megabytes of JSON parsing and tens of thousands of Jaro-Winkler comparisons on the main thread. On a server JVM the switch costs a dispatch and nothing else. `Dispatchers.Default` is common Kotlin, so the Multiplatform door stays open.
 
-Cancellation: cancelling the calling coroutine stops the search promptly and it throws `CancellationException`; whether the in-flight requests are torn down on the wire is the transport's business (section 4). A fully cached call from an already-cancelled coroutine also throws `CancellationException`: `coroutineScope` and `withContext` complete exceptionally when their parent is cancelled even if the body returns a value, so this design cannot complete such a call normally, and the contract does not ask it to (§14 lists it as a freedom). Tests must not assert either outcome. Do not add `ensureActive()` at the top of `searchPlaces`; the scope already does that work.
+Cancellation: cancelling the calling coroutine stops the search promptly and it throws `CancellationException`; whether the in-flight requests are torn down on the wire is the transport's business (section 4). A fully cached call from an already-cancelled coroutine also throws `CancellationException`: `coroutineScope` and `withContext` complete exceptionally when their parent is cancelled even if the body returns a value, so this design cannot complete such a call normally, and the contract does not ask it to (§14 lists it as a freedom). Tests must not assert either outcome. Do not add `ensureActive()` at the top of `searchNearby`; the scope already does that work.
+
+`autocompleteByKeyword` validates `dataset` and `region` as `searchByKeyword` does, when it is called, and throws `IllegalArgumentException` there. The `KeywordAutocomplete` it returns holds the previous call's `Job`. Each `searchByKeyword(keyword)` call runs inside `coroutineScope`, cancels that previous job, and starts its own work (the request, or the no-request answer for a keyword that cannot qualify) as an `async` child of the caller's coroutine, which it awaits. Two rules follow.
+
+- A superseded call throws `CancellationException` although the caller's own coroutine is still active: `isActive` is true in the caller. Callers must catch and ignore an autocompleter's `CancellationException` (it means "superseded"). Left uncaught in a `launch {}` it ends that coroutine silently, which is the intended behaviour for a call whose result nobody wants.
+- The caller's own cancellation still counts. The job is a child of the caller's coroutine, so cancelling the caller cancels the request (contract §11).
+
+A keyword that cannot qualify (contract section 17) resolves with an empty result and `disclosed` of `keyword = false, region = null`, without a request, and still cancels the previous call. Debouncing is the app's. The KDoc on `KeywordAutocomplete.searchByKeyword` states that every qualifying keyword goes to the server as typed, prefixes included, that the server keeps no log of it, that a hostile operator can record what it receives, and that debouncing reduces how many prefixes go out and is the app's choice (contract section 19). It neither recommends nor discourages any of it.
 
 ## 6. Implementing the contract in Kotlin
 
@@ -285,9 +365,9 @@ The fake server is an `HttpTransport` that:
 - is configured with tilesets (slug, collections, tiles with records given as `JsonObject`s, not as the client's `TileRecord`, so that malformed records are expressible), a `tilesFor` override returning a sealed type with the three shapes the reference's tests use (a URL list, `{tiles, overview}`, or `{error, message}`), a `failTiles` list, a `server` base, `goOffline()`, and a `responses: Map<String, HttpResponse>` override of raw responses by URL that bypasses routing and validation, which is how `RobustnessTest` serves the malformed bodies of contract §1 (`{}` or `[1, "x"]` as a tile list, a record that is a number, a `getPlace` body without `value`, an error body with `error: 7`);
 - routes `/xrpc/org.atgeo.*` and tile URLs the way `test/helpers/fakeServer.ts` does, including the dataset and collection selection errors;
 - records every request URL for the privacy tests (§12), in a list guarded by a lock along with the offline flag, since a client on `Dispatchers.Default` calls it from several threads. The `HttpTransport` seam carries a URL and nothing else: the method is always GET and there is never a body, so those are fixed by construction rather than recorded; the ported tests that assert them (`sends no body`, the GET check in `issues only getTiles and tile requests`, `overview`'s `not.toHaveProperty("summary")`) keep their names and their remaining assertions so the by-eye diff still lines up. Headers belong to the real transport and are outside the fake's view; the privacy requirement on them is met by the default transport adding only fixed headers of its own, which the transport test (below) checks against a loopback server;
-- validates its own traffic. There is no JVM lexicon validator, so the fake implements the contract's minimum (§13) plus what `fakeServer.test.ts` asserts. At construction: every tileset has a string `slug`; every tile record is an object with an object `value` whose `name` is a string; an `importance`, when present, is an integral JSON number, and the failure message contains "integer". For requests: unknown parameter names and missing required ones (`dataset` and `bbox` for getTiles, `uri` for getPlace, `slug` for describeTileset) are 400 `InvalidRequest`; `bbox` must match the §13 regular expression; `uri` must look like a URI the way the lexicon's `format: uri` demands (a scheme, a colon, optional `//`, then non-space characters not starting with `/`, so `not a uri` fails and `urn:atgeo:...` and `https://...` pass). Its own responses carry the lexicon's required fields. Keep the lexicon JSON vendored regardless, with its own `SOURCE` naming the garganorn commit, so that a validator can be added later.
+- validates its own traffic. There is no JVM lexicon validator, so the fake implements the contract's minimum (§13) plus what `fakeServer.test.ts` asserts. It answers `org.atgeo.searchPlaces` with the server's `KeywordRequired`, `InvalidBbox` and `BboxTooPrecise` checks, and its `bbox` check for that call is the whole-degree regular expression. At construction: every tileset has a string `slug`; every tile record is an object with an object `value` whose `name` is a string; an `importance`, when present, is an integral JSON number, and the failure message contains "integer". For requests: unknown parameter names and missing required ones (`dataset` and `bbox` for getTiles, `uri` for getPlace, `slug` for describeTileset) are 400 `InvalidRequest`; `bbox` must match the §13 regular expression; `uri` must look like a URI the way the lexicon's `format: uri` demands (a scheme, a colon, optional `//`, then non-space characters not starting with `/`, so `not a uri` fails and `urn:atgeo:...` and `https://...` pass). Its own responses carry the lexicon's required fields. Keep the lexicon JSON vendored regardless, with its own `SOURCE` naming the garganorn commit, so that a validator can be added later.
 
-Test files map one to one onto the reference's `test/*.test.ts`, with the same `describe`/`it` names turned into nested classes and `@Test` names (JS-specific words such as `TypeError` and `synchronously` become `IllegalArgumentException` and "before any request"), so that a reviewer can diff coverage by eye. Two suites in `client.test.ts` are not ported: `retired wire names` and `universal runtime (R9)` scan the TypeScript source with `import.meta.glob`, and the animalsniffer check is their counterpart here. The fixture tests are `@TestFactory` dynamic tests, one per case, so a failure names the case. `RankingTest` drives each scenario the way `ranking.test.ts` does, through `AtgeoClient` and the fake with one tile at `https://places.atgeo.org/tiles/t0.json`, so the fixture values travel untouched as `JsonObject`s; the fixture's `region` is either `{lat, lon, radius}` or `{bbox: [west, south, east, north]}`, `sort` is a lowercase string, and the assertions are membership: each `expect.top[k].origins` within the first `k` hits, each `expect.absent` origin nowhere, and an empty `top` meaning an empty result. Three files have no reference counterpart: `WireTest.kt` for the lenient readers, `RobustnessTest.kt`, which covers the contract's malformed-body behaviours (§1) through the fake's raw-response override (the reference's `robustness.test.ts` and `wire.test.ts` cover the same bodies), and `HttpUrlConnectionTransportTest.kt` (next paragraph). `NormalizeTest` adds the three case-mapping cases the contract names (§7); `RegionTest` and `DistanceTest` add the contract's worked-example tables (§3 bbox strings, §6 distances) as `@TestFactory` cases.
+Test files map one to one onto the reference's `test/*.test.ts`, with the same `describe`/`it` names turned into nested classes and `@Test` names (JS-specific words such as `TypeError` and `synchronously` become `IllegalArgumentException` and "before any request"), so that a reviewer can diff coverage by eye. Two suites in `client.test.ts` are not ported: `retired wire names` and `universal runtime (R9)` scan the TypeScript source with `import.meta.glob`, and the animalsniffer check is their counterpart here. The fixture tests are `@TestFactory` dynamic tests, one per case, so a failure names the case. Beyond `normalize.json`, `jaro-winkler.json` and `ranking-scenarios.json` they cover `keyword-fallback.json` (the solid-hit decision, the merge order and `disclosed`, through the request-capturing fake of contract §13), `keyword-regions.json` (whole-degree snapping of a keyword region) and the `searchPlaces` reader cases in `lenient-readers.json`. Autocomplete tests cover a one-character prefix making no request and a second call cancelling the first with `CancellationException`. `RankingTest` drives each scenario the way `ranking.test.ts` does, through `AtgeoClient` and the fake with one tile at `https://places.atgeo.org/tiles/t0.json`, so the fixture values travel untouched as `JsonObject`s; the fixture's `region` is either `{lat, lon, radius}` or `{bbox: [west, south, east, north]}`, `sort` is a lowercase string, and the assertions are membership: each `expect.top[k].origins` within the first `k` hits, each `expect.absent` origin nowhere, and an empty `top` meaning an empty result. Three files have no reference counterpart: `WireTest.kt` for the lenient readers, `RobustnessTest.kt`, which covers the contract's malformed-body behaviours (§1) through the fake's raw-response override (the reference's `robustness.test.ts` and `wire.test.ts` cover the same bodies), and `HttpUrlConnectionTransportTest.kt` (next paragraph). `NormalizeTest` adds the three case-mapping cases the contract names (§7); `RegionTest` and `DistanceTest` add the contract's worked-example tables (§3 bbox strings, §6 distances) as `@TestFactory` cases.
 
 The default transport gets one small test of its own against a loopback HTTP server, since the fake replaces it everywhere else: a 4xx with a JSON error body and a 4xx with an empty body (both asserting the `HttpResponse` status and body bytes, since the transport does not raise `AtgeoException`; `errorStream` is null for the empty one and must read as empty), a same-scheme redirect, a gzipped body when gzip is asked for and an empty body labelled gzip, cancellation while a body is streaming (assert that the suspend function returns with `CancellationException` within a few hundred milliseconds, not that the socket closes: on the JDK it does not, section 4), and the request headers: a fixed set of names, `Accept: application/json`, `Accept-Encoding: gzip`, `User-Agent: atgeo-client-kotlin` (contract §12, item 5), no `Accept-Language`, and the same set on two different requests, since the connection headers vary by JDK and the privacy argument needs only that nothing request-dependent is added. The test runs on the JVM only; on Android the same holds by AOSP's source: its `HttpURLConnection` (OkHttp-based) uses `http.agent` only when no `User-Agent` is set, and adds no `Accept-Language`. It also checks the body cap: a body of exactly `maxBodyBytes` is read, one byte more fails with `IOException`, and so does a few-kilobyte gzip body that decodes past the cap.
 
@@ -303,6 +383,8 @@ CI: GitHub Actions on `ubuntu-latest`, `gradle build` (tests plus the animalsnif
 | Place representation | `JsonObject` | untouched JSON, structural equality, no extra type |
 | Importance type | `Long` | lexicon integer with no range |
 | Default transport | `HttpURLConnection`, caching off | zero dependencies; contract's no-persistence default |
+| Autocompleter | a `Job` per call, cancelled by the next | superseded call throws `CancellationException`; callers ignore it |
+| Combined search's keyword region | required `KeywordRegionMode` | the disclosure is the developer's choice every time |
 | Argument errors | `IllegalArgumentException` | Kotlin convention; keeps `AtgeoException.code` the server's namespace |
 | Cache lock | coroutine `Mutex` | common Kotlin, so it survives a Multiplatform move; the sections are short and never suspend, so a JVM lock would also do |
 | CPU work | `computeDispatcher`, default `Dispatchers.Default` | Android callers search from `Main`; injectable for tests; a dispatch costs nothing on a server |
@@ -316,4 +398,4 @@ Open:
 1. Whether to go Multiplatform (`jvm` + `android` + `iosArm64`) from the start instead of after. It would let one codebase serve iOS too, which argues against writing the Swift port at all. The counter-argument is that iOS developers expect a SwiftPM package with Swift types, and a KMP framework gives them Objective-C-shaped ones. Proposed: JVM first, keep the seams (section 1), decide with a real iOS consumer in hand.
 2. `@JvmOverloads` and a `CompletableFuture` facade for Java callers. Not until someone asks.
 3. The default cache budget on Android. The contract keeps 50 MiB (§15). Expose the option, keep the default, revisit with numbers from a device.
-4. Reporting failed tiles (contract §4.4). `SearchResult` gains `tileFailures: List<TileFailure>`; its constructor is `internal`, so callers are unaffected, and `equals`, `hashCode` and `toString` take the new field. `TileFailure` has an `internal` constructor and `url: String`, `kind: TileFailure.Kind` (`REFUSED`, `STATUS`, `DECODE`, `TRANSPORT`), `status: Int?` and `error: Throwable`, left out of `equals` and `hashCode`. The guarded region shrinks: `loadTile` catches `Exception` around the request, the status check and the decode, and a `StackOverflowError` from the decoder alone (kotlinx 1.12 reports deep nesting as a `SerializationException` anyway); building the cache entry and `tiles.set` sit outside it, and the `ensureActive()` rule stays as it is (section 5). A prerequisite, separate from this change because contract §4.4 already requires it: the port has no explicit refused-URL check. Verified with a loopback probe before the fix: a relative tile URL failed as `MalformedURLException`, a `file:` or `ftp:` URL as a `ClassCastException` from `openConnection() as HttpURLConnection`, which only the catch-all turned into a failed tile, and a URL with credentials, or an empty userinfo, was fetched. A check like the Python and Rust ports' (absolute `http` or `https`, a host, no username or password; an empty userinfo is a margin either way, contract §4.4) before the transport sees the URL fixes all three, for app transports too. No logging: nothing in the standard library serves both the JVM and Android without a dependency.
+4. Reporting failed tiles (contract §4.4). `NearbySearchResult` gains `tileFailures: List<TileFailure>`; its constructor is `internal`, so callers are unaffected, and `equals`, `hashCode` and `toString` take the new field. `TileFailure` has an `internal` constructor and `url: String`, `kind: TileFailure.Kind` (`REFUSED`, `STATUS`, `DECODE`, `TRANSPORT`), `status: Int?` and `error: Throwable`, left out of `equals` and `hashCode`. The guarded region shrinks: `loadTile` catches `Exception` around the request, the status check and the decode, and a `StackOverflowError` from the decoder alone (kotlinx 1.12 reports deep nesting as a `SerializationException` anyway); building the cache entry and `tiles.set` sit outside it, and the `ensureActive()` rule stays as it is (section 5). A prerequisite, separate from this change because contract §4.4 already requires it: the port has no explicit refused-URL check. Verified with a loopback probe before the fix: a relative tile URL failed as `MalformedURLException`, a `file:` or `ftp:` URL as a `ClassCastException` from `openConnection() as HttpURLConnection`, which only the catch-all turned into a failed tile, and a URL with credentials, or an empty userinfo, was fetched. A check like the Python and Rust ports' (absolute `http` or `https`, a host, no username or password; an empty userinfo is a margin either way, contract §4.4) before the transport sees the URL fixes all three, for app transports too. No logging: nothing in the standard library serves both the JVM and Android without a dependency.

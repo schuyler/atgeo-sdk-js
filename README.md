@@ -1,6 +1,6 @@
 # @atgeo/client
 
-A TypeScript/ESM client for the atgeo gazetteer served by [garganorn](https://github.com/schuyler/garganorn), which searches places without telling the server what you searched for.
+A TypeScript/ESM client for the atgeo gazetteer served by [garganorn](https://github.com/schuyler/garganorn), whose tile search never tells the server what you searched for. The methods that do send it a keyword have `Keyword` in their names.
 
 It runs in evergreen browsers, Node 20 or later, and workers, and has no runtime dependencies.
 
@@ -11,7 +11,7 @@ import { AtgeoClient } from "@atgeo/client";
 
 const atgeo = new AtgeoClient();
 
-const { places, complete, attribution } = await atgeo.searchPlaces({
+const { places, complete, attribution } = await atgeo.searchNearby({
   dataset: "overturemaps.org",
   collection: "place",
   region: { lat: 39.9526, lon: -75.1652, radius: 1000 }, // meters
@@ -26,7 +26,17 @@ for (const { origin, name, collection, distance, score } of places) {
 console.log(attribution.map((a) => a.attribution ?? `${a.dataset}/${a.collection}`));
 ```
 
-Misspellings are fine; matching is fuzzy (words that match exactly rank first), and that finds the Starbucks around Philadelphia's City Hall. The public server at places.atgeo.org has a limited dataset for now, mostly the east coast, so a search elsewhere may come back empty. `attribution` is who you owe credit for the data; see [Attribution](#attribution). If `complete` is `false`, some tiles failed to load and the results are partial. If `overview` is `true`, the region was too big to search in full and you got only its most important places; see [Overview answers](#overview-answers).
+Misspellings are fine; matching is fuzzy (words that match exactly rank first), and that finds the Starbucks around Philadelphia's City Hall. The public server at places.atgeo.org has a limited dataset for now, mostly the east coast, so a search elsewhere may come back empty. `attribution` is who you owe credit for the data; see [Attribution](#attribution). If `complete` is `false`, some tiles failed to load and the results are partial. If `overview` is `true`, the region was too big to search in full and you got only its most important places; see [Overview answers](#overview-answers). `disclosed` says what the server learned from the call; see [Privacy](#privacy).
+
+`searchNearby` never sends your search text to the server. If you want a place that isn't nearby, `searchByKeyword` sends a keyword to the server, and says so in its name:
+
+```ts
+const found = await atgeo.searchByKeyword({
+  dataset: "overturemaps.org",
+  keyword: "Liberty Bell",
+});
+console.log(found.places.map((p) => p.name), found.disclosed); // { keyword: true, region: null }
+```
 
 ## Installation
 
@@ -66,7 +76,9 @@ They apply to every request, whatever `fetch` you pass in, since they're enforce
 
 Every method that touches the network takes an optional `signal` (`AbortSignal`).
 
-### `searchPlaces(options): Promise<SearchResult>`
+Four methods search. `searchNearby` downloads tiles and matches on the device. The other three have `Keyword` in their names because they may send search text to the server: `searchByKeyword`, `searchNearbyThenByKeyword` and `autocompleteByKeyword`. See [Privacy](#privacy) before you use them.
+
+### `searchNearby(options): Promise<NearbySearchResult>`
 
 | Option | Meaning |
 |---|---|
@@ -97,13 +109,19 @@ A bbox with `west > east` crosses the antimeridian. A place with a point locatio
 The result:
 
 ```ts
-interface SearchResult {
-  places: SearchHit[];
+interface NearbySearchResult {
+  places: NearbyHit[];
   complete: boolean;                          // false if any tile failed to load
   overview: boolean;                          // true if the server answered with its coarse overview; see below
   tiles: { fetched: number; failed: number };
   tileFailures: TileFailure[];                // one per failed tile, in tile URL order; empty if complete
   attribution: Attribution[];                 // credit for the data the search used; see Attribution below
+  disclosed: Disclosure;                      // what the server learned during this call; see Privacy
+}
+
+interface Disclosure {
+  keyword: boolean;                           // the keyword was sent; always false for searchNearby
+  region: 0.01 | 1 | null;                    // grid, in degrees, of the finest region sent; null if none
 }
 
 interface TileFailure {
@@ -122,7 +140,8 @@ interface Attribution {
   attribution?: string;                // the credit line to show
 }
 
-interface SearchHit {
+interface NearbyHit {
+  via: "tiles";                        // where the hit came from; "keyword" for a KeywordHit
   origin: string | null;               // the place's identity: place.origin, else the tile record's uri, else null
   collection: { dataset: string; collection: string } | null; // the collection the place came from, or null; see Attribution below
   name: string | null;                 // place.name when it is a string, else null
@@ -181,9 +200,95 @@ When the copies differ, which one you get is decided by tile URL: the copy from 
 
 The guarantee is that the result is deterministic for the server's answers and the cache's contents, and no stronger. Which copies are present depends on which tiles a search covered, so two searches over different regions can return different copies of the same place. The rule merges copies; it doesn't decide which is correct.
 
+### `searchByKeyword(options): Promise<KeywordSearchResult>`
+
+Asks the server to find places by name. The server matches and ranks them, so **the keyword goes to the server**; see [Privacy](#privacy).
+
+| Option | Meaning |
+|---|---|
+| `dataset` | Required, as for `searchNearby`. |
+| `collection` | Optional, as for `searchNearby`. |
+| `keyword` | Required, a string. A place matches when every word of the keyword begins a word of one of its names, ignoring case and accents (apostrophes are dropped, other punctuation splits words). Only the first 12 distinct words count, and at least one of them must be two or more characters long. At most 256 bytes of UTF-8; past that the server answers `InvalidRequest`. |
+| `region` | Optional. `{ bbox: [west, south, east, north] }`, never a circle. Sent snapped outward to whole degrees (below). Without it the whole dataset is searched. |
+| `signal` | Aborts the search. |
+
+```ts
+interface KeywordSearchResult {
+  places: KeywordHit[];               // in the server's order, most notable first
+  attribution: Attribution[];         // as for searchNearby, over the places returned
+  disclosed: Disclosure;              // { keyword: true, region: 1 } with a region, { keyword: true, region: null } without
+}
+
+interface KeywordHit {
+  via: "keyword";
+  origin: string | null;
+  collection: { dataset: string; collection: string } | null;
+  name: string | null;
+  location: PlaceLocation;
+  place: { [key: string]: unknown };  // frozen, like a NearbyHit's
+  importance: number | null;
+}
+```
+
+A `KeywordHit` is a `NearbyHit` without `distance` and `score`: the server ranks by neither, and you can work out a distance from `location` yourself. Its `collection` is matched against the place's own `attribution`. The server returns each place once, so nothing is deduplicated, and the SDK doesn't filter by region or re-rank. The server returns at most 20 places, and that is what you get.
+
+The server matches words as prefixes, so `Starbux` finds nothing; it isn't fuzzy the way `searchNearby` is.
+
+A region goes out as the smallest box of whole degrees that covers yours and that the server accepts. `[-122.42, 37.77, -122.41, 37.78]` goes out as `-123,37,-122,38`. A box with no width or height (a point) widens by one degree. A box that crosses the antimeridian keeps crossing when it still can; when the snapped edges would meet or pass each other, or the server would refuse the signs (`[0.5, …, -0.5, …]`), it goes out as the full band, `-180,south,180,north`. A west edge of exactly 180 or an east edge of exactly -180 is the same meridian as the other side, so `[180, …, -170, …]` is a plain box starting at -180. So the server learns a region at least a degree across, and nothing finer than a whole degree of it.
+
+The server refuses a keyword with no word of two or more characters (`KeywordRequired`) and the SDK passes that through, because here an unqualified keyword is a mistake worth seeing.
+
+### `searchNearbyThenByKeyword(options): Promise<FallbackSearchResult>`
+
+Searches nearby first, and asks the server only if the nearby results have no solid hit. Use it when the place a user typed is probably close by, but might not be. The keyword is sent to the server only in the second case, and `disclosed` says whether it was.
+
+| Option | Meaning |
+|---|---|
+| `dataset`, `collection`, `region`, `sort`, `signal` | As for `searchNearby`. `region` may be a circle or a bbox. |
+| `keyword` | Required. Used as the nearby search's `text` and, if it comes to that, as the keyword. |
+| `keywordRegion` | Required, with no default: `"degree"` to send the nearby region (a circle's enclosing box) snapped to whole degrees with the keyword, or `"none"` to send no region. |
+
+A solid hit is a nearby place with a name (its own or a variant) that has every word of the keyword as the start of one of its words (the first of the two tiers described under `searchNearby`). If there is one, the result is the nearby result unchanged and no keyword request is made. If there is none, and the keyword can pass the server's two-character rule, the SDK calls `searchByKeyword` with the same `dataset`, `collection` and `signal`, and the keyword. A keyword that can't pass that rule skips the request, since the server would refuse it.
+
+The merged list puts the keyword hits first, in the server's order, then the nearby hits in nearby order, leaving out a nearby hit whose `origin` a keyword hit has. A hit with no `origin` is never dropped. Each hit's `via` says which side it came from. `complete`, `overview`, `tiles` and `tileFailures` describe the nearby search; `attribution` is the union of both. `disclosed.keyword` is `true` once the keyword request goes out, and `disclosed.region` is the finest region sent during the call; see [`disclosed`](#disclosed).
+
+```ts
+interface FallbackSearchResult extends Omit<NearbySearchResult, "places"> {
+  places: (NearbyHit | KeywordHit)[];
+}
+```
+
+Limits worth knowing:
+
+- A nearby search with failed tiles (`complete: false`) and no solid hit still falls back, though the missing tiles might have held one.
+- A misspelling is not a solid hit, so `Starbux` sends the keyword to the server for an answer that is almost certainly empty.
+- A keyword over 256 bytes gets `InvalidRequest` from the server, which is a failed keyword request (next).
+- If the keyword request fails, or is aborted, the call rejects with that error, as a failed `getTiles` does, and the nearby results are lost with it. There is no result, so no `disclosed`, though the keyword may have gone out.
+
+### `autocompleteByKeyword(options): KeywordAutocomplete`
+
+For a search-as-you-type field. It returns an object with one method, `searchByKeyword(keyword, { signal }?)`, which behaves like `searchByKeyword` with the options you gave the factory (`dataset`, `collection?`, `region?`).
+
+```ts
+const field = atgeo.autocompleteByKeyword({ dataset: "overturemaps.org" });
+input.addEventListener("input", async () => {
+  try {
+    show((await field.searchByKeyword(input.value)).places);
+  } catch (e) {
+    if ((e as Error).name !== "AbortError") throw e; // superseded by a later keystroke
+  }
+});
+```
+
+**Every string that qualifies and is passed to `searchByKeyword` here goes to the server as typed, prefixes included.** The server keeps no log of what it is sent (garganorn's privacy design says so), but an operator who is hostile can record what it receives. Whether to debounce is up to your app; debouncing reduces how many prefixes go out, and nothing here does it for you.
+
+- Input that can't pass the server's two-character rule (`a`, a single Hangul syllable, a consonant with its vowel sign) makes no request and resolves `{ places: [], attribution: [], disclosed: { keyword: false, region: null } }`. It still supersedes the previous call.
+- Each call aborts the previous call on the same autocompleter, which rejects with an `AbortError`. Unless your own signal aborted, that means a newer call replaced it, and ignoring it is right either way. Your own `signal` aborts the call as it would any other, with your signal's reason; if it is already aborted and the keyword can't pass the two-character rule, the call resolves the empty result and makes no request.
+- The "previous call" belongs to the autocompleter, not the client, so make one per text field. The factory validates `dataset` and `region` as `searchByKeyword` does and throws `TypeError` at once. A call with a keyword that isn't a string rejects with `TypeError` (the method is async, so it never throws synchronously), after superseding the previous call.
+
 ### `getPlace({ origin }): Promise<PlaceRecord>`
 
-Returns `{ origin, place, name, location, importance, attribution }`, where `name` and `location` are as on a hit, `place` is the value as served (frozen and shared with the cache, like `hit.place`), `importance` is a number or `null`, and `attribution` is a list of the same entries `result.attribution` holds, as served: in the server's order, duplicates and all, never undefined (empty if there are none). It's a copy. Pass the `origin` of a hit. If a cached tile holds the place, no request is made; otherwise the client asks the server (`org.atgeo.getPlace`) directly, with no discovery call first. A place with no origin is identified by its tile record's `uri`, which the cache can resolve; the server answers `PlaceNotFound` for a URI it doesn't serve, and `InvalidRequest` for a string that isn't a URI.
+Returns `{ origin, place, name, location, importance, attribution }`, where `name` and `location` are as on a hit, `place` is the value as served (frozen and shared with the cache, like `hit.place`), `importance` is a number or `null`, and `attribution` is a list of the same entries `result.attribution` holds, as served: in the server's order, duplicates and all, never undefined (empty if there are none). It's a copy. Pass the `origin` of a hit. If a cached tile holds the place, no request is made (a keyword search caches nothing, so for one of its hits this is true only if an earlier nearby search happened to load the place's tile); otherwise the client asks the server (`org.atgeo.getPlace`) directly, with no discovery call first. A place with no origin is identified by its tile record's `uri`, which the cache can resolve; the server answers `PlaceNotFound` for a URI it doesn't serve, and `InvalidRequest` for a string that isn't a URI.
 
 A cache hit returns the copy, and the attribution, from the cached tile with the lowest URL, the same rule search uses; a network answer is the server's own copy. They agree when the copies are identical, which for garganorn they are.
 
@@ -200,9 +305,12 @@ Returns the tileset's descriptor: `slug`, `collections` (each a `{ dataset, coll
 ### Errors
 
 - `AtgeoError` has a `code` string and the HTTP `status`, which tells a request the server refused (4xx) from one it failed to answer (5xx) without matching on codes. A non-2xx response from the server becomes an `AtgeoError` whose `code` and message come from the server's JSON error body (`error`, `message`); if there isn't one, the code is `HttpError`. Apart from `HttpError`, every code comes from the server: for example `PlaceNotFound`, `TilesetNotFound`, `DatasetNotFound`, `CollectionNotFound`, `BboxTooLarge`, or `InvalidRequest` for a malformed parameter. The lexicons in `test/lexicon/` list the codes each method declares.
-- `DecodingError` means the server answered 2xx with JSON that has nothing the client can use: a `getTiles` body with no `tiles` array, a `getPlace` body with no `value` object, or a describe body that isn't an object. It rejects the call, and nothing is cached. The client is otherwise tolerant: it ignores fields it doesn't read, treats a missing or wrong-typed one as absent, and skips a tile record or list entry it can't read instead of failing. A body that isn't JSON at all rejects with the `SyntaxError` from `JSON.parse`, not a `DecodingError`.
-- A body over `maxBodyBytes` and a request past `requestTimeoutMs` reject unwrapped from `getTiles` (so, a search), `getPlace`, `describeService` and `describeTileset`: a `BodyTooLargeError`, or a `TimeoutError` `DOMException`. Neither is an `AtgeoError`, even for a non-2xx: an error body over the cap is a `BodyTooLargeError`, not the `AtgeoError` its status would have made. (For a tile, they are a failed tile of kind `transport`, below.)
-- `searchPlaces` throws `TypeError` for an invalid region (non-finite or out-of-range coordinates, `south > north`, negative radius), for a missing `dataset` and for `sort: "similarity"` without text. It throws synchronously, before any request.
+- `DecodingError` means the server answered 2xx with JSON that has nothing the client can use: a `getTiles` body with no `tiles` array, a `searchPlaces` body with no `places` array, a `getPlace` body with no `value` object, or a describe body that isn't an object. It rejects the call, and nothing is cached. The client is otherwise tolerant: it ignores fields it doesn't read, treats a missing or wrong-typed one as absent, and skips a tile record or list entry it can't read instead of failing. A body that isn't JSON at all rejects with the `SyntaxError` from `JSON.parse`, not a `DecodingError`.
+- A body over `maxBodyBytes` and a request past `requestTimeoutMs` reject unwrapped from `getTiles` (so, a nearby search), `searchPlaces` (so, a keyword search), `getPlace`, `describeService` and `describeTileset`: a `BodyTooLargeError`, or a `TimeoutError` `DOMException`. Neither is an `AtgeoError`, even for a non-2xx: an error body over the cap is a `BodyTooLargeError`, not the `AtgeoError` its status would have made. (For a tile, they are a failed tile of kind `transport`, below.)
+- `searchNearby` throws `TypeError` for an invalid region (non-finite or out-of-range coordinates, `south > north`, negative radius), for a missing `dataset` and for `sort: "similarity"` without text. It throws synchronously, before any request.
+- `searchByKeyword` throws `TypeError`, synchronously, for a missing `dataset`, a `keyword` that isn't a string, and a `region` that is given but isn't a valid bbox (a circle is refused). `searchNearbyThenByKeyword` throws it for a missing `dataset`, a `keyword` that isn't a string, a `keywordRegion` that isn't `"none"` or `"degree"`, and for the `searchNearby` faults. `autocompleteByKeyword` throws it for a bad `dataset` or `region` when you call it, and its `searchByKeyword` rejects with it for a keyword that isn't a string.
+- A keyword search can reject with these server codes, all `AtgeoError`: `KeywordRequired` (among the first 12 distinct words, none is two or more characters long, after case, accents and punctuation are removed; `searchByKeyword` sends such a keyword and passes the error through), `BboxTooPrecise` and `InvalidBbox` (the SDK sends whole-degree boxes the server accepts, so you shouldn't see them), `InvalidRequest` (a keyword over 256 bytes of UTF-8), and `DatasetNotFound` and `CollectionNotFound`.
+- A call to an autocompleter that a later call superseded rejects with an `AbortError` `DOMException`; ignore it (unless your own signal aborted).
 - A failed `getTiles` request rejects the whole search. A failed tile request does not: that tile is skipped, `tiles.failed` counts it, `complete` is `false`, and `tileFailures` says which tile and why. The `kind` is where it went wrong:
   - `refused`: the URL isn't an absolute `http` or `https` URL, or carries credentials (`https://user:pw@host/…`). No request is made.
   - `status`: the tile answered non-2xx. `status` is the HTTP status and `error` the `AtgeoError`.
@@ -214,22 +322,43 @@ Returns the tileset's descriptor: `slug`, `collections` (each a `{ dataset, coll
 
 ## Privacy
 
-Your search text never leaves the device. Neither does your precise location.
+**Every method whose name contains `Keyword` may send your search text to the server. No other method does.** The option that carries text is called `text` where it never leaves the device (`searchNearby`) and `keyword` where it may. That's the whole rule; check a call by reading its name.
 
-To search, the client asks the server which tiles cover an area, downloads those tiles, and does the matching, filtering, and ranking locally. The only location a search sends is a bounding box (two across the antimeridian), snapped outward to a 0.01 degree grid (roughly 1 km of latitude) before it goes out; alongside it go the search's dataset and, if it has one, its collection. Your exact region is used only on the device, to filter and to compute distances.
+Neither does any method send your precise location. Exact regions are used only on the device, to filter and to compute distances. The server also sees your IP address and whatever headers your `fetch` adds, as with any HTTP request.
 
-What does go on the wire:
+What goes on the wire, per method:
 
-- `getTiles` with the snapped bbox, the search's dataset, and its collection if it has one. A region that crosses the antimeridian sends two.
-- Requests for the tile URLs the server returned, exactly as served, minus any already in the cache. So the server can tell which of those tiles this client fetched before — that you searched near here recently — but nothing finer than the tiles themselves.
-- `describeService` and `describeTileset`, only if you call them.
-- `getPlace` on a cache miss sends the origin of the place you asked for.
+**`searchNearby`** never sends the text. It downloads tiles and does the matching, filtering, and ranking locally. The only location it sends is a bounding box (two across the antimeridian), snapped outward to a 0.01 degree grid (roughly 1 km of latitude), alongside the search's dataset and, if it has one, its collection.
 
-The server also sees your IP address and whatever headers your `fetch` adds, as with any HTTP request. Snapping hides where in a ~1 km cell you are; it doesn't hide the cell.
+- `getTiles` with the snapped bbox, the dataset, and the collection if there is one. A region that crosses the antimeridian sends two.
+- Requests for the tile URLs the server returned, exactly as served, minus any already in the cache. So the server can tell which of those tiles this client fetched before (that you searched near here recently), but nothing finer than the tiles themselves.
+
+Snapping hides where in a ~1 km cell you are; it doesn't hide the cell.
+
+**`searchByKeyword`** sends the keyword, exactly as you passed it, in a single `org.atgeo.searchPlaces` request with `dataset`, `collection` if there is one, `q` (the keyword), and `bbox` only if you gave a region. The bbox is snapped outward to whole degrees, so a region goes out about a hundred times coarser than a tile search's: nothing finer than a whole degree is sent.
+
+**`searchNearbyThenByKeyword`** starts as `searchNearby` with the keyword as its text, so it sends what `searchNearby` sends. It sends the keyword only if the nearby results have no solid hit and the keyword can pass the server's two-character rule, and then it sends what `searchByKeyword` sends, with the bbox present for `keywordRegion: "degree"` and absent for `"none"`. Whether it did is data-dependent, which is why it is named for the keyword and why `disclosed` exists.
+
+**`autocompleteByKeyword`** sends what `searchByKeyword` sends, once per call, for every string that qualifies, prefixes included; see [`autocompleteByKeyword`](#autocompletebykeywordoptions-keywordautocomplete). A string that can't pass the two-character rule sends nothing.
+
+**Other calls.** `describeService` and `describeTileset` send a request only when you call them. `getPlace` on a cache miss sends the origin of the place you asked for.
+
+### `disclosed`
+
+Every search result carries `disclosed: { keyword, region }`, a report of what the server learned during that call:
+
+- `keyword` is `true` if the keyword was sent. It is always `false` for `searchNearby`.
+- `region` is the grid, in degrees, of the finest region sent: `0.01` for a tile search, `1` for a keyword request with a region, `null` if no region was sent.
+
+It reports the finest region sent, not every region. A cold `searchNearbyThenByKeyword` with `keywordRegion: "degree"` reports `region: 0.01` and `keyword: true`, though the keyword travelled with a one-degree box. For `searchNearby`, `region` is `0.01` when the call sent `getTiles` or tried to fetch a tile (a tile whose fetch then failed counts; a tile URL the client refused doesn't), and `null` when the call was answered entirely from cache. That makes it a statement about this call: a warm call reports `null` even though an earlier call told the server about the area. A call that rejects returns no result, so reports nothing, even if a request went out before it failed.
+
+The server's own side of this, and why it was built as it was, is in garganorn's [tile privacy design](https://github.com/schuyler/garganorn/blob/main/docs/tile-privacy-design.md).
 
 ## Caching
 
 `getTiles` responses and the service description are cached for an hour. Tiles are cached in memory, least recently used out first, up to `cacheBudgetBytes` (measured as the tile's response length in characters). Searching a region again while its tile list and tiles are warm makes no requests at all. `getPlace` checks cached tiles before asking the server.
+
+Keyword calls (`searchByKeyword`, the keyword half of `searchNearbyThenByKeyword`, and autocomplete) are not cached: each is one request.
 
 There is no persistence; a new client starts cold.
 
@@ -246,9 +375,11 @@ There are more scripts in `package.json`, including a browser smoke test and an 
 `fixtures/` holds language-neutral contract files, meant for future ports of this client to other languages:
 
 - `normalize.json` and `jaro-winkler.json` are input/output pairs that a port must match exactly.
-- `lenient-readers.json` is a response body for each reader of the wire protocol (`getTiles`, a tile payload, `getPlace`, `describeService`, `describeTileset`) with what the reader keeps of it, or that it throws `DecodingError`. It pins what a port does with a missing, wrong-typed or unusable field. A tile payload's result is `{ records, attribution? }`, not a bare list.
+- `lenient-readers.json` is a response body for each reader of the wire protocol (`getTiles`, a tile payload, `getPlace`, `searchPlaces`, `describeService`, `describeTileset`) with what the reader keeps of it, or that it throws `DecodingError`. It pins what a port does with a missing, wrong-typed or unusable field. A tile payload's result is `{ records, attribution? }`, not a bare list.
 - `attribution-scenarios.json` is a set of tiles served by a raw server, with the `attribution` and each hit's `collection` a search over them must give.
 - `match-tiers.json` is a query, a place and the match tier (1 or 2) a port must give it.
+- `keyword-fallback.json` is a set of nearby searches with a keyword, a tile set and a canned keyword answer, with whether the keyword request is made, the bbox it carries, the merged list of origins in order, and `disclosed`. It pins the solid-hit decision and the merge.
+- `keyword-regions.json` maps each input bbox to the whole-degree bbox string a keyword search sends, with every seam at 0, +/-90 and +/-180 and every sign combination of crossing boxes.
 - `ranking-scenarios.json` describes regions, text, and records, and asserts which places land in the top K. It checks membership, not exact order, since the weights are likely to change. Each scenario names the `dataset` and `collection` it searches, and `"overview": true` makes the fake server answer `getTiles` with an overview. Each record is `{ value, importance }`: `value` is an `org.atgeo.place` with an `origin`, and `importance` is an integer, as on the wire. The expectations name places by `origin`.
 
 `docs/port-contract.md` is the language-neutral statement of what this client does, written for ports; `docs/swift-sdk-spec.md` and `docs/kotlin-sdk-spec.md` are the specifications for the Swift and Kotlin ports, `docs/python-sdk-spec.md` for the Python port, and `docs/rust-sdk-spec.md` the proposed one for Rust.
@@ -257,4 +388,4 @@ There are more scripts in `package.json`, including a browser smoke test and an 
 
 ## Server requirements
 
-The SDK needs a garganorn from the release tracked in schuyler/garganorn#27 (`getPlace` with `value` and `attribution`) that serves `org.atgeo.getTiles`, `getPlace`, `describeService` and `describeTileset`, and the dataset you name; the SDK assumes no particular dataset. It follows the tile URLs `getTiles` returns as-is. Browsers can call your server directly: garganorn sends `Access-Control-Allow-Origin: *` on every route.
+The SDK needs a garganorn from the release tracked in schuyler/garganorn#27 (`getPlace` with `value` and `attribution`) that serves `org.atgeo.getTiles`, `getPlace`, `describeService` and `describeTileset`, and the dataset you name; the SDK assumes no particular dataset. The keyword methods also need `org.atgeo.searchPlaces`, which arrived in garganorn #49 (commit 4a854ff); `searchNearby` doesn't call it. It follows the tile URLs `getTiles` returns as-is. Browsers can call your server directly: garganorn sends `Access-Control-Allow-Origin: *` on every route.

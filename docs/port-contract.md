@@ -6,11 +6,11 @@ The reference is the TypeScript source in `src/` at the commit this document was
 
 "Must" marks behaviour a port has to reproduce. "Should" marks the reference behaviour where a port may do better, as long as the observable results stay the same. "May" marks a deliberate freedom.
 
-The client is tolerant by design. It reads only the fields it needs, ignores everything else, treats a missing or wrong-typed value as absent, and never fails a search because of one record or one tile. It fails only when it cannot do the job at all: a `getTiles` call that errors or yields no usable tile list, or a `getPlace` or describe call that errors or has no usable body. Where this document says a value "is" some type, that is what a compliant server sends; the rule next to it says what a port does when it isn't. A port must not be stricter than this document about what a response may contain, so that a server change that keeps the wire functional does not break the apps built on a port.
+The client is tolerant by design. It reads only the fields it needs, ignores everything else, treats a missing or wrong-typed value as absent, and never fails a search because of one record or one tile. It fails only when it cannot do the job at all: a `getTiles` call that errors or yields no usable tile list, or a `getPlace`, `searchPlaces` or describe call that errors or has no usable body. Where this document says a value "is" some type, that is what a compliant server sends; the rule next to it says what a port does when it isn't. A port must not be stricter than this document about what a response may contain, so that a server change that keeps the wire functional does not break the apps built on a port.
 
 ## 1. Wire protocol
 
-Everything goes over HTTP GET with no request body. There are four XRPC queries and plain tile fetches.
+Everything goes over HTTP GET with no request body. There are five XRPC queries and plain tile fetches.
 
 | Call | URL | Parameters |
 |---|---|---|
@@ -18,6 +18,7 @@ Everything goes over HTTP GET with no request body. There are four XRPC queries 
 | getPlace | `{server}/xrpc/org.atgeo.getPlace` | `uri` |
 | describeService | `{server}/xrpc/org.atgeo.describeService` | none |
 | describeTileset | `{server}/xrpc/org.atgeo.describeTileset` | `slug` |
+| searchPlaces | `{server}/xrpc/org.atgeo.searchPlaces` | `dataset`, `q`, `collection` only when the search has one, `bbox` only when a region was given (section 16) |
 | tile | the URL from `getTiles.tiles`, byte for byte | none |
 
 `{server}` is the configured server with trailing slashes removed. The default is `https://places.atgeo.org`.
@@ -31,6 +32,7 @@ Responses are JSON. The schemas are the lexicons in `test/lexicon/`; the ones a 
 - `getPlace` → `{ uri, url, importance?, value, attribution }`. `value` must be an object, or the response has no usable body. `importance` is read as for a tile record and `attribution` as below. `uri` and `url` are not read.
 - `describeService` → `{ did, maxTiles?, tilesets: [{ slug, collections: [{ dataset, collection }] }] }`.
 - `describeTileset` → `org.atgeo.defs#tileset`, which has an optional `overview: { records }`.
+- `searchPlaces` → `{ places: [{ value, uri?, url?, importance?, attribution? }] }`. The body has no usable list unless it is an object whose `places` is an array. An element that is not an object, or whose `value` is not an object, is skipped. Per kept element the reader gives `origin` (`value.origin` if that is a string, else the element's `uri` if that is a string, else null), `value` (surfaced unmodified, like any `value`), `importance` (read as for a tile record) and `attribution` (an `attribution` list as below, empty unless an array). `url` is not read. Order is the served order, and nothing is deduplicated.
 
 For the two describe calls, every field is optional on the way in. A port's typed representation treats a missing field, or one of the wrong type, as absent; a list the lexicon requires (`tilesets`, and `collections` inside a tileset) that is missing or not an array as empty, and an optional list as absent; an array element that cannot be read as dropped; and unknown fields as ignored. The lexicons say what a compliant server sends; the client must not fail because the server sends more, less, or a different type in a field the app may not even read.
 
@@ -44,9 +46,9 @@ An `attribution` list, in a tile payload or a `getPlace` response, holds `org.at
 
 A non-2xx response raises the port's `AtgeoError` type with a `code` string, a `message`, and the response's HTTP `status` as an integer, so that a caller can tell a refused request (4xx) from a server failure (5xx) without matching on `code`. If the body is a JSON object whose `error` is a string, that is the code; otherwise the code is `HttpError`. If its `message` is a string, that is the message; otherwise the message is `HTTP {status}`. Each field is judged on its own, and a body that is not a JSON object has neither. The body is read before the status is checked, so a server that sends an error body with a non-2xx status is always reported with its own code.
 
-Every code other than `HttpError` comes from the server. The lexicons declare which codes each query can return: `BboxTooLarge`, `BboxTooPrecise`, `DatasetNotFound`, `CollectionNotFound`, `InvalidBbox` for getTiles; `PlaceNotFound` for getPlace; `TilesetNotFound` for describeTileset; `InvalidRequest` for any malformed parameter. The list is informative, not closed: a port passes any code through unchanged and never decides what to do by matching on it, so that a code the server adds later is reported, not mishandled.
+Every code other than `HttpError` comes from the server. The lexicons declare which codes each query can return: `BboxTooLarge`, `BboxTooPrecise`, `DatasetNotFound`, `CollectionNotFound`, `InvalidBbox` for getTiles; `KeywordRequired`, `BboxTooPrecise`, `InvalidBbox`, `DatasetNotFound` and `CollectionNotFound` for searchPlaces; `PlaceNotFound` for getPlace; `TilesetNotFound` for describeTileset; `InvalidRequest` for any malformed parameter. The list is informative, not closed: a port passes any code through unchanged and never decides what to do by matching on it, so that a code the server adds later is reported, not mishandled.
 
-A 2xx response whose body is not valid JSON, or decodes but has no usable body, raises the port's decoding error, not `AtgeoError`: the platform's JSON decoding error, or a type of the port's own where the platform's would be caught as something else (Kotlin's `SerializationException` is an `IllegalArgumentException`, the type of an argument error), except inside a tile fetch (section 4), where it counts as a failed tile. "No usable body" is the narrow list above: a `getTiles` body with no `tiles` array, a `getPlace` body with no `value` object, a describe body that is not an object. A `getPlace` body in the earlier shape, with `record` and no `value`, has no usable body. Nothing else about a body's shape is an error.
+A 2xx response whose body is not valid JSON, or decodes but has no usable body, raises the port's decoding error, not `AtgeoError`: the platform's JSON decoding error, or a type of the port's own where the platform's would be caught as something else (Kotlin's `SerializationException` is an `IllegalArgumentException`, the type of an argument error), except inside a tile fetch (section 4), where it counts as a failed tile. "No usable body" is the narrow list above: a `getTiles` body with no `tiles` array, a `searchPlaces` body with no `places` array, a `getPlace` body with no `value` object, a describe body that is not an object. A `getPlace` body in the earlier shape, with `record` and no `value`, has no usable body. Nothing else about a body's shape is an error.
 
 Network failures propagate as the port's HTTP layer's own error type, unwrapped. The transport follows at least same-scheme redirects (the JVM's `HttpURLConnection` does not cross from `http` to `https`), and the response's content type is not checked.
 
@@ -55,10 +57,11 @@ Each contract concept is raised as these types. A port must use its column; a ca
 | Concept | JS | Swift | Kotlin | Rust | Python |
 |---|---|---|---|---|---|
 | Server non-2xx | `AtgeoError` | `AtgeoError` | `AtgeoException` | `Error::Atgeo(AtgeoError)` | `AtgeoError` |
-| Bad argument | `TypeError` | `AtgeoArgumentError` | `IllegalArgumentException` | `Error::InvalidArgument(ArgumentError)` | `ValueError`; `TypeError` for a missing or non-string `dataset` or a region of the wrong type |
+| Bad argument | `TypeError` | `AtgeoArgumentError` | `IllegalArgumentException` | `Error::InvalidArgument(ArgumentError)` | `ValueError`; `TypeError` for a missing or non-string `dataset`, a non-string `keyword`, or a region of the wrong type |
 | Unusable 2xx body | `DecodingError` for no usable body; `SyntaxError` for a body that is not JSON | `DecodingError` (the standard library's, `.dataCorrupted`) | `AtgeoDecodingException` (an `IOException`) | `Error::Decoding(DecodingError)` | `AtgeoDecodingError` |
 | Network | whatever `fetch` raised, unwrapped; `BodyTooLargeError` or a `TimeoutError` `DOMException` from the transport's limits | the transport's error, `URLError` by default | `IOException`; `SocketTimeoutException` for a timeout | `Error::Transport(BoxError)` | whatever the transport raised; `BodyError` and `RedirectError` (both `OSError`) from the default transports |
 | Cancellation | the signal's reason | `CancellationError` or `URLError(.cancelled)` | `CancellationException` | none: dropping the future cancels the call | `asyncio.CancelledError` (async client); `KeyboardInterrupt` (blocking client) |
+| Autocomplete call superseded (section 19) | `AbortError` `DOMException` | `CancellationError` | `CancellationException` | `Error::Superseded` | `asyncio.CancelledError` (async client); no autocompleter in the blocking client |
 
 A new port fills in a column of this table, with its own types, before it ships, and says in its spec where a cell has more than one type.
 
@@ -82,12 +85,32 @@ A region is a circle `{ lat, lon, radius }` (radius in metres) or a bounding box
 
 ### Validation
 
-`searchPlaces` must reject, before any network activity and with the port's argument-error type (not `AtgeoError`), checking in this order so that the error for a call with two faults is the same everywhere:
+Each searching method must reject, before any network activity and with the port's argument-error type (not `AtgeoError`), checking in the order below so that the error for a call with two faults is the same everywhere. A dynamically typed port raises its wrong-type error (Python's `TypeError`) for a `dataset`, a `keyword`, or `searchByKeyword`'s `region` of the wrong type.
+
+`searchNearby`:
 
 - a search with no `dataset` (section 4.1);
 - a bbox where any longitude is non-finite or `|lon| > 180`, any latitude is non-finite or `|lat| > 90`, or `minLat > maxLat`;
 - a circle where `lat` or `lon` fails the same checks, or `radius` is non-finite or negative;
 - `sort = similarity` when the normalized text (section 7) is empty.
+
+`searchByKeyword` (section 16):
+
+- a search with no `dataset`, as above;
+- a `keyword` that is not a string;
+- a `region` that is given but is not an object with a `bbox`, so a circle is refused, or whose bbox fails the bbox checks above. A region is not given when it is absent, `undefined`, `null`, or the port's `None` or `nil`.
+
+A keyword that cannot qualify (section 17) is not an argument error here: it goes to the server, which answers `KeywordRequired`.
+
+`searchNearbyThenByKeyword` (section 18):
+
+- a `dataset`, as `searchNearby`;
+- a `keyword` that is not a string;
+- a `keywordRegion` that is not one of the two values;
+- the region, as `searchNearby`;
+- `sort = similarity` when the normalized keyword is empty.
+
+`autocompleteByKeyword` (section 19) checks `dataset` and `region` as `searchByKeyword` does, when the autocompleter is made. Its `searchByKeyword(keyword)` raises the argument error for a `keyword` that is not a string, after it has superseded the previous call.
 
 `minLon > maxLon` is valid: the box crosses the antimeridian. `minLon == maxLon` and `minLat == maxLat` are valid (a line or a point). `radius == 0` is valid.
 
@@ -161,7 +184,7 @@ The snapped box must contain the caller's region. The precise coordinates must n
 
 ## 4. The search pipeline
 
-`searchPlaces(region, dataset, text?, collection?, sort?)` runs these steps in order. In the TypeScript options object, order doesn't matter.
+`searchNearby(region, dataset, text?, collection?, sort?)` runs these steps in order. The keyword methods, which can send text to the server, are sections 16 to 19. In the TypeScript options object, order doesn't matter.
 
 ### 4.1 Resolve dataset and collection
 
@@ -229,7 +252,7 @@ Keep records for which `inRegion(locate(value), region)` holds (sections 5 and 6
 
 ### 4.9 Rank
 
-Section 8. The result is `{ places, complete, overview, tiles: { fetched, failed }, tileFailures: [{ url, kind, status?, error }], attribution }`. Each port spells `tileFailures` and `kind`'s values in its language's style and says so in its spec.
+Section 8. The result is `{ places, complete, overview, tiles: { fetched, failed }, tileFailures: [{ url, kind, status?, error }], attribution, disclosed }` (4.11). Each port spells `tileFailures` and `kind`'s values in its language's style and says so in its spec.
 
 Warm searches: a repeat of the same region within the hour, with every tile still cached, makes no request at all. Changing only `text` or `sort` reuses everything.
 
@@ -242,6 +265,12 @@ Reference entries are included: a tileset's entries for collections it doesn't c
 When two tiles' entries for one pair differ (a release, say), the lowest tile URL wins, the same rule as record dedupe. A duplicate pair within one tile: the first wins.
 
 Each entry is surfaced with the fields section 1 kept. The app may change what it is given without changing the cache: a port either hands out immutable values or copies them.
+
+### 4.11 Disclosure
+
+Every search result carries `disclosed = { keyword, region }`, which says what the server learned during this one call. `keyword` is a boolean. `region` is the grid in degrees of the finest region sent during the call: `0.01`, `1`, or null for none. It is the finest only: a call that sent two regions reports the smaller grid.
+
+For `searchNearby`, `keyword` is false. `region` is `0.01` if the call issued a `getTiles` request or attempted a tile fetch, and null if the call was answered entirely from cache. A tile URL the client refused (4.4) is not attempted; a fetch that then fails still counts. A tile list that is cached while its tiles have been evicted still fetches tiles, which tells the server the client is interested in the area again, so it reports `0.01`. A warm call reports null though an earlier call told the server about the area: the field is about the call. A call that fails returns no result and so reports nothing.
 
 ## 5. Reading a place's location
 
@@ -394,6 +423,7 @@ For each surviving record build a hit:
 | `importance` | the record's `importance`, or null |
 | `distance` | `distanceTo(locate(value), centre)` in metres; never null here, since the region filter already required a location |
 | `score` | `textScore`, or null without text |
+| `via` | `"tiles"` |
 | `name` | `value.name` when that is a string, else null |
 | `location` | `{ point, bbox }` as section 5 reads it, in the lexicon's field names: `point` is `{ lat, lon }` or null, `bbox` is `{ south, west, north, east }` or null. A box with `west > east` is kept as it is read and crosses the antimeridian. |
 
@@ -448,21 +478,31 @@ Three caches, all in memory, none persisted, none shared between clients.
 - Service description: one entry, same one-hour expiry.
 - Tiles: keyed by URL, each holding its usable records and its `attribution` (section 1), so a warm search (4.10) and the `getPlace` scan (section 9) have it without a request. LRU, capped by `cacheBudgetBytes`. A tile's size is the length of its response body; the reference counts UTF-16 code units of the text, a port counts bytes. Reading a tile by URL during a search marks it most recently used; the `getPlace` scan (section 9) does not. Inserting a tile adds its size and then evicts least recently used tiles until the total is within budget (a single tile larger than the budget evicts every other tile and then itself, so the cache never exceeds the budget after an insert). Replacing a URL subtracts the old size first. A port may hold each tile's body and parse it again when it is read, and may keep the parsed records of some tiles outside the budget as a memo, because a parsed tile can take several times its body size in memory; what is fetched, and when, and the recency order must be exactly as without the memo. A port that holds bodies and parses them again parses the attribution again too. A tile's size is still its body length; the attribution is part of the body.
 
+Keyword calls (`searchByKeyword`, the keyword request of the fallback, and every autocompleter call) are not cached: each is exactly one request, and nothing from the answer enters any cache. `getPlace` on a keyword hit's origin consults the tile cache and then the network, as for any origin.
+
 Expiry tests set the clock, so a port must take its time source from somewhere a test can control.
 
 ## 11. Cancellation
 
 Every network-touching call accepts the platform's cancellation mechanism. Cancellation surfaces as the platform's cancellation error, from whatever request was in flight. In the reference, a call answered entirely from cache completes normally even when already cancelled; a port should match this, but it is not a conformance requirement.
 
+An autocompleter's call (section 19) honours the caller's own cancellation as well as its own supersession: a caller that cancels its call gets the port's cancellation outcome, even if the autocompleter supersedes it afterwards. A port arranges that the call is a child of the caller's task, or wraps it in its cancellation handler, or combines the two signals. A call the autocompleter has superseded has already ended with the supersession outcome, so a later abort by the caller changes nothing.
+
 ## 12. Privacy invariants
 
-These are what the client is for. Items 1 to 4 must be covered by tests against a request-capturing fake server; item 5, which is about the default transport the fake replaces, by that transport's loopback test:
+These are what the client is for. The naming rule holds them together: a method whose name contains `Keyword` may send search text to the server, and no other method does. The option that carries text is `text` where it never leaves the device and `keyword` where it may. Items 1 to 4 and 6 to 9 must be covered by tests against a request-capturing fake server; item 5, which is about the default transport the fake replaces, by that transport's loopback test.
+
+Items 1 to 3 are `searchNearby`'s, and the nearby half of `searchNearbyThenByKeyword` is bound by them too:
 
 1. The search text never appears on the wire: not raw, not normalized, not any of its words, not URL-encoded, not in a header, not in a body, in any case folding. Test with text such as `Zanzibar Quokka`, `  ZANZIBÁR   quokka `, and check every request's URL (raw and percent-decoded), headers and body for the text, its trimmed and lowercased forms, the normalized form, each normalized word, and prefixes such as `zanzib`.
 2. A search issues only `getTiles` and tile requests, all GET, with no body.
 3. Precise coordinates never appear on the wire. For a circle at `37.7749295, -122.4194155` with radius `123.456789`, none of `37.7749295`, `122.4194155`, `7749295`, `4194155`, `123.456789` appears in any request. For a bbox of full-precision corners, none of the corner digit strings appears.
 4. `getPlace` on a cache miss sends the origin and nothing else.
 5. A port's default transport sends a fixed `User-Agent` naming the port and nothing else, with no version (`atgeo-client-kotlin`, `atgeo-client-swift`), the same on every request and every device, in place of the platform's default, which can name the OS release and the device model (Android's `http.agent` does). A version would split users by app update. It sends no `Accept-Language` derived from the user's locale: either none, or a fixed `*`. URLSession adds one from the locale (`en-US,en;q=0.9` on Apple platforms, `en` on Linux) unless the request sets its own. The fake server replaces the transport, so the transport's own loopback test asserts both, on whatever platforms the port's CI can run it; where it can't (Kotlin on Android), the port's spec says how the platform's behaviour was established. The reference is exempt: its runtime's `fetch` sends values that are fixed for the runtime (Node 22's sends `User-Agent: node` and `Accept-Language: *`), and in a browser or a worker both headers are the runtime's, the same for every site. A transport the app supplies sends whatever its HTTP stack does, and the port's README says so.
+6. `searchByKeyword` issues one GET, `searchPlaces`, whose parameters are exactly `dataset`, `collection` only if given, `q` (the keyword exactly as passed) and `bbox` only if a region was given, and no other request. The `bbox` is four whole numbers and matches `^-?\d+,-?\d+,-?\d+,-?\d+$`. No digit string of a precise region's coordinates appears in any request: for `[-122.4194155, 37.7749295, -122.4094155, 37.7849295]` none of `7749295`, `4194155`, `4094155`, `7849295` does.
+7. `searchNearbyThenByKeyword` sends the keyword only when the nearby results have no tier-1 hit and the keyword qualifies (section 17). When a nearby hit is tier 1, or the keyword cannot qualify, no `searchPlaces` request is made and the keyword is not on the wire in any form (the checks of item 1 apply to every request). When it is sent, it is sent as `searchByKeyword` sends it, with `bbox` present for `keywordRegion = "degree"` and absent for `"none"`.
+8. An `autocompleteByKeyword` call with a keyword that cannot qualify sends nothing. One that qualifies sends exactly what `searchByKeyword` does, for every string, prefixes included.
+9. `disclosed` agrees with the captured requests: `keyword` is true exactly when a `searchPlaces` request was made, and `region` is the finest grid among the regions that went out.
 
 Diagnostics stay in the app's process. A port sends no telemetry and no error report, to the server or anywhere else. A failed-tile entry (section 4.4) or a log line (section 14) carries a tile URL, which the server chose and the app may see, and what fetching it produced; never the search text in any form, nor the region or the bbox strings of section 3. A tile URL reveals the coarse area searched, so a port that logs one marks it private where its logging facility has such a notion.
 
@@ -474,8 +514,10 @@ A port vendors, at a pinned atgeo-sdk-js commit recorded in a `SOURCE` file:
 - `fixtures/jaro-winkler.json` (33 cases, within 5e-7),
 - `fixtures/ranking-scenarios.json` (19 scenarios, membership). Each scenario names the `dataset` and `collection` it is a search of, and the runner passes them (section 8).
 - `fixtures/match-tiers.json` (36 cases, exact match): the tier of section 7 for a query and a place, described there.
-- `fixtures/lenient-readers.json` (104 cases, exact match): a response body for each of the five readers of section 1 (`getTiles`, a tile payload, `getPlace`, `describeService`, `describeTileset`) and either what a port's reader keeps of it or `decodingError`. A missing key is an absent field. The expected values are in JSON terms, so a port maps them onto its own types. The `tilePayload` result is an object, `{ "records": [...], "attribution": [...] }`, where `attribution` is a missing key when the reader leaves it absent (section 1). Earlier revisions of this fixture gave a bare array of records, so a port's runner has one mapping function to change. The `getPlace` bodies and results use `value` and `attribution` (every non-error result has an `attribution` list), and the describe cases cover `maxTiles` and `overview`.
-- `fixtures/attribution-scenarios.json` (12 scenarios, exact match): `SearchResult.attribution` and `SearchHit.collection` (sections 4.10 and 8), described below.
+- `fixtures/lenient-readers.json` (124 cases, exact match): a response body for each of the six readers of section 1 (`getTiles`, a tile payload, `getPlace`, `searchPlaces`, `describeService`, `describeTileset`) and either what a port's reader keeps of it or `decodingError`. A missing key is an absent field. The expected values are in JSON terms, so a port maps them onto its own types. The `tilePayload` result is an object, `{ "records": [...], "attribution": [...] }`, where `attribution` is a missing key when the reader leaves it absent (section 1). The `getPlace` bodies and results use `value` and `attribution` (every non-error result has an `attribution` list), and the describe cases cover `maxTiles` and `overview`. The `searchPlaces` result is `{ "places": [{ "origin", "value", "importance"?, "attribution" }] }`, with `origin` null when neither the value's `origin` nor the element's `uri` is a string and `importance` a missing key when absent.
+- `fixtures/attribution-scenarios.json` (12 scenarios, exact match): `NearbySearchResult.attribution` and `NearbyHit.collection` (sections 4.10 and 8), described below.
+- `fixtures/keyword-fallback.json` (6 scenarios, exact match): the solid-hit decision, the merge and `disclosed` of `searchNearbyThenByKeyword` (section 18), described below.
+- `fixtures/keyword-regions.json` (72 cases, exact match): the `bbox` string a keyword search sends for an input bbox (section 16), described below.
 - `test/lexicon/*.json`, for a fake server that validates its own traffic.
 
 ### The attribution scenarios
@@ -494,6 +536,18 @@ Three things the fixtures do not pin:
 - **Ordinal order above U+FFFF.** The sort in 4.10 uses the comparator of 4.3, which compares UTF-16 code units. No fixture has a name outside the basic multilingual plane, so nothing here fails a port that sorts differently. Python, Rust and Swift compare strings by code point or byte by default, which differs from UTF-16 order above U+FFFF. A port must use its 4.3 comparator for the attribution sort too.
 - **Tile arrival order.** A fixture is data, and cannot say which tile arrives first. The union and the dedupe of 4.10 follow tile URL order whatever order the tiles arrive in, so each port needs a test of its own that delays the lowest URL's response and checks the result is unchanged. The reference's is `attribution.test.ts`, "attribution scenarios, tiles arriving in reverse URL order": it reruns every scenario with more than one tile, delaying each response so the highest URL arrives first, and checks the same attribution and hits.
 - **Cache and copy behaviour.** Warm searches, `getPlace` from the cache and the copy rule of section 9 are tested in `cache.test.ts`, `client.test.ts` and `frozenPlace.test.ts`; a port needs equivalents.
+
+### The keyword scenarios
+
+`keyword-fallback.json` holds scenarios of `{ name, description, dataset, collection?, region, keyword, keywordRegion, sort?, tiles: [{ url, body }], keywordAnswer, expect: { keywordRequested, bbox?, origins, disclosed } }`. `keywordAnswer` is a `searchPlaces` body. They cover a tier-1 nearby hit (no request), tier-2 hits only (a request, the merge order, the dedupe), no nearby hits, an unqualified keyword (no request), `"none"` against `"degree"`, and a circle region's snapped box with a collection. The bodies need not validate against the lexicons, so the runner uses a raw request-capturing server, as the attribution scenarios do:
+
+- A fresh client per scenario, for the reason given there.
+- The base server is `https://places.atgeo.org`. `getTiles` (any query) is answered with the scenario's tile URLs in listed order, each tile is served with its `body`, and `searchPlaces` (any query) is answered with `keywordAnswer`. Every request is recorded.
+- The call passes the scenario's `dataset`, `collection` when it has one, `region`, `keyword`, `keywordRegion` and `sort` when it has one.
+- The origins of the result's places must equal `expect.origins`, in order: the merge is fully specified, so unlike ranking the order is checked. The scenarios keep the nearby part to clear orderings so the ranking weights stay free, and circles well away from whole-degree lines so that last-bit trigonometry cannot move an edge.
+- `result.disclosed` must equal `expect.disclosed`. The number of `searchPlaces` requests is 1 when `expect.keywordRequested` and 0 otherwise, and a request's parameters are exactly `dataset`, `collection` when given, `q` as the keyword, and `bbox` when `expect.bbox` is present, equal to it.
+
+`keyword-regions.json` holds cases of `{ name, bbox, sent }`. The cases list every seam rather than sampling them: fractional and whole-number boxes, zero-width spans (including at 0, +/-180 and +/-90), polar boxes, a west or east edge of exactly +/-180 in crossing and non-crossing boxes (`[180, …, -180, …]` included), crossing boxes with every sign combination, and widths near 360 degrees. The runner sends each `bbox` as the region of a `searchByKeyword` call to a fake server that refuses what the real server refuses (`BboxTooPrecise` and `InvalidBbox`, section 16), and asserts that the one request's `bbox` parameter equals `sent`. A case passes only if the fake accepted what was sent, so the fixture's arithmetic is checked against the server's rules independently. Each `sent` also matches `^(0|-?[1-9]\d*)(,(0|-?[1-9]\d*)){3}$`: plain integers, no `-0`, no `.0`.
 
 ### Pinning and the check
 
@@ -525,9 +579,13 @@ It also reproduces the worked examples in sections 3 and 6, and ports the behavi
 - `overview.test.ts`: the overview flag.
 - `matchTiers.test.ts` and `accessors.test.ts`: the match tier fixture, and `name` and `location` on hits and places (sections 7 to 9).
 - `frozenPlace.test.ts`: what an app can and can't change in a place or an attribution list it was handed (sections 8 and 9).
-- `privacy.test.ts`: section 12.
+- `privacy.test.ts`: section 12, items 1 to 4.
+- `keyword.test.ts`: `searchByKeyword`'s request, hits, attribution and argument checks (section 16), and section 12's item 6.
+- `keywordRegions.test.ts` and `keywordFallback.test.ts`: the two keyword fixtures above, and with them section 12's items 6 and 7 (the captured `bbox`, the keyword's presence on the wire).
+- `autocomplete.test.ts`: the qualifying predicate's skips and the autocompleter's supersession (sections 17 and 19), and section 12's item 8.
+- `disclosed.test.ts`: `disclosed` on each result (section 4.11), and section 12's item 9.
 
-The fake server should validate every request and response it handles against the lexicons where a lexicon validator exists for the language. Where none does, it must at least check the request parameter names, that `bbox` matches `^-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d$`, and that its own responses carry the required fields. It must capture every request's URL for the privacy tests, and the method, headers and body where the port's transport seam carries them (a seam that carries only a URL fixes those by construction), and must be able to go offline (every request fails) and to fail named tiles.
+The fake server should validate every request and response it handles against the lexicons where a lexicon validator exists for the language. Where none does, it must at least check the request parameter names, that `bbox` matches `^-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d,-?\d+\.\d\d$` for getTiles, and that its own responses carry the required fields. For `searchPlaces` the minimum is the parameter names (`dataset`, `collection`, `q`, `bbox`), that `dataset` and `q` are present, and that a `bbox` matches the whole-degree form `^-?\d+,-?\d+,-?\d+,-?\d+$`. It should also answer `InvalidBbox` for a box the server's rules refuse (section 16) and `KeywordRequired` by the server's own rule, not section 17's predicate (the server takes the keyword's words, drops duplicates, keeps the first 12 and refuses unless one is two or more characters long), so that the keyword fixtures check the port against the server's rules rather than against its own arithmetic. It must capture every request's URL for the privacy tests, and the method, headers and body where the port's transport seam carries them (a seam that carries only a URL fixes those by construction), and must be able to go offline (every request fails) and to fail named tiles.
 
 ## 14. Deliberate freedoms
 
@@ -553,7 +611,7 @@ A port must not:
 - count as a failed tile an error from the client's own work after a tile is decoded (section 4.4);
 - subdivide a region after `BboxTooLarge`;
 - send the collection parameter for a dataset-only search;
-- send anything but the snapped box, dataset and collection on a search;
+- send anything but the snapped box, dataset and collection on a `searchNearby`, or the search text in any request it makes (a keyword method's request is section 16's);
 - persist tiles, tile lists or the service description to disk by default;
 - reorder results by anything not in section 8.
 
@@ -565,3 +623,99 @@ Carried over from the reference as-is, and open for all the SDKs together rather
 - A lower default cache budget on phones. 50 MiB stays, per the maintainer's decision; a port exposes the option and keeps the default. Measured on the Kotlin port, a parsed tile takes 6.9 times its body size on HotSpot and 5.1 times on ART, so a port that caches parsed tiles against a body-size budget holds 250 to 350 MB when full; the Kotlin port caches bodies instead and keeps only the latest search's tiles parsed (section 10), which makes the budget close to its heap cost. The Swift port, measured with its `atgeo-bench`, held 3.7 to 4.3 times the budget the same way (181 to 210 MiB full, on Linux, macOS 14 and macOS 26); caching bodies as the Kotlin port does, the bodies and an index of record-key hashes take 1.0 to 1.4 times, and 1.4 to 2.1 times with the latest search's tiles parsed (Swift PR #10). The JavaScript port has not been measured.
 - Coalescing of duplicate in-flight requests.
 - Restricting tile URLs. The server names the tile URLs and the client fetches them as given, so a compromised server can send a client anywhere. Section 12 covers what the client sends, not where. A port may want to refuse tile URLs that are not `https`, or that are off the server's host; none of the SDKs does yet, and it is a decision for all of them together.
+
+## 16. searchByKeyword
+
+`searchByKeyword(dataset, keyword, collection?, region?)` asks the server to match places by name, so it sends the keyword (section 12, items 6 and 9). `region`, when given, is a bbox only: a circle is refused, because a circle API invites the device's own position as its centre.
+
+1. Validate, before any request, in the order of section 3. A keyword that cannot qualify (section 17) is not an argument error: it goes to the server, which answers `KeywordRequired` (an `AtgeoError`).
+2. Snap the region outward to whole degrees (below). It always goes as one request, never split at the antimeridian.
+3. `GET org.atgeo.searchPlaces` with `dataset`, `collection` only if given, `q` equal to the keyword exactly as passed (no trimming, no normalizing), and `bbox` only if a region was given. A keyword over 256 bytes of UTF-8 is not checked client-side; the server answers `InvalidRequest`.
+4. Read the body as section 1 says (the port's decoding error without a `places` array). Each kept element becomes a hit, in the server's order, with no dedupe (the server returns each place once), no region filter and no ranking, with these fields (table below the list):
+5. `attribution` is the union of every kept element's `attribution`, walking the elements in served order and each element's entries in served order, keeping the first entry for each `(dataset, collection)` pair, then sorted as in 4.10. Always a list.
+6. `disclosed = { keyword: true, region: 1 }` if a region was given, `{ keyword: true, region: null }` if not.
+
+| Field | Value |
+|---|---|
+| `via` | `"keyword"` |
+| `origin`, `place`, `importance`, `name`, `location` | as for a hit (section 8), from the element's reader result |
+| `collection` | as section 8, matched against the element's own `attribution` list rather than a tile's |
+
+A keyword hit has no `distance` and no `score`: the server ranks by neither, and an app can compute a distance from `location`.
+
+The call is not cached (section 10). The result is `{ places, attribution, disclosed }`.
+
+### Whole-degree snapping
+
+The result is the smallest box the server accepts that covers the input. The server's rules: every coordinate is a whole number written with no fractional digits and no exponent (a port writes plain integers, and negative zero as `0`); `south < north`; and either `west < east`, or the box crosses the antimeridian, with `west > 0 > east` and a width under 360 degrees. Input values are those the caller gave, validated as in section 3 (a bbox with `west > east` is valid whatever the signs).
+
+```
+span(lo, hi, limit):
+  lo = floor(lo); hi = ceil(hi)
+  if lo == hi: if hi < limit then hi += 1 else lo -= 1
+  return (lo, hi)
+```
+
+- Latitude: `(south, north) = span(minLat, maxLat, 90)`.
+- Longitude, first the two seams, decided on the input values: if `west > east` and `west` is exactly 180, set `west = -180`; then, if `west > east` and `east` is exactly -180, set `east = 180`. A west of 180 means the meridian at -180, and an east of -180 means 180, so those boxes continue below as plain boxes. Both at once, `[180, …, -180, …]`, becomes `[-180, -180]`, which `span` widens to `[-180, -179]`.
+- Longitude, now not crossing (`west <= east`): `(west, east) = span(west, east, 180)`.
+- Longitude, still crossing (`west > east`): `w = floor(west)`, `e = ceil(east)`. If `w > 0` and `e < 0`, send `w` and `e` (after the seam rules above the width is always under 360 degrees). Otherwise (the snapped edges meet or pass each other, or the signs don't fit the server's rule: `[0.5, …, -0.5, …]`, `[179.5, …, -0.5, …]`, `[170.5, …, 160.5, …]`) send the full band, `-180` and `180`, which covers any crossing box.
+
+The `bbox` string is `west,south,east,north` as integers joined by commas: `-123,37,-122,38`. `fixtures/keyword-regions.json` lists every seam; a port writes the steps as given and runs the fixture rather than reasoning about the corners.
+
+The server checks the whole-degree rule as a rule about the string (`-76.0` and `1e1` are refused as `BboxTooPrecise`; `76.` is accepted), and the crossing rule as `InvalidBbox`. A port that sends plain integers meets both.
+
+## 17. The qualifying keyword
+
+The server refuses a keyword with `KeywordRequired` unless, among its first 12 distinct words after case, accents and punctuation are removed, one is at least two characters long. `searchNearbyThenByKeyword` and the autocompleter skip the request for a keyword the server would refuse, because there an unqualified string is ordinary input. A port implements the predicate internally (no API) with exactly these steps:
+
+1. `normalize(keyword)` (section 7), then split on U+0020. An empty keyword has no words.
+2. Fold each word (section 7's `fold`: remove U+0027, U+2019 and U+02BC; replace each run of punctuation with a space; split; drop empty strings), and concatenate the results.
+3. From each word remove every scalar whose general category is Mc (spacing mark) or Me (enclosing mark); drop the words left empty; recompose each remaining word with NFC.
+4. Remove duplicate words, keeping the first of each; take the first 12.
+5. The keyword qualifies if any of these has two or more code points (Unicode scalars, not UTF-16 units).
+
+This is not match tier 1's tokenization (section 7), which takes 12 words before folding and does not deduplicate; a port must not reuse that code. Step 3's NFC and Mc/Me removal match the server's own behaviour: `normalize` applies NFKD, which splits a precomposed Hangul syllable such as `하` into two jamo, while the server keeps it whole; and `normalize` strips only nonspacing marks, where the server strips all three kinds, so a consonant with a spacing vowel sign (`का`) is one character to the server. Without those steps the SDK would send, and the server refuse, keywords like those.
+
+The predicate can still disagree with the server on compatibility characters that NFKD expands (`ﬁ`, `½`) and on half-width kana, and on the whitespace set at U+000B and U+FEFF. A disagreement shows up as `KeywordRequired` from the fallback or the autocompleter, or as a skipped request the server would have answered, which is the harmless direction.
+
+## 18. searchNearbyThenByKeyword
+
+`searchNearbyThenByKeyword(region, dataset, keyword, keywordRegion, collection?, sort?)` runs a `searchNearby` with `text = keyword` and, only if that finds nothing solid, a keyword request.
+
+1. Validate, in the order of section 3. `keywordRegion` is `"none"` or `"degree"` and has no default: the caller decides whether a region goes with the keyword.
+2. Run `searchNearby` with `text = keyword` and the call's other options.
+3. Solid hit: if some hit of the nearby result has match tier 1 (section 7), return the nearby result as it is, with its own `disclosed`. No keyword request is made.
+4. If the keyword cannot qualify (section 17), return the nearby result likewise: the request would certainly fail with `KeywordRequired`.
+5. Otherwise call `searchByKeyword` (section 16) with the call's `dataset`, `collection` if any, the cancellation signal and `keyword` and, for `"degree"`, a region that is the nearby region as a box: a bbox region as given, a circle as its enclosing box (section 3), snapped as in section 16. For `"none"`, no region.
+6. Merge: the keyword hits in the server's order, then the nearby hits in nearby order, leaving out any nearby hit whose `origin` equals a keyword hit's. A hit with a null `origin` is never left out. Keyword hits lead because they match the tier-1 rule, and every nearby hit here is tier 2; tier 1 precedes tier 2 everywhere.
+7. The result is the nearby result with `places` replaced by the merged list (each hit keeping its `via`), `attribution` the union of the nearby and keyword attribution (deduplicated and sorted as in 4.10, the nearby entry winning a tie), and `disclosed = { keyword: true, region }` where `region` is the finest region sent during the call: `0.01` if the nearby search sent anything, else `1` for `"degree"`, else null. A cold `"degree"` fallback therefore reports `0.01` though the keyword travelled with a one-degree box. `complete`, `overview`, `tiles` and `tileFailures` are the nearby search's.
+8. A failed keyword request rejects the call, as a failed `getTiles` does, with the keyword request's own error, and the nearby results are lost. A cancelled keyword request does the same with the cancellation outcome. There is no result, so no `disclosed`.
+
+A nearby search that had failed tiles (`complete = false`) and no tier-1 hit still falls back, though the missing tiles might have held one. The solid-hit test runs on the hits that cleared the 0.6 similarity threshold, so a short keyword whose only tier-1 place scored under 0.6 falls back. `fixtures/keyword-fallback.json` pins the decision and the merge.
+
+## 19. autocompleteByKeyword
+
+`autocompleteByKeyword(dataset, collection?, region?)` returns an autocompleter, an object with one operation, `searchByKeyword(keyword, cancellation?)`. Each text field makes its own: "the previous call" belongs to the autocompleter, so two fields on one page, sharing a client, do not supersede each other. Beyond its options it holds only the previous call's cancellation handle, and caches nothing.
+
+`dataset` and `region` are validated, as section 16, when the autocompleter is made. `searchByKeyword(keyword)` does this, in order:
+
+1. Supersede the previous call, if any, so that it ends with the port's superseded outcome (below).
+2. A `keyword` that is not a string is the argument error (this happens after step 1).
+3. If the keyword cannot qualify (section 17), resolve `{ places: [], attribution: [], disclosed: { keyword: false, region: null } }` with no request.
+4. Otherwise run `searchByKeyword` (section 16) with the autocompleter's `dataset`, `collection` and `region` and this keyword, under a cancellation that is both this call's own (so a later call can supersede it) and the caller's (section 11).
+
+Every string that qualifies goes to the server as typed, prefixes included. A port's documentation says so, neutrally: the server keeps no log of it (garganorn's privacy design), a hostile operator can record what it receives, and debouncing reduces how many prefixes go out and is the app's choice. A port does not debounce, and does not offer to.
+
+The superseded outcome, which an app must treat as "ignore this answer", is the port's cancellation error where the port can cancel a call in flight, and a port-specific one where it cannot:
+
+| Port | Superseded call |
+|---|---|
+| JS | rejects with an `AbortError` `DOMException` |
+| Swift | `CancellationError`; each call runs in a `Task` the autocompleter cancels, and the caller's own cancellation is honoured through `withTaskCancellationHandler` |
+| Kotlin | `CancellationException`; each call is a `Job` the autocompleter cancels, run as a child of the caller's coroutine |
+| Python async | `asyncio.CancelledError`; each call runs as an `asyncio.Task` the autocompleter cancels |
+| Rust async | `Error::Superseded`: dropping a future cancels it, and the autocompleter does not own the caller's future, so it cannot cancel it and returns an error instead |
+| Rust and Python blocking | no autocompleter: a blocking client cannot cancel a call in flight, and autocomplete is a UI behaviour for the async clients |
+
+A superseded call's cancellation reaches a caller that was not itself cancelled (Swift's `Task.isCancelled` and Python's `task.cancelling()` are false for it), so a port's spec says that a cancellation error from an autocompleter's call means "superseded" and is to be ignored. A caller that does cancel its own call gets the cancellation outcome of section 11, with the reason it gave where the platform carries one.

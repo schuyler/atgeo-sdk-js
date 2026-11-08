@@ -1,13 +1,13 @@
 # Swift SDK specification
 
-A Swift port of `@atgeo/client`: a client for the atgeo gazetteer that searches places without telling the server what you searched for. This document covers the Swift package, its public API, and the decisions that are specific to Swift. Behaviour (what a search sends, filters, scores and returns) is defined once, for every port, in [port-contract.md](port-contract.md); this document cites it by section and does not restate it.
+A Swift port of `@atgeo/client`: a client for the atgeo gazetteer that searches nearby places without telling the server what you searched for, and says so in the method name when a search might. This document covers the Swift package, its public API, and the decisions that are specific to Swift. Behaviour (what a search sends, filters, scores and returns) is defined once, for every port, in [port-contract.md](port-contract.md); this document cites it by section and does not restate it.
 
-Status: proposal. Nothing here has been built. The normalization, similarity, snapping and distance recipes in section 6 have been run from Swift 6.4.1 on Linux against the fixtures and the contract's worked tables, and pass. Swift's standard library does differ in one place, final sigma, and section 6 says how to handle it. Treat every version number below as a starting point.
+Status: the port in schuyler/atgeo-sdk-swift (PRs #5, #14 and others) implements this document up to `searchNearby`; `searchByKeyword`, `searchNearbyThenByKeyword` and `autocompleteByKeyword` are specified here (contract sections 16 to 19) and not yet built. The normalization, similarity, snapping and distance recipes in section 6 have been run from Swift 6.4.1 on Linux against the fixtures and the contract's worked tables, and pass. Swift's standard library does differ in one place, final sigma, and section 6 says how to handle it. Treat every version number below as a starting point.
 
 ## 1. Goals
 
 - Same results as the TypeScript client for the same server answers, verified by the shared fixtures.
-- Same privacy properties: search text and precise coordinates never leave the device.
+- Same privacy properties: `searchNearby` never sends search text or precise coordinates; text leaves the device only through the methods whose names contain `Keyword`, and every result's `disclosed` says what the call sent.
 - Idiomatic Swift: `async`/`await`, structured cancellation, value types, `Sendable` throughout, usable from Swift 6 strict concurrency.
 - No dependencies beyond Foundation. The package must build on Linux so that CI can run without a Mac and so that server-side Swift can use it.
 
@@ -28,7 +28,8 @@ Sources/Atgeo/
   Cache.swift            TileCache (LRU) and TtlCache (§10)
   Transport.swift        HTTPTransport, URLSessionTransport, XRPC URL building, AtgeoError (§1)
   JSONValue.swift        the JSON model for place values
-  Types.swift            SearchResult, SearchHit, PlaceRecord, ServiceDescription, Tileset, …
+  Types.swift            NearbySearchResult, NearbyHit, KeywordSearchResult, KeywordHit, Disclosure, PlaceRecord, ServiceDescription, Tileset, …
+  KeywordAutocomplete.swift   the autocompleter (section 5)
 Tests/AtgeoTests/
   Fixtures/              vendored from atgeo-sdk-js: fixtures/*.json, test/lexicon/*.json, SOURCE
   FakeServer.swift       request-capturing HTTPTransport (§13)
@@ -45,10 +46,15 @@ Method names match the other SDKs; argument labels follow the Swift API Design G
 
 | JS / Kotlin | Swift |
 |---|---|
-| `searchPlaces(options)` | `searchPlaces(region:dataset:text:collection:sort:)` |
+| `searchNearby(options)` | `searchNearby(region:dataset:text:collection:sort:)` |
+| `searchByKeyword(options)` | `searchByKeyword(keyword:dataset:collection:region:)` |
+| `searchNearbyThenByKeyword(options)` | `searchNearbyThenByKeyword(region:dataset:keyword:keywordRegion:collection:sort:)` |
+| `autocompleteByKeyword(options)` | `autocompleteByKeyword(dataset:collection:region:)` |
 | `getPlace({ origin })` | `getPlace(origin:)` |
 | `describeService()` | `describeService()` |
 | `describeTileset(slug)` | `describeTileset(_ slug:)` |
+
+Naming rule: every method whose name contains `Keyword` may send search text to the server; no other method does. The parameter that carries text is `text` where it never leaves the device (`searchNearby`) and `keyword` where it may. `searchNearbyThenByKeyword` sends the keyword only when the nearby results have no solid hit, and `autocompleteByKeyword`'s `searchByKeyword(_:)` sends every keyword that qualifies. Which server call each method makes, and what it sends, is in port-contract.md (sections 16 to 19 for the keyword methods).
 
 The XRPC-named methods keep their names because they are the names of the server queries they wrap, and that is how a reader will look them up.
 
@@ -63,13 +69,35 @@ public actor AtgeoClient {
         cacheBudgetBytes: Int = AtgeoClient.defaultCacheBudgetBytes
     )
 
-    public func searchPlaces(
+    public func searchNearby(
         region: Region,
         dataset: String,
         text: String? = nil,
         collection: String? = nil,
         sort: SortMode = .fused
-    ) async throws -> SearchResult
+    ) async throws -> NearbySearchResult
+
+    public func searchByKeyword(
+        keyword: String,
+        dataset: String,
+        collection: String? = nil,
+        region: KeywordRegion? = nil
+    ) async throws -> KeywordSearchResult
+
+    public func searchNearbyThenByKeyword(
+        region: Region,
+        dataset: String,
+        keyword: String,
+        keywordRegion: KeywordRegionMode,
+        collection: String? = nil,
+        sort: SortMode = .fused
+    ) async throws -> FallbackSearchResult
+
+    public nonisolated func autocompleteByKeyword(
+        dataset: String,
+        collection: String? = nil,
+        region: KeywordRegion? = nil
+    ) throws -> KeywordAutocomplete
 
     public func getPlace(origin: String) async throws -> PlaceRecord
     public func describeService() async throws -> ServiceDescription
@@ -89,20 +117,70 @@ public enum Region: Sendable, Hashable {
 
 public enum SortMode: String, Sendable, CaseIterable { case fused, distance, similarity }
 
-public struct SearchResult: Sendable, Equatable {
-    public var places: [SearchHit]
+/// A bounding box in degrees, for the keyword search. A bbox only, never a circle. Sent snapped outward to whole degrees.
+public struct KeywordRegion: Sendable, Hashable {
+    public var west: Double, south: Double, east: Double, north: Double
+    public init(west: Double, south: Double, east: Double, north: Double)
+}
+
+/// Whether the combined search's keyword request carries the nearby region, snapped to whole degrees.
+public enum KeywordRegionMode: Sendable { case none, degree }
+
+/// What the server learned during one call.
+public struct Disclosure: Sendable, Equatable {
+    public var keyword: Bool          // the keyword was sent
+    public var region: Double?        // grid in degrees of the finest region sent: 0.01 or 1; nil if none
+}
+
+public enum Via: String, Sendable { case tiles, keyword }
+
+public struct NearbySearchResult: Sendable, Equatable {
+    public var places: [NearbyHit]
     public var complete: Bool
     public var overview: Bool
     public var tiles: TileCounts
+    public var disclosed: Disclosure
     public struct TileCounts: Sendable, Equatable { public var fetched: Int; public var failed: Int }
 }
 
-public struct SearchHit: Sendable, Equatable {
+public struct NearbyHit: Sendable, Equatable {
+    public var via: Via              // .tiles
     public var origin: String?
     public var place: JSONObject
     public var importance: Int64?
     public var distance: Double      // metres
     public var score: Double?        // 0...1, nil without text
+}
+
+/// No distance or score: the server ranks by neither, and the app can compute distance from the place's location.
+public struct KeywordHit: Sendable, Equatable {
+    public var via: Via              // .keyword
+    public var origin: String?
+    public var place: JSONObject
+    public var importance: Int64?
+}
+
+public struct KeywordSearchResult: Sendable, Equatable {
+    public var places: [KeywordHit]
+    public var attribution: [CollectionAttribution]
+    public var disclosed: Disclosure
+}
+
+public enum PlaceHit: Sendable, Equatable { case nearby(NearbyHit), keyword(KeywordHit) }
+
+/// The nearby result's fields, with `places` holding both kinds of hit.
+public struct FallbackSearchResult: Sendable, Equatable {
+    public var places: [PlaceHit]
+    public var complete: Bool
+    public var overview: Bool
+    public var tiles: NearbySearchResult.TileCounts
+    public var disclosed: Disclosure
+}
+
+/// Returned by `autocompleteByKeyword`; see section 5.
+public actor KeywordAutocomplete {
+    /// Every keyword that qualifies is sent to the server as given, prefixes included.
+    public func searchByKeyword(_ keyword: String) async throws -> KeywordSearchResult
 }
 
 public struct PlaceRecord: Sendable, Equatable {
@@ -173,7 +251,7 @@ extension JSONValue {
 
 Numbers decode as `Double`, which loses integers beyond 2^53 exactly as the JavaScript client does. Key order is not preserved, which the contract does not require. The `Codable` conformance tries `String` first when decoding a single value, then `Bool` before `Double`, so that `true` is not read as 1. String goes first because each failed `try?` throws and discards an error, and most values are strings; `JSONDecoder` reads neither a number nor a boolean as a `String`, which the port's tests check on every CI platform (Swift PR #5). It must encode `.null` as JSON null, not as a missing key.
 
-`SearchHit.place["name"]?.stringValue` is how an app reads a name. A typed `Place` struct is a reasonable later addition on top of `JSONObject`, not a replacement for it.
+`NearbyHit.place["name"]?.stringValue` is how an app reads a name. A typed `Place` struct is a reasonable later addition on top of `JSONObject`, not a replacement for it.
 
 Tile records are read from `JSONValue`, not through `Codable`: a record that is not an object, or whose `value` is not an object, is skipped and the tile stays used (contract §4.4); a `uri` that is not a string and an `importance` that is not a number read as `nil`, and a non-integer importance truncates toward zero and an out-of-range one reads as `nil`: test `d.isFinite && d.magnitude < 9223372036854775808` before converting, since `Int64(d)` traps on an out-of-range value and `Int64(exactly:)` rejects a fraction (§1). A `getTiles` body with no `tiles` array has no usable tile list and throws `DecodingError` (§1); entries of `tiles` that are not strings are skipped.
 
@@ -189,14 +267,16 @@ public struct AtgeoError: Error, Sendable, Equatable {
 
 /// A bad argument, raised before any request (contract §3).
 public enum AtgeoArgumentError: Error, Sendable, Equatable {
-    case invalidRegion(String)        // the message names what was wrong
-    case similarityRequiresText
+    case invalidRegion(String)        // the message names what was wrong; also a malformed `KeywordRegion`
+    case similarityRequiresText       // also `searchNearbyThenByKeyword` with `.similarity` and an empty normalized keyword
 }
 ```
 
+The types rule out the other argument errors: `keyword` is a `String`, `keywordRegion` is an enum, and a keyword region cannot be a circle. A keyword that cannot qualify is not an argument error in `searchByKeyword` (contract sections 16 and 17): it goes to the server, which answers `AtgeoError` with code `KeywordRequired`. A keyword over 256 UTF-8 bytes is `InvalidRequest`; contract section 1 lists the call's other codes. The qualifying predicate (contract section 17) decides only which keywords are skipped. Its length test counts Unicode scalars (`unicodeScalars.count`), not `String.count`'s grapheme clusters.
+
 `AtgeoArgumentError` is a separate type rather than more `AtgeoError` codes so that the `code` namespace stays the server's. The JS client throws `TypeError` for the same reason.
 
-Network failures throw `URLError` (or whatever the injected transport throws) unwrapped. A 2xx body that is not JSON, or has no usable body in the contract's narrow sense (§1: no `tiles` array, no `value` object, a describe body that is not an object), throws `DecodingError` unwrapped; nothing else about a body's shape throws. For tiles, either counts as a failed tile. Cancellation throws `CancellationError` or `URLError(.cancelled)`, whichever reached the call first; callers should test `Task.isCancelled` rather than match the error.
+Network failures throw `URLError` (or whatever the injected transport throws) unwrapped. A 2xx body that is not JSON, or has no usable body in the contract's narrow sense (§1: no `tiles` array, no `value` object, no `places` array in a keyword answer, a describe body that is not an object), throws `DecodingError` unwrapped; nothing else about a body's shape throws. For tiles, either counts as a failed tile. Cancellation throws `CancellationError` or `URLError(.cancelled)`, whichever reached the call first; callers should test `Task.isCancelled` rather than match the error, except for an autocompleter's call (section 5).
 
 ## 4. Transport
 
@@ -233,7 +313,14 @@ The transport reads the whole body before checking the status, so that an error 
 - Cache lookups happen on the actor before a child is added, so a cached tile never becomes a request. Cache writes happen on the actor as children complete. The records are assembled in URL order from a dictionary after the group finishes, so completion order never affects results (§4.3).
 - Nothing in the client blocks a thread. CPU work (normalizing, scoring) runs on the actor; for a region with tens of thousands of records this is milliseconds, and a caller who cares can wrap the call in a detached task.
 
-Cancellation: a `Task` cancelled during a request sees `URLSession` abort the request and the error propagate. A fully cached call does not check cancellation and completes (§11); do not add `try Task.checkCancellation()` at the top of `searchPlaces`.
+Cancellation: a `Task` cancelled during a request sees `URLSession` abort the request and the error propagate. A fully cached call does not check cancellation and completes (§11); do not add `try Task.checkCancellation()` at the top of `searchNearby`.
+
+`autocompleteByKeyword` validates `dataset` and `region` as `searchByKeyword` does, when it is called, and throws `AtgeoArgumentError` there. The `KeywordAutocomplete` it returns holds the previous call's `Task`. Each `searchByKeyword(_:)` call cancels that task, then runs its own work (the call itself, or the no-request answer for a keyword that cannot qualify) in a new `Task` and awaits its value. The caller's `await` therefore sits outside the task that does the work, and two rules follow.
+
+- A superseded call throws `CancellationError`, whatever the inner task threw (`URLError(.cancelled)` or an injected transport's own error included), although the caller's own task is not cancelled: `Task.isCancelled` is false in the caller. Callers must ignore an autocompleter's `CancellationError` (it means "superseded"), not use it to decide whether they themselves were cancelled. An app typically drops the error and shows the newest call's result.
+- The caller's own cancellation still counts. The call awaits inside `withTaskCancellationHandler`, whose handler cancels the inner task, so cancelling the caller cancels the request (contract §11).
+
+A keyword that cannot qualify (contract section 17) resolves with an empty result and `disclosed` of `keyword: false, region: nil`, without a request, and still cancels the previous call. Debouncing is the app's. The doc comment on `KeywordAutocomplete.searchByKeyword(_:)` states that every qualifying keyword goes to the server as typed, prefixes included, that the server keeps no log of it, that a hostile operator can record what it receives, and that debouncing reduces how many prefixes go out and is the app's choice (contract section 19). It neither recommends nor discourages any of it.
 
 ## 6. Implementing the contract in Swift
 
@@ -315,7 +402,7 @@ Swift `String` compares, hashes and orders by Unicode canonical equivalence: a p
 
 ### Ranking (contract §8)
 
-Swift's `sort` is documented stable on current toolchains, but add the input index as a final comparator anyway so the guarantee does not depend on the toolchain. Implement the comparators as `(SearchHit, SearchHit) -> Int` and fold them exactly as the reference does; do not translate into a single `<` with early returns, which is where ports usually drop a tie-break. Compare, do not subtract: each comparator returns the sign of a three-way comparison, never a difference. Like the Jaro-Winkler `lo...hi` range above, a literal transcription traps where JavaScript carries on: `byImportance` traps on `Int64` overflow when two importances span more than 2^63 (`Int64.max` against `-1`), and importances are untrusted server data.
+Swift's `sort` is documented stable on current toolchains, but add the input index as a final comparator anyway so the guarantee does not depend on the toolchain. Implement the comparators as `(NearbyHit, NearbyHit) -> Int` and fold them exactly as the reference does; do not translate into a single `<` with early returns, which is where ports usually drop a tie-break. Compare, do not subtract: each comparator returns the sign of a three-way comparison, never a difference. Like the Jaro-Winkler `lo...hi` range above, a literal transcription traps where JavaScript carries on: `byImportance` traps on `Int64` overflow when two importances span more than 2^63 (`Int64.max` against `-1`), and importances are untrusted server data.
 
 ### Caches (contract §10)
 
@@ -332,9 +419,9 @@ The fake server is an `HTTPTransport` that:
 - is configured with tilesets (slug, collections, tiles with records), a `tilesFor` override, a `failTiles` list, a `server` base, and `goOffline()`;
 - routes `/xrpc/org.atgeo.*` and tile URLs the way `test/helpers/fakeServer.ts` does, including the dataset and collection selection errors;
 - records every request URL for the privacy tests (§12). The `HTTPTransport` seam carries a URL and nothing else: the method is always GET and there is never a body, so those are fixed by construction rather than recorded. Headers belong to the real transport and are outside the fake's view; the privacy requirement on them is met by the default transport adding only fixed headers of its own, which the transport test (below) checks against a loopback server;
-- validates its own traffic. There is no Swift lexicon validator; implement the contract's minimum (§13): parameter names, the `bbox` regular expression, required response fields. Keep the lexicon JSON vendored regardless so that a validator can be added later and so that `SOURCE` says which garganorn commit the fake is modelled on.
+- validates its own traffic. There is no Swift lexicon validator; implement the contract's minimum (§13): parameter names, the `bbox` regular expressions (the whole-degree form for `org.atgeo.searchPlaces`), required response fields. It answers `org.atgeo.searchPlaces` with the server's `KeywordRequired`, `InvalidBbox` and `BboxTooPrecise` checks. Keep the lexicon JSON vendored regardless so that a validator can be added later and so that `SOURCE` says which garganorn commit the fake is modelled on.
 
-Test files map one to one onto the reference's `test/*.test.ts`, with the same `describe`/`it` names turned into suites and test names, so that a reviewer can diff coverage by eye. The fixture tests (`normalize.json`, `jaro-winkler.json`, `ranking-scenarios.json`) are table-driven with `@Test(arguments:)`.
+Test files map one to one onto the reference's `test/*.test.ts`, with the same `describe`/`it` names turned into suites and test names, so that a reviewer can diff coverage by eye. The fixture tests (`normalize.json`, `jaro-winkler.json`, `ranking-scenarios.json`, `keyword-fallback.json`, `keyword-regions.json`, and the `searchPlaces` reader cases in `lenient-readers.json`) are table-driven with `@Test(arguments:)`. `keyword-fallback.json` pins the solid-hit decision, the merge order and `disclosed`, and `keyword-regions.json` pins the whole-degree snapping of a keyword region; both run against the request-capturing fake (contract §13). Autocomplete tests cover a one-character prefix making no request and a second call cancelling the first with `CancellationError`.
 
 The default transport gets one small test of its own against a loopback HTTP server, since the fake replaces it everywhere else: a 4xx with a JSON error body, a 4xx with an empty body, a redirect, cancellation mid-request, and the request headers it sets itself: `Accept: application/json`, `User-Agent: atgeo-client-swift` and `Accept-Language: *` (contract §12, item 5). URLSession adds others of its own that vary by platform, so the test asserts only on these.
 
@@ -353,6 +440,8 @@ CI: GitHub Actions, two jobs. `macos-latest` with the current Xcode runs `swift 
 | Query encoding | manual, via `percentEncodedQueryItems` | `queryItems` leaves `+` raw |
 | Default transport caching | off | contract's no-persistence default; opt in by passing a session |
 | Argument errors | separate `AtgeoArgumentError` | keeps `AtgeoError.code` the server's namespace |
+| Autocompleter | `Task` per call, cancelled by the next | superseded call throws `CancellationError`; callers ignore it |
+| Combined search's keyword region | required `KeywordRegionMode` | the disclosure is the developer's choice every time |
 | `getPlace` name | `getPlace(origin:)` | the wire name, as for `describeService` and `describeTileset` (schuyler/atgeo-sdk-swift#14) |
 | Minimum platforms | iOS 15 / macOS 12 | `URLSession` async API |
 
@@ -361,4 +450,4 @@ Open:
 1. Whether `Region.circle` should take a `CLLocationCoordinate2D` overload. Leaning no: it drags in CoreLocation, which is absent on Linux, and the app can pass `.latitude`/`.longitude` itself.
 2. Whether to ship a typed `Place` view (`name`, `variants`, `locations`, `relations`) over `JSONObject` in the first release. It is useful and cheap, but it is a second schema to keep in step with the lexicon. Proposed: a later minor version.
 3. The default cache budget on iOS. The contract keeps 50 MiB (§15); watchOS may want less. Expose the option, keep the default, revisit with numbers.
-4. Reporting failed tiles (contract §4.4). `SearchResult` gains `tileFailures: [TileFailure]`; the public `init` takes it as a last parameter defaulting to `[]`, so existing calls compile, and `init(from:)` is written by hand with `decodeIfPresent`, so results encoded before the change still decode. `TileFailure` is `Sendable, Equatable, Codable`, with `url: String`, `kind: Kind` (a `String` enum: `refused`, `status`, `decode`, `transport`), `status: Int?` and `error: (any Error)?`, left out of `==` and of coding (`nil` after decoding, the only time it is `nil`). Nothing to narrow: a programming error traps rather than throws, and the cache insert already runs outside the child task's `catch`. The status check is split out of `fetchBody`, so that an `AtgeoError` an app's transport throws is `transport`, not `status`. The JSON parser is iterative with a depth limit of 512, so deep nesting is a `decode` failure, never a stack overflow. Logging needs `import os`, which the sources' import check (CI and `SourceChecks`) now allows alongside Foundation. The tile-URL check goes further than the other ports' because Foundation is a different parser from WHATWG: it applies compatibility mapping and IDNA to the host, after which a fullwidth `：` is a port, `℀` is `a/c` and an undecodable userinfo reads as no user at all, so the check maps the authority the way Foundation will and refuses one that gains a delimiter, refuses code points Foundation drops or maps where WHATWG refuses or maps otherwise, parses a bracketed host as WHATWG's IPv6 parser does, re-checks Foundation's own parse, and hands the transport the URL with its scheme lowercased. The default transport also refuses a redirect to a URL that fails the check (with credentials, or not http(s)): through a session delegate on every platform, and on Apple through the per-request task delegate, which forwards an allowed redirect to an app session's own delegate so that the app's redirect policy still applies. On Linux, FoundationNetworking asks only the session's delegate, so a session the app supplies keeps its own redirect policy; `CONFORMANCE.md` lists this and every other margin. A prerequisite, separate from this change because contract §4.4 already requires it: the port has no explicit refused-URL check, only `URL(string:)` failing. A URL with credentials goes to the transport, and so does a `file:` URL; whether the default `URLSession` transport would read a local file into the tile cache is unverified and needs a test. A check like the Python and Rust ports' (no username or password; an empty userinfo is a margin either way, contract §4.4) fixes both, for app transports too. On platforms with `os`, each failure is logged with `Logger(subsystem: "org.atgeo", category: "tiles").debug`, both the URL and the error's description private (the default): a tile URL reveals the coarse area searched, and an app's transport may put anything in an error.
+4. Reporting failed tiles (contract §4.4). `NearbySearchResult` gains `tileFailures: [TileFailure]`; the public `init` takes it as a last parameter defaulting to `[]`, so existing calls compile, and `init(from:)` is written by hand with `decodeIfPresent`, so results encoded before the change still decode. `TileFailure` is `Sendable, Equatable, Codable`, with `url: String`, `kind: Kind` (a `String` enum: `refused`, `status`, `decode`, `transport`), `status: Int?` and `error: (any Error)?`, left out of `==` and of coding (`nil` after decoding, the only time it is `nil`). Nothing to narrow: a programming error traps rather than throws, and the cache insert already runs outside the child task's `catch`. The status check is split out of `fetchBody`, so that an `AtgeoError` an app's transport throws is `transport`, not `status`. The JSON parser is iterative with a depth limit of 512, so deep nesting is a `decode` failure, never a stack overflow. Logging needs `import os`, which the sources' import check (CI and `SourceChecks`) now allows alongside Foundation. The tile-URL check goes further than the other ports' because Foundation is a different parser from WHATWG: it applies compatibility mapping and IDNA to the host, after which a fullwidth `：` is a port, `℀` is `a/c` and an undecodable userinfo reads as no user at all, so the check maps the authority the way Foundation will and refuses one that gains a delimiter, refuses code points Foundation drops or maps where WHATWG refuses or maps otherwise, parses a bracketed host as WHATWG's IPv6 parser does, re-checks Foundation's own parse, and hands the transport the URL with its scheme lowercased. The default transport also refuses a redirect to a URL that fails the check (with credentials, or not http(s)): through a session delegate on every platform, and on Apple through the per-request task delegate, which forwards an allowed redirect to an app session's own delegate so that the app's redirect policy still applies. On Linux, FoundationNetworking asks only the session's delegate, so a session the app supplies keeps its own redirect policy; `CONFORMANCE.md` lists this and every other margin. A prerequisite, separate from this change because contract §4.4 already requires it: the port has no explicit refused-URL check, only `URL(string:)` failing. A URL with credentials goes to the transport, and so does a `file:` URL; whether the default `URLSession` transport would read a local file into the tile cache is unverified and needs a test. A check like the Python and Rust ports' (no username or password; an empty userinfo is a margin either way, contract §4.4) fixes both, for app transports too. On platforms with `os`, each failure is logged with `Logger(subsystem: "org.atgeo", category: "tiles").debug`, both the URL and the error's description private (the default): a tile URL reveals the coarse area searched, and an app's transport may put anything in an error.

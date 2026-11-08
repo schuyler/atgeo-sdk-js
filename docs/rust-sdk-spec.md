@@ -1,13 +1,13 @@
 # Rust SDK specification
 
-A Rust port of `@atgeo/client`: a client for the atgeo gazetteer that searches places without telling the server what you searched for. This document covers the crate, its public API, and the decisions that are specific to Rust. Behaviour (what a search sends, filters, scores and returns) is defined once, for every port, in [port-contract.md](port-contract.md); this document cites it by section and does not restate it.
+A Rust port of `@atgeo/client`: a client for the atgeo gazetteer that searches nearby places without telling the server what you searched for, and says so in the method name when a search might. This document covers the crate, its public API, and the decisions that are specific to Rust. Behaviour (what a search sends, filters, scores and returns) is defined once, for every port, in [port-contract.md](port-contract.md); this document cites it by section and does not restate it.
 
-Status: built, in schuyler/atgeo-sdk-rs. This document now describes the port as built; the port's `DECISIONS.md` lists where the build departed from the proposal and why, and its `CONFORMANCE.md` the margins against the reference. The recipes in section 6 were run with Rust 1.97 against the fixtures at `dae7995` and the contract's worked tables, and pass: `normalize.json` 41/41, `jaro-winkler.json` 33/33 (worst distance from the fixture 4.8e-7), the contract's §3 bbox table, the exact expectations in `region.test.ts` and its 93-box grid test, the §6 distance table (bit-identical on x86_64 Linux), and the 12 ranking scenarios through a transcription of §4.6 to §4.9. The transport and concurrency claims in sections 4 and 5 were measured against a loopback server. An independent review then re-ran the recipes, the measurements and an API sketch (which also built and passed on 1.85.0); its findings are folded in, among them a panic in `f64::clamp` on a reversed box, tests that could not reach `pub(crate)` code, and a feature layout that compiled ureq into every blocking build. Treat every version number below as a starting point.
+Status: the port in schuyler/atgeo-sdk-rs implements this document up to `search_nearby`; `search_by_keyword`, `search_nearby_then_by_keyword` and `autocomplete_by_keyword` are specified here (contract sections 16 to 19) and not yet built. The port's `DECISIONS.md` lists where the build departed from the proposal and why, and its `CONFORMANCE.md` the margins against the reference. The recipes in section 6 were run with Rust 1.97 against the fixtures at `dae7995` and the contract's worked tables, and pass: `normalize.json` 41/41, `jaro-winkler.json` 33/33 (worst distance from the fixture 4.8e-7), the contract's §3 bbox table, the exact expectations in `region.test.ts` and its 93-box grid test, the §6 distance table (bit-identical on x86_64 Linux), and the 12 ranking scenarios through a transcription of §4.6 to §4.9. The transport and concurrency claims in sections 4 and 5 were measured against a loopback server. An independent review then re-ran the recipes, the measurements and an API sketch (which also built and passed on 1.85.0); its findings are folded in, among them a panic in `f64::clamp` on a reversed box, tests that could not reach `pub(crate)` code, and a feature layout that compiled ureq into every blocking build. Treat every version number below as a starting point.
 
 ## 1. Goals
 
 - Same results as the TypeScript client for the same server answers, verified by the shared fixtures.
-- Same privacy properties: search text and precise coordinates never leave the device.
+- Same privacy properties: `search_nearby` never sends search text or precise coordinates; text leaves the device only through the methods whose names contain `keyword`, and every result's `disclosed` says what the call sent.
 - Idiomatic Rust: an async client that runs on any executor because it has none of its own and spawns nothing (its default transport, reqwest, does need Tokio), and a blocking client for code without one, with the same methods and results; owned result types; one error enum; a client that is `Send + Sync` and meant to be shared.
 - A small dependency tree: 13 crates for the core, with the default transports behind features.
 
@@ -32,7 +32,8 @@ src/
   wire.rs             body decoding and the lenient readers from serde_json::Value (§1)
   xrpc.rs             XRPC URL building and the status check that yields Error::Atgeo (§1)
   transport.rs        HttpResponse, HttpTransport, BoxError; ReqwestTransport (feature "reqwest")
-  types.rs            SortMode, SearchOptions, SearchResult, SearchHit, PlaceRecord, PlaceLocation, the describe types
+  types.rs            SortMode, NearbyOptions, KeywordOptions, FallbackOptions, NearbySearchResult, NearbyHit, KeywordSearchResult, KeywordHit, FallbackSearchResult, FallbackHit, Disclosure, PlaceRecord, PlaceLocation, the describe types
+  autocomplete.rs     KeywordAutocomplete (section 5)
   error.rs            Error, AtgeoError, DecodingError, ArgumentError
                       (every module carries #[cfg(test)] unit tests for its internals; section 7)
 tests/
@@ -80,7 +81,9 @@ Licence: BSD-3-Clause, the same `LICENSE` file as the other repositories. Distri
 
 ## 3. Public API
 
-Names follow the Rust API guidelines. `get_place` keeps the verb, as in the JS and Kotlin clients and the XRPC query it wraps; the guideline against `get_` prefixes is about field getters, not network calls.
+Names follow the Rust API guidelines: the JS client's `searchNearby`, `searchByKeyword`, `searchNearbyThenByKeyword` and `autocompleteByKeyword` are `search_nearby`, `search_by_keyword`, `search_nearby_then_by_keyword` and `autocomplete_by_keyword`. `get_place` keeps the verb, as in the JS and Kotlin clients and the XRPC query it wraps; the guideline against `get_` prefixes is about field getters, not network calls.
+
+Naming rule: every method whose name contains `keyword` may send search text to the server; no other method does. The option that carries text is `text` where it never leaves the device (`NearbyOptions`) and `keyword` where it may. `search_nearby_then_by_keyword` sends the keyword only when the nearby results have no solid hit, and the autocompleter's `search_by_keyword` sends every keyword that qualifies. Which server call each method makes, and what it sends, is in port-contract.md (sections 16 to 19 for the keyword methods).
 
 ```rust
 #[cfg(feature = "reqwest")]
@@ -102,14 +105,17 @@ impl<T: HttpTransport> AtgeoClient<T> {
     pub fn cache_budget_bytes(self, bytes: u64) -> Self;
     pub fn clock(self, clock: impl Fn() -> SystemTime + Send + Sync + 'static) -> Self;  // for tests (section 6, Caches)
 
-    pub async fn search_places(&self, region: Region, options: SearchOptions) -> Result<SearchResult, Error>;
+    pub async fn search_nearby(&self, region: Region, options: NearbyOptions) -> Result<NearbySearchResult, Error>;
+    pub async fn search_by_keyword(&self, keyword: &str, options: KeywordOptions) -> Result<KeywordSearchResult, Error>;
+    pub async fn search_nearby_then_by_keyword(&self, region: Region, options: FallbackOptions) -> Result<FallbackSearchResult, Error>;
+    pub fn autocomplete_by_keyword(&self, options: KeywordOptions) -> Result<KeywordAutocomplete<'_, T>, Error>;
     pub async fn get_place(&self, origin: &str) -> Result<PlaceRecord, Error>;
     pub async fn describe_service(&self) -> Result<ServiceDescription, Error>;
     pub async fn describe_tileset(&self, slug: &str) -> Result<Tileset, Error>;
 }
 ```
 
-`blocking::AtgeoClient<T = blocking::UreqTransport>` has the same constructors and the same four methods without `async`, over `blocking::HttpTransport`. A default type parameter that names a type a disabled feature removes does not compile, which is why each client is declared twice under `cfg`, the blocking one on the `ureq` feature. `Default` is implemented beside every `new()` (clippy's `new_without_default` requires it); `new()` panics only if the TLS backend cannot initialise, and says so under `# Panics`. `Debug` is written by hand, since the client holds a boxed clock. Configuration is by value on the new client (`AtgeoClient::new().server("http://localhost:8000")`) rather than through a separate builder type: there are three options, all of them settings for a client nobody shares yet, and taking `self` by value means a client behind `&` or an `Arc` cannot be reconfigured under its callers. `AtgeoClient` is `Send + Sync` whenever `T` is; share it by reference or in an `Arc`, one per server for the life of the process.
+`blocking::AtgeoClient<T = blocking::UreqTransport>` has the same constructors and the same methods without `async`, over `blocking::HttpTransport`, except `autocomplete_by_keyword`: a blocking call cannot be cancelled in flight, and autocomplete is a UI behaviour whose UIs use the async client. A default type parameter that names a type a disabled feature removes does not compile, which is why each client is declared twice under `cfg`, the blocking one on the `ureq` feature. `Default` is implemented beside every `new()` (clippy's `new_without_default` requires it); `new()` panics only if the TLS backend cannot initialise, and says so under `# Panics`. `Debug` is written by hand, since the client holds a boxed clock. Configuration is by value on the new client (`AtgeoClient::new().server("http://localhost:8000")`) rather than through a separate builder type: there are three options, all of them settings for a client nobody shares yet, and taking `self` by value means a client behind `&` or an `Arc` cannot be reconfigured under its callers. `AtgeoClient` is `Send + Sync` whenever `T` is; share it by reference or in an `Arc`, one per server for the life of the process.
 
 ```rust
 #[non_exhaustive]
@@ -130,24 +136,81 @@ impl Region {
 pub enum SortMode { #[default] Fused, Distance, Similarity }
 
 #[derive(Clone, Debug)]
-pub struct SearchOptions { /* dataset: String; text, collection: Option<String>; sort: SortMode */ }
-impl SearchOptions {
+pub struct NearbyOptions { /* dataset: String; text, collection: Option<String>; sort: SortMode */ }
+impl NearbyOptions {
     /// `dataset` is required and has no default.
     pub fn new(dataset: impl Into<String>) -> Self;
     pub fn text(self, text: impl Into<String>) -> Self;
     pub fn collection(self, collection: impl Into<String>) -> Self;
     pub fn sort(self, sort: SortMode) -> Self;
 }
+
+/// A bounding box in degrees, for the keyword search: a box only, never a circle. Sent snapped outward to whole degrees.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct KeywordRegion { pub west: f64, pub south: f64, pub east: f64, pub north: f64 }
+impl KeywordRegion {
+    pub const fn new(west: f64, south: f64, east: f64, north: f64) -> Self;
+}
+
+#[derive(Clone, Debug)]
+pub struct KeywordOptions { /* dataset: String; collection: Option<String>; region: Option<KeywordRegion> */ }
+impl KeywordOptions {
+    pub fn new(dataset: impl Into<String>) -> Self;
+    pub fn collection(self, collection: impl Into<String>) -> Self;
+    pub fn region(self, region: KeywordRegion) -> Self;
+}
+
+/// Returned by `autocomplete_by_keyword`; see section 5. Every keyword that qualifies is sent to the server as given, prefixes included.
+pub struct KeywordAutocomplete<'a, T> { /* the client, the options, the previous call's abort handle */ }
+impl<T: HttpTransport> KeywordAutocomplete<'_, T> {
+    pub async fn search_by_keyword(&self, keyword: &str) -> Result<KeywordSearchResult, Error>;
+}
+
+/// Whether the combined search's keyword request carries the nearby region, snapped to whole degrees.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeywordRegionMode { None, Degree }
+
+#[derive(Clone, Debug)]
+pub struct FallbackOptions { /* dataset, keyword: String; keyword_region: KeywordRegionMode; collection: Option<String>; sort: SortMode */ }
+impl FallbackOptions {
+    /// `keyword` and `keyword_region` are required: the fallback needs text, and the disclosure is the caller's choice every time.
+    pub fn new(dataset: impl Into<String>, keyword: impl Into<String>, keyword_region: KeywordRegionMode) -> Self;
+    pub fn collection(self, collection: impl Into<String>) -> Self;
+    pub fn sort(self, sort: SortMode) -> Self;
+}
 ```
 
-A call reads `client.search_places(Region::circle(39.9526, -75.1652, 1000.0), SearchOptions::new("overturemaps.org").text("Starbux")).await?`. `Region` does not validate on construction: `Region::circle(f64::NAN, 0.0, 10.0)` builds, and `search_places` rejects it (Errors, below), so that the contract's order of checks (§3) holds whichever fault a call has. `SearchOptions` keeps its fields private behind setters, so that an option added later breaks nobody.
+A call reads `client.search_nearby(Region::circle(39.9526, -75.1652, 1000.0), NearbyOptions::new("overturemaps.org").text("Starbux")).await?`. `Region` does not validate on construction: `Region::circle(f64::NAN, 0.0, 10.0)` builds, and `search_nearby` rejects it (Errors, below), so that the contract's order of checks (§3) holds whichever fault a call has. The option types keep their fields private behind setters, so that an option added later breaks nobody.
 
 ```rust
 pub type Place = Arc<serde_json::Map<String, serde_json::Value>>;
 
+/// What the server learned during one call.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Disclosure {
+    pub keyword: bool,             // the keyword was sent
+    pub region: Option<f64>,       // grid in degrees of the finest region sent: 0.01 or 1; None if none
+}
+
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
-pub struct SearchResult { pub places: Vec<SearchHit>, pub complete: bool, pub overview: bool, pub tiles: TileCounts }
+pub struct NearbySearchResult { pub places: Vec<NearbyHit>, pub complete: bool, pub overview: bool, pub tiles: TileCounts, pub disclosed: Disclosure }
+
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeywordSearchResult { pub places: Vec<KeywordHit>, pub attribution: Vec<CollectionAttribution>, pub disclosed: Disclosure }
+
+/// The nearby result's fields, with `places` holding both kinds of hit.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub struct FallbackSearchResult { pub places: Vec<FallbackHit>, pub complete: bool, pub overview: bool, pub tiles: TileCounts, pub disclosed: Disclosure }
+
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub enum FallbackHit { Nearby(NearbyHit), Keyword(KeywordHit) }   // via(): "tiles" or "keyword"
 
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,14 +218,14 @@ pub struct TileCounts { pub fetched: usize, pub failed: usize }
 
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
-pub struct SearchHit {
+pub struct NearbyHit {
     pub origin: Option<String>,
     pub place: Place,              // the record value as served
     pub importance: Option<i64>,
     pub distance: f64,             // metres
     pub score: Option<f64>,        // 0..=1, None without text
 }
-impl SearchHit {
+impl NearbyHit {
     pub fn name(&self) -> Option<&str>;        // place["name"] when that is a string
     pub fn location(&self) -> PlaceLocation;   // locate(place), contract §5
 }
@@ -170,7 +233,13 @@ impl SearchHit {
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlaceRecord { pub origin: String, pub place: Place, pub importance: Option<i64> }
-// name() and location(), as on SearchHit
+// name() and location(), as on NearbyHit
+
+/// No distance or score: the server ranks by neither, and the app can compute distance from `location()`.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeywordHit { pub origin: Option<String>, pub place: Place, pub importance: Option<i64> }
+// name() and location(), as on NearbyHit
 
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -222,6 +291,8 @@ pub enum Error {
     Transport(BoxError),
     /// A bad argument, found before any request (contract §3).
     InvalidArgument(ArgumentError),
+    /// An autocompleter call that a later call on the same autocompleter replaced.
+    Superseded,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -236,7 +307,7 @@ pub struct DecodingError { /* message; source: Option<serde_json::Error> */ }
 pub enum ArgumentError { InvalidRegion(&'static str), SimilarityRequiresText, InvalidServer }
 ```
 
-One enum, as Rust callers expect, with a variant per kind the contract keeps apart: the server's refusals (whose `code` stays the server's namespace), unusable answers, transport failures, and argument errors. `Display`, `std::error::Error` and `source()` are written by hand rather than with `thiserror`, which would add a proc-macro to every build to save about forty lines. No message repeats its source's, so that a report walking the chain (anyhow's `{:#}`) says each thing once: `Atgeo`, `Decoding` and `InvalidArgument` show their inner error and pass on its source, `Transport` displays `transport error` with the transport's error as its source, and a `DecodingError` from the parser displays `response is not JSON` with the parser's error as its source (the port first printed each message twice, found in its review). `Error::Transport` holds the transport's own error, which is as close to "unwrapped" (contract §1) as a typed `Result` gets: `err.downcast_ref::<reqwest::Error>()` reaches it. Argument errors are returned, not panicked: a region is often computed from data, and a panic in a library over input it could reject is wrong. Since an `async fn` body does not run until polled, the error appears on the first poll; either way, no request is made. `server()` takes any string, so the server is checked at each call instead: one that is not an absolute http or https URL with a host, or that carries credentials, is `ArgumentError::InvalidServer` before any request (section 4, URLs).
+One enum, as Rust callers expect, with a variant per kind the contract keeps apart: the server's refusals (whose `code` stays the server's namespace), unusable answers, transport failures, argument errors, and a superseded autocomplete call. The enum is `#[non_exhaustive]`, so an app's `match` already has a wildcard arm. The types rule out some of the contract's argument errors: `keyword` is a `&str`, `keyword_region` is an enum, and a keyword region cannot be a circle; a malformed `KeywordRegion` is `ArgumentError::InvalidRegion`. A keyword that cannot qualify is not an argument error in `search_by_keyword`: it goes to the server, which answers `Error::Atgeo` with code `KeywordRequired`. A keyword over 256 UTF-8 bytes is `InvalidRequest`; contract section 1 lists the call's other codes. The qualifying predicate (contract section 17) decides only which keywords are skipped. Its length test counts `chars()`, not `len()`'s bytes. `Display`, `std::error::Error` and `source()` are written by hand rather than with `thiserror`, which would add a proc-macro to every build to save about forty lines. No message repeats its source's, so that a report walking the chain (anyhow's `{:#}`) says each thing once: `Atgeo`, `Decoding` and `InvalidArgument` show their inner error and pass on its source, `Transport` displays `transport error` with the transport's error as its source, and a `DecodingError` from the parser displays `response is not JSON` with the parser's error as its source (the port first printed each message twice, found in its review). `Error::Transport` holds the transport's own error, which is as close to "unwrapped" (contract §1) as a typed `Result` gets: `err.downcast_ref::<reqwest::Error>()` reaches it. Argument errors are returned, not panicked: a region is often computed from data, and a panic in a library over input it could reject is wrong. Since an `async fn` body does not run until polled, the error appears on the first poll; either way, no request is made. `server()` takes any string, so the server is checked at each call instead: one that is not an absolute http or https URL with a host, or that carries credentials, is `ArgumentError::InvalidServer` before any request (section 4, URLs).
 
 ## 4. Transport
 
@@ -262,7 +333,7 @@ pub mod blocking {
 }
 ```
 
-The trait is not object-safe (a `Box<dyn HttpTransport>` is error E0038, measured), which is why the client is generic over its transport rather than holding a trait object. An implementor writes `async fn get(&self, url: &str) -> Result<HttpResponse, BoxError>` in its `impl`, and the compiler checks the `Send` bound there: an implementation holding an `Rc` across an `.await` is rejected at the `impl`, not at some distant call site. A trait declared with a plain `async fn` instead could not promise that the client's own futures are `Send`, and `tokio::spawn` would refuse them. With the bound, `tokio::spawn(async move { client.search_places(..).await })` compiles for any `T: HttpTransport + 'static` behind an `Arc` (measured). Both traits are implemented for `&T` and `Arc<T>` wherever `T` implements them, so that one transport, the test fake among them, can serve two clients and be inspected afterwards.
+The trait is not object-safe (a `Box<dyn HttpTransport>` is error E0038, measured), which is why the client is generic over its transport rather than holding a trait object. An implementor writes `async fn get(&self, url: &str) -> Result<HttpResponse, BoxError>` in its `impl`, and the compiler checks the `Send` bound there: an implementation holding an `Rc` across an `.await` is rejected at the `impl`, not at some distant call site. A trait declared with a plain `async fn` instead could not promise that the client's own futures are `Send`, and `tokio::spawn` would refuse them. With the bound, `tokio::spawn(async move { client.search_nearby(..).await })` compiles for any `T: HttpTransport + 'static` behind an `Arc` (measured). Both traits are implemented for `&T` and `Arc<T>` wherever `T` implements them, so that one transport, the test fake among them, can serve two clients and be inspected afterwards.
 
 Both transports return an `HttpResponse` for every status and never produce `Error::Atgeo`. The conversion of a non-2xx into `Error::Atgeo` happens above the seam, in `xrpc.rs` (in the tile loop a non-2xx is a failed tile, never an error), so that it applies to the fake server's responses as much as to the real ones: the body is parsed with `parse_body` (section 6), `error` and `message` are each read only if they are strings, and anything missing falls back to `HttpError` and `HTTP {status}` (contract §1). The body is always in hand before the status is judged. XRPC URLs are built by percent-encoding each query value over everything but the RFC 3986 unreserved characters (`A-Z a-z 0-9 - . _ ~`), which encodes `+` as `%2B` and a space as `%20`, as the contract allows (§1); the encoder is ten lines, so the core needs no `url` or `percent-encoding` dependency. A call with no parameters (`describeService`) keeps the reference's trailing `?`, so that a URL-keyed override in the test fake matches the same URL in every port.
 
@@ -378,6 +449,8 @@ The async driver, inside the caller's future and spawning nothing:
 - Assemble.
 
 Cancellation is dropping the future (contract §11): every request future inside it is dropped with it, and with the fake transport the 8 in-flight requests were dropped and no new one started, on both runtimes. Whether the socket closes at once is the transport's business (section 4). The search's own cancellation therefore needs no rule in the tile loop, unlike Kotlin's: a dropped future runs no more code, so there is nothing to tell apart from a tile's failure. A search answered entirely from cache completes on its first poll, which the reference does and contract §11 asks for.
+
+`autocomplete_by_keyword` validates the options as `search_by_keyword` does, when it is called, and returns `Error::InvalidArgument` there. The `KeywordAutocomplete` it returns borrows the client and holds the abort handle of the previous call. Dropping a future cancels it, but the autocompleter does not own the caller's future, so it cannot cancel a superseded call by dropping it; instead each `search_by_keyword(&self, keyword)` call aborts the previous call's handle and runs its own work (the request, or the no-request answer for a keyword that cannot qualify) under a fresh one, for instance with `futures_util::future::Abortable`, which needs no runtime. The superseded call resolves to `Error::Superseded`. Callers ignore an autocompleter's `Error::Superseded`: the caller did nothing wrong and nothing was cancelled on its side. The caller's own cancellation still counts: dropping the caller's future drops the work with it (contract §11). A keyword that cannot qualify (contract section 17) resolves with an empty result and `disclosed` of `keyword: false, region: None`, without a request, and still aborts the previous call. Debouncing is the app's. The doc comment on `KeywordAutocomplete::search_by_keyword` states that every qualifying keyword goes to the server as typed, prefixes included, that the server keeps no log of it, that a hostile operator can record what it receives, and that debouncing reduces how many prefixes go out and is the app's choice (contract section 19). It neither recommends nor discourages any of it.
 
 The CPU work runs on the thread that polls the future. Measured on the Philadelphia tiles in release builds: `serde_json` parses 112 to 127 MB/s, about 12 ms for a 2 MB tile; scoring all 15,849 records takes 39 to 43 ms for `Starbux` and 78 to 97 ms for `Reading Terminal Market`, and locating them 14 to 16 ms (two measurements). `join_all` polls every worker that is ready in the same poll, so when eight large tiles arrive together one poll parses all eight: 141 ms in the worst probe; with real reqwest, gzip and parsing over the 42 tiles, the longest single poll was 56 ms. That is more than Tokio's guidance for time between `.await`s, and it is what reqwest's own `.json()` does too. The library does not move the work to another thread itself, because doing so means `spawn_blocking`, which ties the crate to Tokio. A server that cannot afford the stall calls the blocking client from `tokio::task::spawn_blocking`, which puts the parsing, the ranking and the requests themselves on the blocking pool.
 
@@ -527,6 +600,8 @@ The caches sit behind `std::sync::Mutex`es that are never held across an `.await
 
 Contract §13 notes that the reference has no test of LRU eviction or of the budget, so §10 is the specification and `cache.rs` tests it directly: recency order after reads; one insert evicting several entries; a tile larger than the budget evicting every other tile and then itself; a replacement subtracting the old size; `find` choosing the lowest URL by code units on a pair where `str` order disagrees, and leaving recency alone; a memoized tile used only while its cache entry has the same generation; and a tile list fresh at `set + 3,599,999` ms and missing at exactly `set + 3,600,000`.
 
+The fixture tests include `keyword-fallback.json` (the solid-hit decision, the merge order and `disclosed`, through the request-capturing fake of contract §13), `keyword-regions.json` (whole-degree snapping of a keyword region) and the `searchPlaces` reader cases in `lenient-readers.json`. Autocomplete tests run against the async client only: a one-character prefix makes no request, and a second call resolves the first to `Error::Superseded`.
+
 Fixtures are read with `include_str!`. The built-in harness has no parametrized tests, so a fixture test loops over its cases, collects every failure, and fails once with a message naming each failing case; `libtest-mimic` would give one test per case at the price of a dev-dependency and is not worth it. `tokio` is a dev-dependency only, for the async tests' runtime and its paused clock.
 
 The fake server is one routing core behind both transport traits, so that every client-driven test runs against both clients. It:
@@ -534,13 +609,13 @@ The fake server is one routing core behind both transport traits, so that every 
 - is configured with tilesets (slug, collections, tiles whose records are given as `serde_json::Value`s; the construction-time checks below still require well-formed records, so malformed ones are served through the raw-response override), a `tiles_for` override returning an enum with the three shapes the reference's tests use (a URL list, tiles with an overview flag, or an error and message), a `fail_tiles` list (a 500 for each), a `network_errors` list (a transport error instead of a response, for the reference's "tile fetch rejects" test), a `server` base, `go_offline()`, a raw-response override by URL that bypasses routing and validation (how `robustness.rs` serves the malformed bodies of contract §1), and per-URL delays, slept with `tokio::time::sleep` behind the async trait and `std::thread::sleep` behind the blocking one, with a count of the peak number of requests in flight and of requests dropped before they finished (a guard in the async face counts its own drop). The fake is a cheap `Clone` handle over shared state, so that one fake can serve two clients and be inspected afterwards, as `client.test.ts` does;
 - routes `/xrpc/org.atgeo.*` and tile URLs the way `test/helpers/fakeServer.ts` does, including the dataset and collection selection errors, and fails every request with a boxed `io::Error` when offline;
 - records every request URL for the privacy tests (§12), behind a `Mutex`, since the blocking client calls it from several threads. The transport seam carries a URL and nothing else, so the method (always GET) and the body (never one) are fixed by construction; the ported tests that assert them keep their names and their remaining assertions. Headers belong to the real transports, which `transports.rs` checks;
-- validates its own traffic. There is no Rust validator for atproto lexicons, so the fake implements the contract's minimum (§13) plus what `fakeServer.test.ts` asserts, as the Kotlin spec lists it: at construction, a string `slug` on every tileset, an object `value` with a string `name` on every record, and an integral `importance` when present; for requests, unknown and missing parameter names are a 400 `InvalidRequest`, `bbox` must match the §13 regular expression (written as a hand-rolled check, so the tests need no `regex` crate), and `uri` must have a scheme, a colon and no spaces. Its own responses carry the lexicon's required fields. The lexicon JSON stays vendored, with its own `SOURCE`.
+- validates its own traffic. There is no Rust validator for atproto lexicons, so the fake implements the contract's minimum (§13) plus what `fakeServer.test.ts` asserts, as the Kotlin spec lists it: at construction, a string `slug` on every tileset, an object `value` with a string `name` on every record, and an integral `importance` when present; for requests, unknown and missing parameter names are a 400 `InvalidRequest`, `bbox` must match the §13 regular expression (written as a hand-rolled check, so the tests need no `regex` crate; the whole-degree form for `org.atgeo.searchPlaces`, which it answers with the server's `KeywordRequired`, `InvalidBbox` and `BboxTooPrecise` checks), and `uri` must have a scheme, a colon and no spaces. Its own responses carry the lexicon's required fields. The lexicon JSON stays vendored, with its own `SOURCE`.
 
 Both clients through one test body: `common::Client` wraps either client behind methods that block, driving the async one on a current-thread `tokio` runtime built with `start_paused(true)`, so that the fake's delays cost no wall time, and a `both!` macro turns one body into a module `<name>` holding `async_client` and `blocking_client` tests (two names per body would need `paste` or a proc-macro). The blocking half compiles only with the `blocking` feature.
 
 The reference's client-driven test files (`client`, `transport`, `cache`, `privacy`, `overview`, `region`, `merge`, `ranking`, `fakeServer`) map one to one onto `tests/<name>.rs`, and the three that call internal functions onto the unit tests above, each `describe` a module and each `it` a test with the same words in snake case (`TypeError` and "synchronously" become `InvalidArgument` and "before any request"), so that a reviewer can diff coverage by eye. The two source-scan suites in `client.test.ts` are not ported; their counterparts are the `--no-default-features` build in CI and `cargo deny`. `ranking.rs` drives each scenario through the client and the fake with one tile at `https://places.atgeo.org/tiles/t0.json`, with the reference's membership assertions. `tests/region.rs` adds the contract's §3 table, and the `locations.rs` unit tests its §6 table.
 
-The `wire.rs` unit tests cover the lenient readers directly: the importance, coordinate and truthiness tables of section 6, the describe-type rules of section 3, the error-body rule, the lone-surrogate repair, and the JSON margins `CONFORMANCE.md` lists. Three integration files have no reference counterpart. `robustness.rs` covers the contract's malformed-body behaviours (§1) through the raw-response override. `concurrency.rs`: with 20 delayed tiles the peak in flight is 8, on both clients; dropping a search future while tiles are in flight drops every one of their requests; a search answered entirely from cache completes on its first poll (`FutureExt::now_or_never` returns `Some`), which the contract asks for and the Kotlin port cannot give; a failed getTiles caches nothing, so a retry sends a second request; and `AtgeoClient<FakeServer>` is `Send + Sync` and its `search_places` future is `Send`, asserted at compile time. `transports.rs` is next.
+The `wire.rs` unit tests cover the lenient readers directly: the importance, coordinate and truthiness tables of section 6, the describe-type rules of section 3, the error-body rule, the lone-surrogate repair, and the JSON margins `CONFORMANCE.md` lists. Three integration files have no reference counterpart. `robustness.rs` covers the contract's malformed-body behaviours (§1) through the raw-response override. `concurrency.rs`: with 20 delayed tiles the peak in flight is 8, on both clients; dropping a search future while tiles are in flight drops every one of their requests; a search answered entirely from cache completes on its first poll (`FutureExt::now_or_never` returns `Some`), which the contract asks for and the Kotlin port cannot give; a failed getTiles caches nothing, so a retry sends a second request; and `AtgeoClient<FakeServer>` is `Send + Sync` and its `search_nearby` future is `Send`, asserted at compile time. `transports.rs` is next.
 
 The default transports get tests of their own against a loopback HTTP server written on `std::net::TcpListener`, since the fake replaces them everywhere else. The file is gated on its features (`#![cfg(any(feature = "reqwest", feature = "ureq"))]`, and each transport's module on its own), and it builds each transport from `client_builder()` or `config_builder()` with short timeouts. The cases: a 4xx with a JSON error body and a 4xx with an empty body (both `Ok(HttpResponse)` with the status and body bytes, since a transport never produces `Error::Atgeo`), a same-scheme redirect, a gzipped body and an empty body labelled gzip, the body cap (exactly `max_body_bytes` is read; one byte more fails, and so does a few-kilobyte gzip body that decodes past it), a server that trickles bytes slower than the read timeout, the request headers, which must be the same set on two different requests, with `user-agent: atgeo-client-rust` and no `accept-language` (contract §12, item 5), and no `Referer` after a redirect to another host. `ReqwestTransport` adds cancellation, on the multi-threaded runtime: dropping the future mid-body closes the connection, which the loopback server observes. `UreqTransport` adds its total timeout, against a server that sends a byte per interval shorter than the read timeout; its own redirect following (ten hops followed, an eleventh refused, a redirect to `file:` refused, and a 302 carrying a 300 MiB body left unread); and the tile-URL margins `CONFORMANCE.md` lists. Both transports get a URL with a space and a tab, which must arrive as `prepare_url` makes it, and the clients' own checks (a server that is not an http or https URL refused before any request, a scheme-less tile URL a failed tile) are in `tests/client.rs`.
 
@@ -560,6 +635,8 @@ CI: GitHub Actions. `cargo fmt --check`; `cargo clippy --all-targets --all-featu
 | JSON | `serde_json` with no behaviour-changing features, plus a lone-surrogate repair on retry | Cargo's feature unification would impose them on the app; no tile fails over one unreadable string |
 | Unicode tables | `unicode-normalization` and `unicode-properties` | `unicode-general-category`'s table is a version behind |
 | Importance type | `i64`, read through `f64` | contract §1 |
+| Autocompleter | async client only; each call aborts the previous | the superseded call returns `Error::Superseded`; dropping a future cancels, but the autocompleter does not own the caller's |
+| Combined search's keyword region | required `KeywordRegionMode` in `FallbackOptions::new` | the disclosure is the developer's choice every time |
 | Errors | one `#[non_exhaustive]` enum, hand-written impls | one `Result` type for callers; no proc-macro dependency |
 | Result types | `#[non_exhaustive]` | fields can be added in a minor release |
 | Tile cache | bodies and key sets, plus the latest search's parsed tiles; LRU from a `HashMap` and a `BTreeMap` of ticks | a parsed tile is 6 times its body; no LRU crate |
@@ -576,4 +653,4 @@ Open:
 5. An offload hook for the async client's CPU work (section 5), for apps that want it off the executor without switching to the blocking client. Not until someone asks; it would mean a spawner trait, or a Tokio feature.
 6. Non-BMP Jaro-Winkler cases in the shared fixture. `jaro-winkler.json` has none, so a port that compared code points, or converted only one string to code units (the Python spec's reviewer found that bug there), would pass it. The three cases section 6 adds are proposed for the fixture, so that every port runs them.
 7. Number literals that overflow a double (`1e400`). They fail a tile here, where the reference and the Kotlin and Swift ports read them, and contract §14 grants no freedom for it. serde_json cannot represent one without `arbitrary_precision`, which the crate must not impose on apps. The alternatives are to accept the margin (a compliant server never sends one) or to rewrite overflowing literals on the same retry path as the lone-surrogate repair, which needs a small JSON-aware scanner. Proposed: accept it and record it in `CONFORMANCE.md`; the maintainer decides.
-8. Reporting failed tiles (contract §4.4). `SearchResult` gains `tile_failures: Vec<TileFailure>` (`#[serde(default)]`, so results serialized before the change still deserialize), additive under `#[non_exhaustive]` except that `SearchResult` stops being `UnwindSafe` and `RefUnwindSafe`, since a boxed transport error is neither; acceptable at 0.1. It goes on `SearchResult` rather than `TileCounts`, which is `Copy` and would lose it. `TileFailure` is `#[non_exhaustive]`: `url: String`, `kind: TileFailureKind` (a `#[non_exhaustive]` enum, `Refused`, `Status`, `Decode`, `Transport`), `status: Option<u16>`, and `error: Option<Arc<Error>>`, the crate's own `Error` (`Atgeo`, `Decoding` or `Transport` with the transport's `BoxError` inside) behind an `Arc` so the struct stays `Clone`. A refused URL carries `Error::Transport` with a fixed message that does not repeat the URL, so credentials in it are not printed wherever the error is. Under `serde` the kinds are `refused`, `status`, `decode` and `transport`. `PartialEq` is written by hand and ignores `error`; under `serde`, `error` is skipped and deserializes as `None`, which is the only time it is `None`. `accept_tile` keeps the error it now drops with `.ok()?`, and `wire::tile_records` returns a `DecodingError` instead of `None`. Nothing to narrow: errors are values, panics already propagate, and the cache insert cannot fail. No `log` feature: the result carries everything a log line would, and choosing `log` over `tracing` is better done when an app asks.
+8. Reporting failed tiles (contract §4.4). `NearbySearchResult` gains `tile_failures: Vec<TileFailure>` (`#[serde(default)]`, so results serialized before the change still deserialize), additive under `#[non_exhaustive]` except that `NearbySearchResult` stops being `UnwindSafe` and `RefUnwindSafe`, since a boxed transport error is neither; acceptable at 0.1. It goes on `NearbySearchResult` rather than `TileCounts`, which is `Copy` and would lose it. `TileFailure` is `#[non_exhaustive]`: `url: String`, `kind: TileFailureKind` (a `#[non_exhaustive]` enum, `Refused`, `Status`, `Decode`, `Transport`), `status: Option<u16>`, and `error: Option<Arc<Error>>`, the crate's own `Error` (`Atgeo`, `Decoding` or `Transport` with the transport's `BoxError` inside) behind an `Arc` so the struct stays `Clone`. A refused URL carries `Error::Transport` with a fixed message that does not repeat the URL, so credentials in it are not printed wherever the error is. Under `serde` the kinds are `refused`, `status`, `decode` and `transport`. `PartialEq` is written by hand and ignores `error`; under `serde`, `error` is skipped and deserializes as `None`, which is the only time it is `None`. `accept_tile` keeps the error it now drops with `.ok()?`, and `wire::tile_records` returns a `DecodingError` instead of `None`. Nothing to narrow: errors are values, panics already propagate, and the cache insert cannot fail. No `log` feature: the result carries everything a log line would, and choosing `log` over `tracing` is better done when an app asks.
