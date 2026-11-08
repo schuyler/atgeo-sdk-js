@@ -360,6 +360,8 @@ The server's own side of this, and why it was built as it was, is in garganorn's
 
 `getTiles` responses and the service description are cached for an hour. Tiles are cached in memory, least recently used out first, up to `cacheBudgetBytes` (measured as the tile's response length in characters). Searching a region again while its tile list and tiles are warm makes no requests at all. `getPlace` checks cached tiles before asking the server.
 
+The default budget, 50 MiB, holds about 50 Overture place tiles (about 1 MB each on places.atgeo.org's 2026-10-26 builds; OSM tiles are about 0.4 MB). A server whose tile budget lets one search fetch more tiles than that (garganorn's default is moving from 50 to 75, about 70 MB of Overture tiles) overflows it, and because the cache evicts the least recently used tile first and a search reads tiles in URL order, searching the same dense area again re-downloads every tile, not just the overflow. If your app searches dense areas repeatedly, raise `cacheBudgetBytes` to cover a full search (about 100 MiB for 75 Overture tiles). Memory is the cost: the budget counts response text, and parsed tiles take several times that (a 47-tile search added about 170 MB of heap in Node), so weigh it on phones (#52).
+
 Keyword calls (`searchByKeyword`, the keyword half of `searchNearbyThenByKeyword`, and autocomplete) are not cached: each is one request.
 
 There is no persistence; a new client starts cold.
