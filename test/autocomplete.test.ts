@@ -72,3 +72,21 @@ describe("autocompleteByKeyword arguments", () => {
     expect(server.requests).toHaveLength(0);
   });
 });
+
+// Contract section 19 (#56): a keyword the SDK judged qualifying but the server refuses with KeywordRequired
+// resolves empty, as a keyword the SDK skips does, except that the keyword did go out.
+describe("autocompleteByKeyword when the server refuses a keyword the SDK judged qualifying", () => {
+  it("resolves empty for “ﬁ”, disclosing the keyword it sent", async () => {
+    const { server, client } = setup();
+    const result = await client.autocompleteByKeyword(OVERTURE).searchByKeyword("ﬁ");
+    expect(server.requests).toHaveLength(1);
+    expect(result).toEqual({ places: [], attribution: [], disclosed: { keyword: true, region: null } });
+  });
+
+  it("reports the region it sent with the refused keyword", async () => {
+    const { client } = setup();
+    const region = { bbox: [-122.42, 37.77, -122.41, 37.78] as [number, number, number, number] };
+    const result = await client.autocompleteByKeyword({ ...OVERTURE, region }).searchByKeyword("ﬁ");
+    expect(result.disclosed).toEqual({ keyword: true, region: 1 });
+  });
+});

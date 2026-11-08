@@ -4,7 +4,7 @@ import { dedupe, describe, inRegion, locate } from "./merge.js";
 import { normalize } from "./normalize.js";
 import { matchTier, qualifies, rank } from "./rank.js";
 import { circleBox, keywordBbox, queryBboxes, validateRegion } from "./region.js";
-import { Transport, checkStatus, mapLimit, type HttpResponse } from "./transport.js";
+import { AtgeoError, Transport, checkStatus, mapLimit, type HttpResponse } from "./transport.js";
 import { isObject, readPlace, readSearchPlaces, readServiceDescription, readTileList, readTilePayload, readTileset } from "./wire.js";
 import type {
   Attribution,
@@ -93,13 +93,21 @@ export class AtgeoClient {
     const nearby = await pending;
     const query = normalize(keyword);
     if (nearby.places.some((hit) => matchTier(query, hit.place) === 1) || !qualifies(keyword)) return nearby;
-    const found = await this.searchByKeyword({
-      dataset,
-      ...(collection !== undefined && { collection }),
-      keyword,
-      ...(keywordRegion === "degree" && { region: { bbox: "bbox" in region ? region.bbox : circleBox(region.lat, region.lon, region.radius) } }),
-      signal,
-    });
+    let found: KeywordSearchResult;
+    try {
+      found = await this.searchByKeyword({
+        dataset,
+        ...(collection !== undefined && { collection }),
+        keyword,
+        ...(keywordRegion === "degree" && { region: { bbox: "bbox" in region ? region.bbox : circleBox(region.lat, region.lon, region.radius) } }),
+        signal,
+      });
+    } catch (error) {
+      // The server refused a keyword the qualifying check let through (contract section 18, step 8): keep the
+      // nearby result, which is what skipping the request would have returned, but report the keyword as sent.
+      if (!isKeywordRequired(error)) throw error;
+      return { ...nearby, disclosed: { keyword: true, region: nearby.disclosed.region ?? (keywordRegion === "degree" ? 1 : null) } };
+    }
     const origins = new Set(found.places.map((hit) => hit.origin));
     return {
       ...nearby,
@@ -132,6 +140,10 @@ export class AtgeoClient {
             ...(region && { region }),
             signal: controller.signal,
           });
+        } catch (error) {
+          // As for a keyword the qualifying check skips, except that this one went out (contract section 19).
+          if (!isKeywordRequired(error)) throw error;
+          return { places: [], attribution: [], disclosed: { keyword: true, region: region ? 1 : null } };
         } finally {
           signal?.removeEventListener("abort", onAbort);
         }
@@ -308,4 +320,10 @@ function refuseUrl(url: string): TypeError | undefined {
     return new TypeError("tile URL carries credentials");
   }
   return undefined;
+}
+
+// The server's refusal of a keyword with no word long enough, which the qualifying predicate (contract section 17)
+// can fail to foresee for compatibility characters such as "ﬁ".
+function isKeywordRequired(error: unknown): boolean {
+  return error instanceof AtgeoError && error.code === "KeywordRequired";
 }

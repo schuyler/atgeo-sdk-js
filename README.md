@@ -263,6 +263,7 @@ Limits worth knowing:
 - A nearby search with failed tiles (`complete: false`) and no solid hit still falls back, though the missing tiles might have held one.
 - A misspelling is not a solid hit, so `Starbux` sends the keyword to the server for an answer that is almost certainly empty.
 - A keyword over 256 bytes gets `InvalidRequest` from the server, which is a failed keyword request (next).
+- A keyword the SDK judged sendable but the server refuses as too short (`KeywordRequired`; a compatibility character such as `ﬁ`, which the SDK reads as two letters and the server as one) is not a failure here: the call returns the nearby result, with `disclosed.keyword` true, since the keyword went out.
 - If the keyword request fails, or is aborted, the call rejects with that error, as a failed `getTiles` does, and the nearby results are lost with it. There is no result, so no `disclosed`, though the keyword may have gone out.
 
 ### `autocompleteByKeyword(options): KeywordAutocomplete`
@@ -283,6 +284,7 @@ input.addEventListener("input", async () => {
 **Every string that qualifies and is passed to `searchByKeyword` here goes to the server as typed, prefixes included.** The server keeps no log of what it is sent (garganorn's privacy design says so), but an operator who is hostile can record what it receives. Whether to debounce is up to your app; debouncing reduces how many prefixes go out, and nothing here does it for you.
 
 - Input that can't pass the server's two-character rule (`a`, a single Hangul syllable, a consonant with its vowel sign) makes no request and resolves `{ places: [], attribution: [], disclosed: { keyword: false, region: null } }`. It still supersedes the previous call.
+- Input the SDK judged sendable but the server refuses as too short (`KeywordRequired`, from a compatibility character such as `ﬁ`) resolves the same empty result, except that `disclosed.keyword` is true, since the request went out, and `disclosed.region` is `1` if the autocompleter has a region.
 - Each call aborts the previous call on the same autocompleter, which rejects with an `AbortError`. Unless your own signal aborted, that means a newer call replaced it, and ignoring it is right either way. Your own `signal` aborts the call as it would any other, with your signal's reason; if it is already aborted and the keyword can't pass the two-character rule, the call resolves the empty result and makes no request.
 - The "previous call" belongs to the autocompleter, not the client, so make one per text field. The factory validates `dataset` and `region` as `searchByKeyword` does and throws `TypeError` at once. A call with a keyword that isn't a string rejects with `TypeError` (the method is async, so it never throws synchronously), after superseding the previous call.
 
