@@ -2,7 +2,7 @@
 
 A Swift port of `@atgeo/client`: a client for the atgeo gazetteer that searches nearby places without telling the server what you searched for, and says so in the method name when a search might. This document covers the Swift package, its public API, and the decisions that are specific to Swift. Behaviour (what a search sends, filters, scores and returns) is defined once, for every port, in [port-contract.md](port-contract.md); this document cites it by section and does not restate it.
 
-Status: the port in schuyler/atgeo-sdk-swift (PRs #5, #14 and others) implements this document, including `searchByKeyword`, `searchNearbyThenByKeyword` and `autocompleteByKeyword` (contract sections 16 to 19), against the contract at atgeo-sdk-js `fc56331`. The normalization, similarity, snapping and distance recipes in section 6 have been run from Swift 6.4.1 on Linux against the fixtures and the contract's worked tables, and pass. Swift's standard library does differ in one place, final sigma, and section 6 says how to handle it. Treat every version number below as a starting point.
+Status: the port in schuyler/atgeo-sdk-swift (PRs #5, #14 and others) implements this document, including `searchByKeyword`, `searchNearbyThenByKeyword` and `autocompleteByKeyword` (contract sections 16 to 19), against the contract at atgeo-sdk-js `fc56331`; the keyword methods arrived in commit 3e35de6, committed directly to main. The normalization, similarity, snapping and distance recipes in section 6 have been run from Swift 6.4.1 on Linux against the fixtures and the contract's worked tables, and pass. Swift's standard library does differ in one place, final sigma, and section 6 says how to handle it. Treat every version number below as a starting point.
 
 ## 1. Goals
 
@@ -115,7 +115,7 @@ public enum Region: Sendable, Hashable {
     case bbox(west: Double, south: Double, east: Double, north: Double)
 }
 
-public enum SortMode: String, Sendable, CaseIterable { case fused, distance, similarity }
+public enum SortMode: String, Sendable, CaseIterable, Codable { case fused, distance, similarity }
 
 /// A bounding box in degrees, for the keyword search. A bbox only, never a circle. Sent snapped outward to whole degrees.
 public struct KeywordRegion: Sendable, Hashable {
@@ -124,17 +124,17 @@ public struct KeywordRegion: Sendable, Hashable {
 }
 
 /// Whether the combined search's keyword request carries the nearby region, snapped to whole degrees.
-public enum KeywordRegionMode: Sendable { case none, degree }
+public enum KeywordRegionMode: Sendable, Hashable { case none, degree }
 
 /// What the server learned during one call.
-public struct Disclosure: Sendable, Equatable {
+public struct Disclosure: Sendable, Equatable, Codable {
     public var keyword: Bool          // the keyword was sent
     public var region: Double?        // grid in degrees of the finest region sent: 0.01 or 1; nil if none
 }
 
-public enum Via: String, Sendable { case tiles, keyword }
+public enum Via: String, Sendable, Codable { case tiles, keyword }
 
-public struct NearbySearchResult: Sendable, Equatable {
+public struct NearbySearchResult: Sendable, Equatable, Codable {
     public var places: [NearbyHit]
     public var complete: Bool
     public var overview: Bool
@@ -142,7 +142,7 @@ public struct NearbySearchResult: Sendable, Equatable {
     public var tileFailures: [TileFailure]      // each failed tile, in tile URL order; `tiles.failed` is its count
     public var attribution: [Attribution]       // the credit for every collection the search's tiles hold
     public var disclosed: Disclosure
-    public struct TileCounts: Sendable, Equatable { public var fetched: Int; public var failed: Int }
+    public struct TileCounts: Sendable, Equatable, Codable { public var fetched: Int; public var failed: Int }
 }
 
 /// A tile that failed (contract §4.4).
@@ -163,7 +163,7 @@ public struct Attribution: Sendable, Hashable, Codable {
     public var release: String?, source: String?, licenses: [String]?, attribution: String?
 }
 
-public struct NearbyHit: Sendable, Equatable {
+public struct NearbyHit: Sendable, Equatable, Codable {
     public var via: Via { get }      // .tiles, computed
     public var origin: String?
     public var place: JSONObject
@@ -176,7 +176,7 @@ public struct NearbyHit: Sendable, Equatable {
 }
 
 /// No distance or score: the server ranks by neither, and the app can compute distance from the place's location.
-public struct KeywordHit: Sendable, Equatable {
+public struct KeywordHit: Sendable, Equatable, Codable {
     public var via: Via { get }      // .keyword, computed
     public var origin: String?
     public var place: JSONObject
@@ -186,20 +186,20 @@ public struct KeywordHit: Sendable, Equatable {
     public var location: PlaceLocation { get }  // computed: locate(place), section 6
 }
 
-public struct KeywordSearchResult: Sendable, Equatable {
+public struct KeywordSearchResult: Sendable, Equatable, Codable {
     public var places: [KeywordHit]
     public var attribution: [Attribution]
     public var disclosed: Disclosure
 }
 
-public enum PlaceHit: Sendable, Equatable {
+public enum PlaceHit: Sendable, Equatable, Codable {
     case nearby(NearbyHit), keyword(KeywordHit)
     // Computed from the case: via, origin, place, importance, collection, name, location, as on the two hits.
     public var name: String? { get }
     public var location: PlaceLocation { get }
 }
 
-/// Where a place is (contract §8): the first usable point and the first usable box of `place`. Either or both may be nil.
+/// Where a place is (contract §5): the first usable point and the first usable box of `place`. Either or both may be nil.
 public struct PlaceLocation: Sendable, Equatable, Codable {
     public var point: Point?
     public var bbox: Box?
@@ -209,7 +209,7 @@ public struct PlaceLocation: Sendable, Equatable, Codable {
 }
 
 /// The nearby result's fields, with `places` holding both kinds of hit.
-public struct FallbackSearchResult: Sendable, Equatable {
+public struct FallbackSearchResult: Sendable, Equatable, Codable {
     public var places: [PlaceHit]
     public var complete: Bool
     public var overview: Bool
@@ -225,7 +225,7 @@ public actor KeywordAutocomplete {
     public func searchByKeyword(_ keyword: String) async throws -> KeywordSearchResult
 }
 
-public struct PlaceRecord: Sendable, Equatable {
+public struct PlaceRecord: Sendable, Equatable, Codable {
     public var origin: String
     public var place: JSONObject
     public var importance: Int64?
@@ -502,4 +502,4 @@ Open:
 1. Whether `Region.circle` should take a `CLLocationCoordinate2D` overload. Leaning no: it drags in CoreLocation, which is absent on Linux, and the app can pass `.latitude`/`.longitude` itself.
 2. Whether to ship a typed `Place` view (`name`, `variants`, `locations`, `relations`) over `JSONObject` in the first release. It is useful and cheap, but it is a second schema to keep in step with the lexicon. Proposed: a later minor version.
 3. The default cache budget on iOS. The contract keeps 50 MiB (§15); watchOS may want less. Expose the option, keep the default, revisit with numbers.
-4. Reporting failed tiles (contract §4.4). `NearbySearchResult` gains `tileFailures: [TileFailure]`; the public `init` takes it as a last parameter defaulting to `[]`, so existing calls compile, and `init(from:)` is written by hand with `decodeIfPresent`, so results encoded before the change still decode. `TileFailure` is `Sendable, Equatable, Codable`, with `url: String`, `kind: Kind` (a `String` enum: `refused`, `status`, `decode`, `transport`), `status: Int?` and `error: (any Error)?`, left out of `==` and of coding (`nil` after decoding, the only time it is `nil`). Nothing to narrow: a programming error traps rather than throws, and the cache insert already runs outside the child task's `catch`. The status check is split out of `fetchBody`, so that an `AtgeoError` an app's transport throws is `transport`, not `status`. The JSON parser is iterative with a depth limit of 512, so deep nesting is a `decode` failure, never a stack overflow. Logging needs `import os`, which the sources' import check (CI and `SourceChecks`) now allows alongside Foundation. The tile-URL check goes further than the other ports' because Foundation is a different parser from WHATWG: it applies compatibility mapping and IDNA to the host, after which a fullwidth `：` is a port, `℀` is `a/c` and an undecodable userinfo reads as no user at all, so the check maps the authority the way Foundation will and refuses one that gains a delimiter, refuses code points Foundation drops or maps where WHATWG refuses or maps otherwise, parses a bracketed host as WHATWG's IPv6 parser does, re-checks Foundation's own parse, and hands the transport the URL with its scheme lowercased. The default transport also refuses a redirect to a URL that fails the check (with credentials, or not http(s)): through a session delegate on every platform, and on Apple through the per-request task delegate, which forwards an allowed redirect to an app session's own delegate so that the app's redirect policy still applies. On Linux, FoundationNetworking asks only the session's delegate, so a session the app supplies keeps its own redirect policy; `CONFORMANCE.md` lists this and every other margin. A prerequisite, separate from this change because contract §4.4 already requires it: the port has no explicit refused-URL check, only `URL(string:)` failing. A URL with credentials goes to the transport, and so does a `file:` URL; whether the default `URLSession` transport would read a local file into the tile cache is unverified and needs a test. A check like the Python and Rust ports' (no username or password; an empty userinfo is a margin either way, contract §4.4) fixes both, for app transports too. On platforms with `os`, each failure is logged with `Logger(subsystem: "org.atgeo", category: "tiles").debug`, both the URL and the error's description private (the default): a tile URL reveals the coarse area searched, and an app's transport may put anything in an error.
+4. Reporting failed tiles (contract §4.4). Implemented: `NearbySearchResult.tileFailures` (section 4's sketch) with its `TileFailure` type, the explicit refused-URL check (no credentials, and no `file:` or other non-http(s) URL, for app transports too, so nothing reads a local file into the tile cache), and a `debug` log of each failure with the URL and error private. Nothing in this item is still open; `CONFORMANCE.md` lists the Foundation-parser and redirect margins.
