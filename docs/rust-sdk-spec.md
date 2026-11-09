@@ -197,16 +197,21 @@ pub struct Disclosure {
 
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
-pub struct NearbySearchResult { pub places: Vec<NearbyHit>, pub complete: bool, pub overview: bool, pub tiles: TileCounts, pub disclosed: Disclosure }
+pub struct NearbySearchResult { pub places: Vec<NearbyHit>, pub complete: bool, pub overview: bool, pub tiles: TileCounts, pub tile_failures: Vec<TileFailure>, pub attribution: Vec<Attribution>, pub disclosed: Disclosure }
 
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
-pub struct KeywordSearchResult { pub places: Vec<KeywordHit>, pub attribution: Vec<CollectionAttribution>, pub disclosed: Disclosure }
+pub struct KeywordSearchResult { pub places: Vec<KeywordHit>, pub attribution: Vec<Attribution>, pub disclosed: Disclosure }
+
+/// A search's (or a `PlaceRecord`'s) credit entry; contract §1 and §4.10. Distinct from the describe types' `CollectionAttribution`.
+#[non_exhaustive]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Attribution { pub dataset: String, pub collection: String, pub release: Option<String>, pub source: Option<String>, pub attribution: Option<String>, pub licenses: Option<Vec<String>> }
 
 /// The nearby result's fields, with `places` holding both kinds of hit.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
-pub struct FallbackSearchResult { pub places: Vec<FallbackHit>, pub complete: bool, pub overview: bool, pub tiles: TileCounts, pub disclosed: Disclosure }
+pub struct FallbackSearchResult { pub places: Vec<FallbackHit>, pub complete: bool, pub overview: bool, pub tiles: TileCounts, pub tile_failures: Vec<TileFailure>, pub attribution: Vec<Attribution>, pub disclosed: Disclosure }
 
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
@@ -258,13 +263,13 @@ The describe types are `#[non_exhaustive]` structs deriving `Clone, Debug, Defau
 
 | Struct | Fields |
 |---|---|
-| `ServiceDescription` | `did: Option<String>`, `tilesets: Vec<ServedTileset>` |
+| `ServiceDescription` | `did: Option<String>`, `max_tiles: Option<i64>`, `tilesets: Vec<ServedTileset>` |
 | `ServedTileset` | `slug: Option<String>`, `collections: Vec<CollectionRef>` |
 | `CollectionRef` | `dataset`, `collection: Option<String>` |
 | `CollectionAttribution` | `dataset`, `collection`, `release`, `source`, `attribution: Option<String>`, `licenses: Option<Vec<String>>` |
 | `CollectionInfo` | the `CollectionAttribution` fields, plus `record_count: Option<i64>`, `location_formats`, `containment_types`, `attributes: Option<Vec<String>>`, `categories: Option<Vec<CategoryCount>>` |
 | `CategoryCount` | `value: Option<String>`, `count: Option<i64>` |
-| `Tileset` | `slug`, `published_at: Option<String>`, `extent: Option<Extent>`, `collections: Vec<CollectionInfo>`, `references: Option<Vec<CollectionAttribution>>` |
+| `Tileset` | `slug`, `published_at: Option<String>`, `extent: Option<Extent>`, `collections: Vec<CollectionInfo>`, `references: Option<Vec<CollectionAttribution>>`, `overview: Option<TilesetOverview>` (`records: Option<i64>`) |
 | `Extent` | `north`, `south`, `east`, `west: Option<String>` |
 
 Every response is read by hand from a `serde_json::Value` (`wire.rs`), never through `#[derive(Deserialize)]`, whose generated code fails on a field of the wrong type where the contract wants it read as absent (§1). A missing or wrong-typed field is `None`; a list the lexicon requires that is missing or not an array is empty, and an optional list is `None`; in a `Vec<String>` a non-string element is dropped, and in a list of objects a non-object element is dropped while an object with no readable field still maps, to a struct of `None`s; an `extent` that is not an object is `None`; unknown keys are ignored. An `i64` field (`record_count`, `count`) applies the importance rule (section 6). `published_at` and the extent's edges stay strings, as served. With the optional `serde` feature, the data types derive `Serialize` and `Deserialize` for apps that persist what they fetched, and their persisted shapes are part of the API: `Region` is internally tagged (`#[serde(tag = "kind", rename_all = "snake_case")]`, so a circle is `{"kind": "circle", "lat": …}`); `SortMode` uses its wire names (`rename_all = "lowercase"`); the result types and `PlaceLocation`'s parts keep their Rust field names; and the describe types use `rename_all = "camelCase"`, so that a persisted one reads like the lexicon. The feature enables serde's `rc` feature, for `Place`. The errors, the clients and the transports derive neither. The derived `Deserialize` is strict and never used on a server response.
@@ -451,6 +456,10 @@ The async driver, inside the caller's future and spawning nothing:
 Cancellation is dropping the future (contract §11): every request future inside it is dropped with it, and with the fake transport the 8 in-flight requests were dropped and no new one started, on both runtimes. Whether the socket closes at once is the transport's business (section 4). The search's own cancellation therefore needs no rule in the tile loop, unlike Kotlin's: a dropped future runs no more code, so there is nothing to tell apart from a tile's failure. A search answered entirely from cache completes on its first poll, which the reference does and contract §11 asks for.
 
 `autocomplete_by_keyword` validates the options as `search_by_keyword` does, when it is called, and returns `Error::InvalidArgument` there. The `KeywordAutocomplete` it returns borrows the client and holds the abort handle of the previous call. Dropping a future cancels it, but the autocompleter does not own the caller's future, so it cannot cancel a superseded call by dropping it; instead each `search_by_keyword(&self, keyword)` call aborts the previous call's handle and runs its own work (the request, or the no-request answer for a keyword that cannot qualify) under a fresh one, for instance with `futures_util::future::Abortable`, which needs no runtime. The superseded call resolves to `Error::Superseded`. Callers ignore an autocompleter's `Error::Superseded`: the caller did nothing wrong and nothing was cancelled on its side. The caller's own cancellation still counts: dropping the caller's future drops the work with it (contract §11). A keyword that cannot qualify (contract section 17) resolves with an empty result and `disclosed` of `keyword: false, region: None`, without a request, and still aborts the previous call. Debouncing is the app's. The doc comment on `KeywordAutocomplete::search_by_keyword` states that every qualifying keyword goes to the server as typed, prefixes included, that the server keeps no log of it, that a hostile operator can record what it receives, and that debouncing reduces how many prefixes go out and is the app's choice (contract section 19). It neither recommends nor discourages any of it.
+
+The fallback and the autocompleter treat a `KeywordRequired` refusal as no answer (contract sections 18 and 19, atgeo-sdk-js#56): the qualifying predicate lets a few keywords through that the server refuses (compatibility characters such as `ﬁ`). `search_nearby_then_by_keyword` then returns the nearby result with `disclosed.keyword` `true` and `region` as for a fallback, and the autocompleter's call resolves an empty result with `disclosed.keyword` `true` and `region: Some(1.0)` if the autocompleter has a region and `None` if not. Every other failure of the keyword request rejects as `Error::Atgeo`, `Error::Decoding` or `Error::Transport`, and in the fallback the nearby results are lost with it; the port's documentation says that the keyword may have reached the server even so, and attaches no `disclosed` to the error (atgeo-sdk-js#58).
+
+A request whose cancellation has already happened must never reach the transport (contract section 11, atgeo-sdk-js#59), or an app transport that ignores cancellation would send the fallback's keyword after the caller cancelled between the two halves. In Rust this holds by construction: cancellation is dropping the future, and a dropped future runs no more code, so it never reaches the keyword request.
 
 The CPU work runs on the thread that polls the future. Measured on the Philadelphia tiles in release builds: `serde_json` parses 112 to 127 MB/s, about 12 ms for a 2 MB tile; scoring all 15,849 records takes 39 to 43 ms for `Starbux` and 78 to 97 ms for `Reading Terminal Market`, and locating them 14 to 16 ms (two measurements). `join_all` polls every worker that is ready in the same poll, so when eight large tiles arrive together one poll parses all eight: 141 ms in the worst probe; with real reqwest, gzip and parsing over the 42 tiles, the longest single poll was 56 ms. That is more than Tokio's guidance for time between `.await`s, and it is what reqwest's own `.json()` does too. The library does not move the work to another thread itself, because doing so means `spawn_blocking`, which ties the crate to Tokio. A server that cannot afford the stall calls the blocking client from `tokio::task::spawn_blocking`, which puts the parsing, the ranking and the requests themselves on the blocking pool.
 
