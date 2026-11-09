@@ -2,7 +2,7 @@
 
 A Rust port of `@atgeo/client`: a client for the atgeo gazetteer that searches nearby places without telling the server what you searched for, and says so in the method name when a search might. This document covers the crate, its public API, and the decisions that are specific to Rust. Behaviour (what a search sends, filters, scores and returns) is defined once, for every port, in [port-contract.md](port-contract.md); this document cites it by section and does not restate it.
 
-Status: the port in schuyler/atgeo-sdk-rs implements this document, including `search_by_keyword`, `search_nearby_then_by_keyword` and `autocomplete_by_keyword` (contract sections 16 to 19), against the contract at atgeo-sdk-js `fc56331`. The port's `DECISIONS.md` lists where the build departed from the proposal and why, and its `CONFORMANCE.md` the margins against the reference. The recipes in section 6 were run with Rust 1.97 against the fixtures at `dae7995` and the contract's worked tables, and pass: `normalize.json` 41/41, `jaro-winkler.json` 33/33 (worst distance from the fixture 4.8e-7), the contract's §3 bbox table, the exact expectations in `region.test.ts` and its 93-box grid test, the §6 distance table (bit-identical on x86_64 Linux), and the 12 ranking scenarios through a transcription of §4.6 to §4.9. The transport and concurrency claims in sections 4 and 5 were measured against a loopback server. An independent review then re-ran the recipes, the measurements and an API sketch (which also built and passed on 1.85.0); its findings are folded in, among them a panic in `f64::clamp` on a reversed box, tests that could not reach `pub(crate)` code, and a feature layout that compiled ureq into every blocking build. Treat every version number below as a starting point.
+Status: the port in schuyler/atgeo-sdk-rs implements this document, including `search_by_keyword`, `search_nearby_then_by_keyword` and `autocomplete_by_keyword` (contract sections 16 to 19), against the contract at atgeo-sdk-js `fc56331`; the keyword methods arrived in commit 8f00ebe, committed directly to main. The port's `DECISIONS.md` lists where the build departed from the proposal and why, and its `CONFORMANCE.md` the margins against the reference. The recipes in section 6 were run with Rust 1.97 against the fixtures at `dae7995` and the contract's worked tables, and pass: `normalize.json` 41/41, `jaro-winkler.json` 33/33 (worst distance from the fixture 4.8e-7), the contract's §3 bbox table, the exact expectations in `region.test.ts` and its 93-box grid test, the §6 distance table (bit-identical on x86_64 Linux), and the 12 ranking scenarios through a transcription of §4.6 to §4.9. The transport and concurrency claims in sections 4 and 5 were measured against a loopback server. An independent review then re-ran the recipes, the measurements and an API sketch (which also built and passed on 1.85.0); its findings are folded in, among them a panic in `f64::clamp` on a reversed box, tests that could not reach `pub(crate)` code, and a feature layout that compiled ureq into every blocking build. Treat every version number below as a starting point.
 
 ## 1. Goals
 
@@ -27,12 +27,13 @@ src/
   region.rs           Region, validation, centre, circle box, snapping, bbox strings (§3)
   locations.rs        locate, distance_to, in_region, record_key, dedupe (§4.6, §5, §6)
   text.rs             normalize, jaro_winkler, text_score (§7)
+  attribution.rs      collection prefixes, hit collections, attribution merge (§4.7, §4.10, §8)
   rank.rs             hit construction and comparators (§8)
   cache.rs            TileCache (LRU of tile bodies), ParsedTiles, TtlCache (§10)
   wire.rs             body decoding and the lenient readers from serde_json::Value (§1)
   xrpc.rs             XRPC URL building and the status check that yields Error::Atgeo (§1)
   transport.rs        HttpResponse, HttpTransport, BoxError; ReqwestTransport (feature "reqwest")
-  types.rs            SortMode, NearbyOptions, KeywordOptions, FallbackOptions, NearbySearchResult, NearbyHit, KeywordSearchResult, KeywordHit, FallbackSearchResult, FallbackHit, Disclosure, PlaceRecord, PlaceLocation, the describe types
+  types.rs            SortMode, NearbyOptions, KeywordOptions, FallbackOptions, NearbySearchResult, NearbyHit, KeywordSearchResult, KeywordHit, FallbackSearchResult, FallbackHit, TileFailure, TileFailureKind, Disclosure, CollectionKey, Attribution, PlaceRecord, PlaceLocation, the describe types (including TilesetOverview)
   autocomplete.rs     KeywordAutocomplete (section 5)
   error.rs            Error, AtgeoError, DecodingError, ArgumentError
                       (every module carries #[cfg(test)] unit tests for its internals; section 7)

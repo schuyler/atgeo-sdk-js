@@ -112,6 +112,14 @@ describe("autocompleteByKeyword cancellation", () => {
     expect(server.requests).toHaveLength(0);
   });
 
+  it("resolves empty, without a request, for a keyword that cannot qualify even when the caller's signal is already aborted", async () => {
+    const { server, client } = setup();
+    const controller = new AbortController();
+    controller.abort(new Error("caller gave up"));
+    await expect(client.autocompleteByKeyword(OVERTURE).searchByKeyword("a", { signal: controller.signal })).resolves.toEqual(nothing);
+    expect(server.requests).toHaveLength(0);
+  });
+
   it("rejects with the caller's own reason when the caller aborts mid-flight", async () => {
     const { fetch, started } = hanging();
     const reason = new Error("caller gave up");
