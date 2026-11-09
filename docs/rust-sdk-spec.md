@@ -2,7 +2,7 @@
 
 A Rust port of `@atgeo/client`: a client for the atgeo gazetteer that searches nearby places without telling the server what you searched for, and says so in the method name when a search might. This document covers the crate, its public API, and the decisions that are specific to Rust. Behaviour (what a search sends, filters, scores and returns) is defined once, for every port, in [port-contract.md](port-contract.md); this document cites it by section and does not restate it.
 
-Status: the port in schuyler/atgeo-sdk-rs implements this document up to the nearby search (named `search_places` in the port); `search_by_keyword`, `search_nearby_then_by_keyword` and `autocomplete_by_keyword` are specified here (contract sections 16 to 19) and not yet built. The port's `DECISIONS.md` lists where the build departed from the proposal and why, and its `CONFORMANCE.md` the margins against the reference. The recipes in section 6 were run with Rust 1.97 against the fixtures at `dae7995` and the contract's worked tables, and pass: `normalize.json` 41/41, `jaro-winkler.json` 33/33 (worst distance from the fixture 4.8e-7), the contract's §3 bbox table, the exact expectations in `region.test.ts` and its 93-box grid test, the §6 distance table (bit-identical on x86_64 Linux), and the 12 ranking scenarios through a transcription of §4.6 to §4.9. The transport and concurrency claims in sections 4 and 5 were measured against a loopback server. An independent review then re-ran the recipes, the measurements and an API sketch (which also built and passed on 1.85.0); its findings are folded in, among them a panic in `f64::clamp` on a reversed box, tests that could not reach `pub(crate)` code, and a feature layout that compiled ureq into every blocking build. Treat every version number below as a starting point.
+Status: the port in schuyler/atgeo-sdk-rs implements this document, including `search_by_keyword`, `search_nearby_then_by_keyword` and `autocomplete_by_keyword` (contract sections 16 to 19), against the contract at atgeo-sdk-js `fc56331`. The port's `DECISIONS.md` lists where the build departed from the proposal and why, and its `CONFORMANCE.md` the margins against the reference. The recipes in section 6 were run with Rust 1.97 against the fixtures at `dae7995` and the contract's worked tables, and pass: `normalize.json` 41/41, `jaro-winkler.json` 33/33 (worst distance from the fixture 4.8e-7), the contract's §3 bbox table, the exact expectations in `region.test.ts` and its 93-box grid test, the §6 distance table (bit-identical on x86_64 Linux), and the 12 ranking scenarios through a transcription of §4.6 to §4.9. The transport and concurrency claims in sections 4 and 5 were measured against a loopback server. An independent review then re-ran the recipes, the measurements and an API sketch (which also built and passed on 1.85.0); its findings are folded in, among them a panic in `f64::clamp` on a reversed box, tests that could not reach `pub(crate)` code, and a feature layout that compiled ureq into every blocking build. Treat every version number below as a starting point.
 
 ## 1. Goals
 
@@ -163,13 +163,14 @@ impl KeywordOptions {
 
 /// Returned by `autocomplete_by_keyword`; see section 5. Every keyword that qualifies is sent to the server as given, prefixes included.
 pub struct KeywordAutocomplete<'a, T> { /* the client, the options, the previous call's abort handle */ }
-impl<T: HttpTransport> KeywordAutocomplete<'_, T> {
-    pub async fn search_by_keyword(&self, keyword: &str) -> Result<KeywordSearchResult, Error>;
+impl<'a, T: HttpTransport> KeywordAutocomplete<'a, T> {
+    /// Supersedes the previous call when called, not when the future is first polled; the future does not borrow `&self`.
+    pub fn search_by_keyword(&self, keyword: &str) -> impl Future<Output = Result<KeywordSearchResult, Error>> + Send + use<'a, T>;
 }
 
 /// Whether the combined search's keyword request carries the nearby region, snapped to whole degrees.
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum KeywordRegionMode { None, Degree }
 
 #[derive(Clone, Debug)]
@@ -189,7 +190,7 @@ pub type Place = Arc<serde_json::Map<String, serde_json::Value>>;
 
 /// What the server learned during one call.
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Disclosure {
     pub keyword: bool,             // the keyword was sent
     pub region: Option<f64>,       // grid in degrees of the finest region sent: 0.01 or 1; None if none
@@ -221,30 +222,46 @@ pub enum FallbackHit { Nearby(NearbyHit), Keyword(KeywordHit) }   // via(): "til
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TileCounts { pub fetched: usize, pub failed: usize }
 
+/// A tile that failed (contract §4.4). `PartialEq`, `Eq` and `Hash` are written by hand over `url`, `kind` and `status`, leaving out `error`.
+#[non_exhaustive]
+#[derive(Clone, Debug)]
+pub struct TileFailure { pub url: String, pub kind: TileFailureKind, pub status: Option<u16>, pub error: Option<Arc<Error>> }  // status: the HTTP status for Status, else None
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TileFailureKind { Refused, Status, Decode, Transport }
+
+/// The dataset and collection a hit belongs to (contract §8).
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CollectionKey { pub dataset: String, pub collection: String }
+
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub struct NearbyHit {
     pub origin: Option<String>,
+    pub collection: Option<CollectionKey>,   // None when no tile attribution matches
     pub place: Place,              // the record value as served
     pub importance: Option<i64>,
     pub distance: f64,             // metres
     pub score: Option<f64>,        // 0..=1, None without text
 }
 impl NearbyHit {
+    pub const fn via(&self) -> &'static str;   // "tiles"
     pub fn name(&self) -> Option<&str>;        // place["name"] when that is a string
     pub fn location(&self) -> PlaceLocation;   // locate(place), contract §5
 }
 
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
-pub struct PlaceRecord { pub origin: String, pub place: Place, pub importance: Option<i64> }
+pub struct PlaceRecord { pub origin: String, pub place: Place, pub importance: Option<i64>, pub attribution: Vec<Attribution> }  // attribution as served, in served order; empty when none
 // name() and location(), as on NearbyHit
 
 /// No distance or score: the server ranks by neither, and the app can compute distance from `location()`.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
-pub struct KeywordHit { pub origin: Option<String>, pub place: Place, pub importance: Option<i64> }
-// name() and location(), as on NearbyHit
+pub struct KeywordHit { pub origin: Option<String>, pub collection: Option<CollectionKey>, pub place: Place, pub importance: Option<i64> }  // collection: None when no attribution the server sent matches
+// via() ("keyword"), name() and location(), as on NearbyHit
 
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -455,7 +472,7 @@ The async driver, inside the caller's future and spawning nothing:
 
 Cancellation is dropping the future (contract §11): every request future inside it is dropped with it, and with the fake transport the 8 in-flight requests were dropped and no new one started, on both runtimes. Whether the socket closes at once is the transport's business (section 4). The search's own cancellation therefore needs no rule in the tile loop, unlike Kotlin's: a dropped future runs no more code, so there is nothing to tell apart from a tile's failure. A search answered entirely from cache completes on its first poll, which the reference does and contract §11 asks for.
 
-`autocomplete_by_keyword` validates the options as `search_by_keyword` does, when it is called, and returns `Error::InvalidArgument` there. The `KeywordAutocomplete` it returns borrows the client and holds the abort handle of the previous call. Dropping a future cancels it, but the autocompleter does not own the caller's future, so it cannot cancel a superseded call by dropping it; instead each `search_by_keyword(&self, keyword)` call aborts the previous call's handle and runs its own work (the request, or the no-request answer for a keyword that cannot qualify) under a fresh one, for instance with `futures_util::future::Abortable`, which needs no runtime. The superseded call resolves to `Error::Superseded`. Callers ignore an autocompleter's `Error::Superseded`: the caller did nothing wrong and nothing was cancelled on its side. The caller's own cancellation still counts: dropping the caller's future drops the work with it (contract §11). A keyword that cannot qualify (contract section 17) resolves with an empty result and `disclosed` of `keyword: false, region: None`, without a request, and still aborts the previous call. Debouncing is the app's. The doc comment on `KeywordAutocomplete::search_by_keyword` states that every qualifying keyword goes to the server as typed, prefixes included, that the server keeps no log of it, that a hostile operator can record what it receives, and that debouncing reduces how many prefixes go out and is the app's choice (contract section 19). It neither recommends nor discourages any of it.
+`autocomplete_by_keyword` validates the options as `search_by_keyword` does, when it is called, and returns `Error::InvalidArgument` there. The `KeywordAutocomplete` it returns borrows the client and holds the abort handle of the previous call. Dropping a future cancels it, but the autocompleter does not own the caller's future, so it cannot cancel a superseded call by dropping it; instead each `search_by_keyword(&self, keyword)` call aborts the previous call's handle and runs its own request under a fresh one, for instance with `futures_util::future::Abortable`, which needs no runtime. The superseded call resolves to `Error::Superseded`. Callers ignore an autocompleter's `Error::Superseded`: the caller did nothing wrong and nothing was cancelled on its side. The caller's own cancellation still counts: dropping the caller's future drops the work with it (contract §11). A keyword that cannot qualify (contract section 17) resolves with an empty result and `disclosed` of `keyword: false, region: None`, without a request, and still aborts the previous call. It has no request to abort, so it takes no abort handle: the autocompleter's stored handle is cleared (set to `None`), and that call is never itself superseded. Debouncing is the app's. The doc comment on `KeywordAutocomplete::search_by_keyword` states that every qualifying keyword goes to the server as typed, prefixes included, that the server keeps no log of it, that a hostile operator can record what it receives, and that debouncing reduces how many prefixes go out and is the app's choice (contract section 19). It neither recommends nor discourages any of it.
 
 The fallback and the autocompleter treat a `KeywordRequired` refusal as no answer (contract sections 18 and 19, atgeo-sdk-js#56): the qualifying predicate lets a few keywords through that the server refuses (compatibility characters such as `ﬁ`). `search_nearby_then_by_keyword` then returns the nearby result with `disclosed.keyword` `true` and `region` as for a fallback, and the autocompleter's call resolves an empty result with `disclosed.keyword` `true` and `region: Some(1.0)` if the autocompleter has a region and `None` if not. Every other failure of the keyword request rejects as `Error::Atgeo`, `Error::Decoding` or `Error::Transport`, and in the fallback the nearby results are lost with it; the port's documentation says that the keyword may have reached the server even so, and attaches no `disclosed` to the error (atgeo-sdk-js#58).
 

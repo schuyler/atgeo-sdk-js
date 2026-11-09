@@ -2,7 +2,7 @@
 
 A Swift port of `@atgeo/client`: a client for the atgeo gazetteer that searches nearby places without telling the server what you searched for, and says so in the method name when a search might. This document covers the Swift package, its public API, and the decisions that are specific to Swift. Behaviour (what a search sends, filters, scores and returns) is defined once, for every port, in [port-contract.md](port-contract.md); this document cites it by section and does not restate it.
 
-Status: the port in schuyler/atgeo-sdk-swift (PRs #5, #14 and others) implements this document up to the nearby search (named `searchPlaces` in the port); `searchByKeyword`, `searchNearbyThenByKeyword` and `autocompleteByKeyword` are specified here (contract sections 16 to 19) and not yet built. The normalization, similarity, snapping and distance recipes in section 6 have been run from Swift 6.4.1 on Linux against the fixtures and the contract's worked tables, and pass. Swift's standard library does differ in one place, final sigma, and section 6 says how to handle it. Treat every version number below as a starting point.
+Status: the port in schuyler/atgeo-sdk-swift (PRs #5, #14 and others) implements this document, including `searchByKeyword`, `searchNearbyThenByKeyword` and `autocompleteByKeyword` (contract sections 16 to 19), against the contract at atgeo-sdk-js `fc56331`. The normalization, similarity, snapping and distance recipes in section 6 have been run from Swift 6.4.1 on Linux against the fixtures and the contract's worked tables, and pass. Swift's standard library does differ in one place, final sigma, and section 6 says how to handle it. Treat every version number below as a starting point.
 
 ## 1. Goals
 
@@ -139,34 +139,74 @@ public struct NearbySearchResult: Sendable, Equatable {
     public var complete: Bool
     public var overview: Bool
     public var tiles: TileCounts
+    public var tileFailures: [TileFailure]      // each failed tile, in tile URL order; `tiles.failed` is its count
+    public var attribution: [Attribution]       // the credit for every collection the search's tiles hold
     public var disclosed: Disclosure
     public struct TileCounts: Sendable, Equatable { public var fetched: Int; public var failed: Int }
 }
 
+/// A tile that failed (contract §4.4).
+public struct TileFailure: Sendable, Equatable, Codable {
+    public enum Kind: String, Sendable, Codable { case refused, status, decode, transport }
+    public var url: String
+    public var kind: Kind
+    public var status: Int?          // the HTTP status for .status, else nil
+    public var error: (any Error)?   // this port's own; left out of == and of coding
+}
+
+/// The dataset and collection a hit belongs to (contract §8).
+public struct CollectionKey: Sendable, Hashable, Codable { public var dataset: String; public var collection: String }
+
+/// A credit for one collection, read leniently (contract §1). Both names are always present.
+public struct Attribution: Sendable, Hashable, Codable {
+    public var dataset: String, collection: String
+    public var release: String?, source: String?, licenses: [String]?, attribution: String?
+}
+
 public struct NearbyHit: Sendable, Equatable {
-    public var via: Via              // .tiles
+    public var via: Via { get }      // .tiles, computed
     public var origin: String?
     public var place: JSONObject
     public var importance: Int64?
     public var distance: Double      // metres
     public var score: Double?        // 0...1, nil without text
+    public var collection: CollectionKey?   // nil when no tile attribution matches
+    public var name: String? { get }        // computed: place["name"]?.stringValue
+    public var location: PlaceLocation { get }  // computed: locate(place), section 6
 }
 
 /// No distance or score: the server ranks by neither, and the app can compute distance from the place's location.
 public struct KeywordHit: Sendable, Equatable {
-    public var via: Via              // .keyword
+    public var via: Via { get }      // .keyword, computed
     public var origin: String?
     public var place: JSONObject
     public var importance: Int64?
+    public var collection: CollectionKey?   // nil when no attribution the server sent matches
+    public var name: String? { get }        // computed: place["name"]?.stringValue
+    public var location: PlaceLocation { get }  // computed: locate(place), section 6
 }
 
 public struct KeywordSearchResult: Sendable, Equatable {
     public var places: [KeywordHit]
-    public var attribution: [CollectionAttribution]
+    public var attribution: [Attribution]
     public var disclosed: Disclosure
 }
 
-public enum PlaceHit: Sendable, Equatable { case nearby(NearbyHit), keyword(KeywordHit) }
+public enum PlaceHit: Sendable, Equatable {
+    case nearby(NearbyHit), keyword(KeywordHit)
+    // Computed from the case: via, origin, place, importance, collection, name, location, as on the two hits.
+    public var name: String? { get }
+    public var location: PlaceLocation { get }
+}
+
+/// Where a place is (contract §8): the first usable point and the first usable box of `place`. Either or both may be nil.
+public struct PlaceLocation: Sendable, Equatable, Codable {
+    public var point: Point?
+    public var bbox: Box?
+    public struct Point: Sendable, Equatable, Codable { public var lat: Double, lon: Double }
+    /// In degrees, as the lexicon names its sides, kept as read: `west > east` crosses the antimeridian.
+    public struct Box: Sendable, Equatable, Codable { public var south: Double, west: Double, north: Double, east: Double }
+}
 
 /// The nearby result's fields, with `places` holding both kinds of hit.
 public struct FallbackSearchResult: Sendable, Equatable {
@@ -174,6 +214,8 @@ public struct FallbackSearchResult: Sendable, Equatable {
     public var complete: Bool
     public var overview: Bool
     public var tiles: NearbySearchResult.TileCounts
+    public var tileFailures: [TileFailure]
+    public var attribution: [Attribution]       // the union of the nearby and keyword attribution
     public var disclosed: Disclosure
 }
 
@@ -187,12 +229,16 @@ public struct PlaceRecord: Sendable, Equatable {
     public var origin: String
     public var place: JSONObject
     public var importance: Int64?
+    public var attribution: [Attribution]       // as served, in served order; empty when none
+    public var name: String? { get }        // computed: place["name"]?.stringValue
+    public var location: PlaceLocation { get }  // computed: locate(place), section 6
 }
 
 public struct CollectionRef: Sendable, Equatable, Codable { public var dataset: String?; public var collection: String? }
 
 public struct ServiceDescription: Sendable, Equatable, Codable {
     public var did: String?
+    public var maxTiles: Int64?                 // the server's tile budget; informational
     public var tilesets: [ServedTileset]        // empty when missing
     public struct ServedTileset: Sendable, Equatable, Codable { public var slug: String?; public var collections: [CollectionRef] }
 }
@@ -215,6 +261,8 @@ public struct Tileset: Sendable, Equatable, Codable {
     public var extent: Extent?
     public var collections: [CollectionInfo]    // empty when missing
     public var references: [CollectionAttribution]?
+    public var overview: Overview?
+    public struct Overview: Sendable, Equatable, Codable { public var records: Int64? }
     public struct Extent: Sendable, Equatable, Codable { public var north: String?, south: String?, east: String?, west: String? }
 }
 ```
@@ -251,7 +299,7 @@ extension JSONValue {
 
 Numbers decode as `Double`, which loses integers beyond 2^53 exactly as the JavaScript client does. Key order is not preserved, which the contract does not require. The `Codable` conformance tries `String` first when decoding a single value, then `Bool` before `Double`, so that `true` is not read as 1. String goes first because each failed `try?` throws and discards an error, and most values are strings; `JSONDecoder` reads neither a number nor a boolean as a `String`, which the port's tests check on every CI platform (Swift PR #5). It must encode `.null` as JSON null, not as a missing key.
 
-`NearbyHit.place["name"]?.stringValue` is how an app reads a name. A typed `Place` struct is a reasonable later addition on top of `JSONObject`, not a replacement for it.
+`hit.name` is how an app reads a name, and `hit.location` where it is. A typed `Place` struct is a reasonable later addition on top of `JSONObject`, not a replacement for it.
 
 Tile records are read from `JSONValue`, not through `Codable`: a record that is not an object, or whose `value` is not an object, is skipped and the tile stays used (contract §4.4); a `uri` that is not a string and an `importance` that is not a number read as `nil`, and a non-integer importance truncates toward zero and an out-of-range one reads as `nil`: test `d.isFinite && d.magnitude < 9223372036854775808` before converting, since `Int64(d)` traps on an out-of-range value and `Int64(exactly:)` rejects a fraction (§1). A `getTiles` body with no `tiles` array has no usable tile list and throws `DecodingError` (§1); entries of `tiles` that are not strings are skipped.
 

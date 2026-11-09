@@ -2,7 +2,7 @@
 
 A Kotlin port of `@atgeo/client`: a client for the atgeo gazetteer that searches nearby places without telling the server what you searched for, and says so in the method name when a search might. This document covers the library, its public API, and the decisions that are specific to Kotlin and the JVM. Behaviour (what a search sends, filters, scores and returns) is defined once, for every port, in [port-contract.md](port-contract.md); this document cites it by section and does not restate it.
 
-Status: the port in [schuyler/atgeo-sdk-kotlin](https://github.com/schuyler/atgeo-sdk-kotlin) (PR #1) implements this document up to the nearby search (named `searchPlaces` in the port); `searchByKeyword`, `searchNearbyThenByKeyword` and `autocompleteByKeyword` are specified here (contract sections 16 to 19) and not yet built. Building it found three places where this text was wrong about the JDK or about coroutines, corrected below: the cancellation handler (section 4), the extra headers `useCaches = false` brings (section 4), and what the `withTimeout` trap actually does in the worker design (section 5). A review after it merged changed four more, in the port's `review-fixes` branch and below: the default transport asks for gzip (section 4), a transport's own timeout outside the tile loop becomes `SocketTimeoutException` (section 3, Errors), the tile loop catches `Exception` rather than `Throwable` (section 5), and `TtlCache` prunes expired entries (section 6). Later, contract §12 item 5 made the default transport send a fixed `User-Agent` (section 4; atgeo-sdk-kotlin#10). The port's `CONFORMANCE.md` lists where it reads malformed input differently from the reference. Treat every version number below as a starting point.
+Status: the port in [schuyler/atgeo-sdk-kotlin](https://github.com/schuyler/atgeo-sdk-kotlin) (PR #1) implements this document; the keyword methods `searchByKeyword`, `searchNearbyThenByKeyword` and `autocompleteByKeyword` (contract sections 16 to 19), against the contract at atgeo-sdk-js `fc56331`, arrived later, in the commit "Keyword search and the fc56331 port contract". Building it found three places where this text was wrong about the JDK or about coroutines, corrected below: the cancellation handler (section 4), the extra headers `useCaches = false` brings (section 4), and what the `withTimeout` trap actually does in the worker design (section 5). A review after it merged changed four more, in the port's `review-fixes` branch and below: the default transport asks for gzip (section 4), a transport's own timeout outside the tile loop becomes `SocketTimeoutException` (section 3, Errors), the tile loop catches `Exception` rather than `Throwable` (section 5), and `TtlCache` prunes expired entries (section 6). Later, contract §12 item 5 made the default transport send a fixed `User-Agent` (section 4; atgeo-sdk-kotlin#10). The port's `CONFORMANCE.md` lists where it reads malformed input differently from the reference. Treat every version number below as a starting point.
 
 ## 1. Goals
 
@@ -135,37 +135,61 @@ class NearbySearchResult internal constructor(
     val complete: Boolean,
     val overview: Boolean,
     val tiles: TileCounts,
+    val tileFailures: List<TileFailure>,   // each failed tile, in tile URL order; `tiles.failed` is its count
+    val attribution: List<Attribution>,    // the credit for every collection the search's tiles hold
     val disclosed: Disclosure,
 ) { class TileCounts internal constructor(val fetched: Int, val failed: Int) }
 
-sealed interface PlaceHit { val via: Via; val origin: String?; val place: JsonObject; val importance: Long? }
+/** A tile that failed (contract §4.4). `equals` compares `url`, `kind` and `status`, not `error`. */
+class TileFailure internal constructor(val url: String, val kind: Kind, val status: Int?, val error: Throwable) {
+    enum class Kind { REFUSED, STATUS, DECODE, TRANSPORT }   // status: the HTTP status for STATUS, else null
+}
+
+/** The dataset and collection a hit belongs to (contract §8). */
+class CollectionKey internal constructor(val dataset: String, val collection: String)
+
+/** A credit for one collection, read leniently (contract §1). `dataset` and `collection` are always present; `licenses` is an unmodifiable copy. */
+class Attribution internal constructor(
+    val dataset: String, val collection: String,
+    val release: String? = null, val source: String? = null,
+    licenses: List<String>? = null, val attribution: String? = null,
+) { val licenses: List<String>? }
+
+sealed interface PlaceHit {
+    val via: Via; val origin: String?
+    val collection: CollectionKey?   // null when no attribution matches the hit
+    val place: JsonObject; val importance: Long?
+    val name: String?; val location: PlaceLocation
+}
 
 class NearbyHit internal constructor(
     override val origin: String?,
+    override val collection: CollectionKey?,
     override val place: JsonObject,
     override val importance: Long?,
     val distance: Double,      // metres
     val score: Double?,        // 0..1, null without text
 ) : PlaceHit {
     override val via: Via get() = Via.TILES
-    val name: String?          // computed: place["name"].stringOrNull()
-    val location: PlaceLocation  // computed: locate(place), section 6
+    override val name: String?          // computed: place["name"].stringOrNull()
+    override val location: PlaceLocation  // computed: locate(place), section 6
 }
 
 /** No distance or score: the server ranks by neither, and the app can compute distance from `location`. */
 class KeywordHit internal constructor(
     override val origin: String?,
+    override val collection: CollectionKey?,
     override val place: JsonObject,
     override val importance: Long?,
 ) : PlaceHit {
     override val via: Via get() = Via.KEYWORD
-    val name: String?
-    val location: PlaceLocation
+    override val name: String?
+    override val location: PlaceLocation
 }
 
 class KeywordSearchResult internal constructor(
     val places: List<KeywordHit>,
-    val attribution: List<CollectionAttribution>,
+    val attribution: List<Attribution>,
     val disclosed: Disclosure,
 )
 
@@ -175,6 +199,8 @@ class FallbackSearchResult internal constructor(
     val complete: Boolean,
     val overview: Boolean,
     val tiles: NearbySearchResult.TileCounts,
+    val tileFailures: List<TileFailure>,
+    val attribution: List<Attribution>,    // the union of the nearby and keyword attribution
     val disclosed: Disclosure,
 )
 
@@ -184,7 +210,7 @@ class KeywordAutocomplete internal constructor(/* … */) {
     suspend fun searchByKeyword(keyword: String): KeywordSearchResult
 }
 
-class PlaceRecord internal constructor(val origin: String, val place: JsonObject, val importance: Long?) {
+class PlaceRecord internal constructor(val origin: String, val place: JsonObject, val importance: Long?, val attribution: List<Attribution>) {   // attribution as served, in served order; empty when none
     val name: String?
     val location: PlaceLocation
 }
@@ -198,7 +224,7 @@ fun JsonElement?.stringOrNull(): String?   // the string a JSON string holds; nu
 
 @Serializable data class CollectionRef(val dataset: String? = null, val collection: String? = null)
 
-@Serializable data class ServiceDescription(val did: String? = null, val tilesets: List<ServedTileset> = emptyList()) {
+@Serializable data class ServiceDescription(val did: String? = null, val maxTiles: Long? = null, val tilesets: List<ServedTileset> = emptyList()) {
     @Serializable data class ServedTileset(val slug: String? = null, val collections: List<CollectionRef> = emptyList())
 }
 
@@ -223,7 +249,11 @@ fun JsonElement?.stringOrNull(): String?   // the string a JSON string holds; nu
     val extent: Extent? = null,
     val collections: List<CollectionInfo> = emptyList(),
     val references: List<CollectionAttribution>? = null,
-) { @Serializable data class Extent(val north: String? = null, val south: String? = null, val east: String? = null, val west: String? = null) }
+    val overview: Overview? = null,
+) {
+    @Serializable data class Overview(val records: Long? = null)
+    @Serializable data class Extent(val north: String? = null, val south: String? = null, val east: String? = null, val west: String? = null)
+}
 ```
 
 The result and describe types are plain classes, not data classes, and their constructors are `internal`: a public data class cannot gain a field without breaking apps compiled against the version before, since its constructor, `copy()` and `componentN()` all change shape, and the results will grow (`location` was the first) while the describe types mirror lexicons that gain fields. `equals`, `hashCode` and `toString` are written to behave as a data class's would; apps get no `copy()` or destructuring and cannot construct them. The describe types below keep `@Serializable` (and are shown with their fields only; read `data class` there as `class … internal constructor`). `Region`'s classes stay data classes: apps construct them and their fields are fixed.

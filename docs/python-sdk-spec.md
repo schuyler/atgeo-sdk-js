@@ -2,7 +2,7 @@
 
 A Python port of `@atgeo/client`: a client for the atgeo gazetteer that searches nearby places without telling the server what you searched for, and says so in the method name when a search might. This document covers the package, its public API, and the decisions that are specific to Python. Behaviour (what a search sends, filters, scores and returns) is defined once, for every port, in [port-contract.md](port-contract.md); this document cites it by section and does not restate it.
 
-Status: the port in [schuyler/atgeo-sdk-python](https://github.com/schuyler/atgeo-sdk-python) (PR #1) implements this document up to the nearby search (named `search_places` in the port); `search_by_keyword`, `search_nearby_then_by_keyword` and `autocomplete_by_keyword` are specified here (contract sections 16 to 19) and not yet built. Building it, and three independent reviews of the result, found the places this text was wrong or silent, corrected below: `total_timeout` did not bound redirects or headers (section 4, `Urllib3Transport`); responses outside a search were parsed on the app's thread, which crashes on a small stack (section 5); the requests adapter's recipe still read redirect bodies and leaked the session's credentials (section 4); aiohttp's proxy credentials reached exception messages (section 4); credentials in URLs (section 4, URLs); out-of-range coordinates raised from `math.sqrt` (section 6); the circle box needs the reference's own float expressions (section 6); a Jaro-Winkler value (section 6); and the dependency floors (section 2). On the same server answers for six searches around Philadelphia, replayed to both, the port and the reference returned the same 25,830 hits in the same order. The port's `CONFORMANCE.md` lists where it reads malformed input differently from the reference. The proposal's recipes in section 6 were run against the fixtures at `dae7995` and the contract's worked tables on CPython 3.11, 3.12, 3.13, 3.14 and 3.15.0b4 and on PyPy 3.11, and pass: `normalize.json` 41/41 on every one of them, `jaro-winkler.json` 33/33 (worst distance from the fixture 4.8e-7), the contract's §3 bbox table, the exact expectations in `region.test.ts` and its 93-box grid test, the §6 distance table (bit-identical on x86_64 Linux), and the 12 ranking scenarios through a transcription of §4.6 to §4.9. The transport and concurrency claims in sections 4 and 5 were measured against a loopback server, with urllib3 2.8.0 and aiohttp 3.14.5 on CPython 3.11 to 3.14. An independent review then re-ran the recipes and the measurements; its findings are folded in, among them a Jaro-Winkler shortcut that scored 0 whenever only one string held a character above U+FFFF, redirect bodies that slipped past the body cap, and a crash on deeply nested JSON in small thread stacks. Treat every version number below as a starting point.
+Status: the port in [schuyler/atgeo-sdk-python](https://github.com/schuyler/atgeo-sdk-python) (PR #1) implements this document; the keyword methods `search_by_keyword`, `search_nearby_then_by_keyword` and `autocomplete_by_keyword` (contract sections 16 to 19), against the contract at atgeo-sdk-js `fc56331`, arrived later, in the commit "Keyword search and the fc56331 port contract". Building it, and three independent reviews of the result, found the places this text was wrong or silent, corrected below: `total_timeout` did not bound redirects or headers (section 4, `Urllib3Transport`); responses outside a search were parsed on the app's thread, which crashes on a small stack (section 5); the requests adapter's recipe still read redirect bodies and leaked the session's credentials (section 4); aiohttp's proxy credentials reached exception messages (section 4); credentials in URLs (section 4, URLs); out-of-range coordinates raised from `math.sqrt` (section 6); the circle box needs the reference's own float expressions (section 6); a Jaro-Winkler value (section 6); and the dependency floors (section 2). On the same server answers for six searches around Philadelphia, replayed to both, the port and the reference returned the same 25,830 hits in the same order. The port's `CONFORMANCE.md` lists where it reads malformed input differently from the reference. The proposal's recipes in section 6 were run against the fixtures at `dae7995` and the contract's worked tables on CPython 3.11, 3.12, 3.13, 3.14 and 3.15.0b4 and on PyPy 3.11, and pass: `normalize.json` 41/41 on every one of them, `jaro-winkler.json` 33/33 (worst distance from the fixture 4.8e-7), the contract's §3 bbox table, the exact expectations in `region.test.ts` and its 93-box grid test, the §6 distance table (bit-identical on x86_64 Linux), and the 12 ranking scenarios through a transcription of §4.6 to §4.9. The transport and concurrency claims in sections 4 and 5 were measured against a loopback server, with urllib3 2.8.0 and aiohttp 3.14.5 on CPython 3.11 to 3.14. An independent review then re-ran the recipes and the measurements; its findings are folded in, among them a Jaro-Winkler shortcut that scored 0 whenever only one string held a character above U+FFFF, redirect bodies that slipped past the body cap, and a crash on deeply nested JSON in small thread stacks. Treat every version number below as a starting point.
 
 ## 1. Goals
 
@@ -184,15 +184,42 @@ class NearbySearchResult:
     overview: bool
     tiles: TileCounts             # TileCounts(fetched: int, failed: int)
     disclosed: Disclosure
+    tile_failures: tuple[TileFailure, ...] = ()   # each failed tile, in tile URL order; `tiles.failed` is its length
+    attribution: tuple[Attribution, ...] = ()     # the credit for every collection the search's tiles hold
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TileFailure:
+    """A tile that failed (contract §4.4). `error` is left out of `==` and `hash`."""
+    url: str
+    kind: TileFailureKind         # StrEnum: REFUSED, STATUS, DECODE, TRANSPORT ("refused", "status", "decode", "transport")
+    status: int | None            # the HTTP status for STATUS, else None
+    error: Exception
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CollectionKey:
+    """The dataset and collection a hit belongs to (contract §8)."""
+    dataset: str
+    collection: str
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Attribution:
+    """A credit for one collection, read leniently (contract §1). `dataset` and `collection` are always strings."""
+    dataset: str
+    collection: str
+    release: str | None = None
+    source: str | None = None
+    licenses: tuple[str, ...] | None = None
+    attribution: str | None = None
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NearbyHit:
     via: Literal["tiles"]
     origin: str | None
-    place: Mapping[str, Any]      # the record value as served, a dict at run time; read-only (Place values, below)
+    place: Mapping[str, Any]      # the record value as served, a read-only view over a dict, not a dict (Place values, below)
     importance: int | None
     distance: float               # metres
     score: float | None           # 0..1, None without text
+    collection: CollectionKey | None = None   # None when no tile attribution matches
 
     @property
     def name(self) -> str | None: ...         # place["name"] when that is a str
@@ -206,12 +233,13 @@ class KeywordHit:
     origin: str | None
     place: Mapping[str, Any]
     importance: int | None
+    collection: CollectionKey | None = None   # None when no attribution the server sent matches
     # name and location, as on NearbyHit
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class KeywordSearchResult:
     places: list[KeywordHit]
-    attribution: tuple[CollectionAttribution, ...]
+    attribution: tuple[Attribution, ...]
     disclosed: Disclosure
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -222,6 +250,8 @@ class FallbackSearchResult:
     overview: bool
     tiles: TileCounts
     disclosed: Disclosure
+    tile_failures: tuple[TileFailure, ...] = ()
+    attribution: tuple[Attribution, ...] = ()     # the union of the nearby and keyword attribution
 
 class KeywordAutocomplete:
     """Returned by `AsyncAtgeoClient.autocomplete_by_keyword`; see section 5."""
@@ -233,6 +263,7 @@ class PlaceRecord:
     origin: str
     place: Mapping[str, Any]
     importance: int | None
+    attribution: tuple[Attribution, ...] = ()     # as served, in served order; empty when none
     # name and location, as on NearbyHit
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -245,16 +276,17 @@ class PlaceLocation:
 
 | Class | Fields |
 |---|---|
-| `ServiceDescription` | `did: str \| None`, `tilesets: tuple[ServedTileset, ...]` |
+| `ServiceDescription` | `did: str \| None`, `max_tiles: int \| None`, `tilesets: tuple[ServedTileset, ...]` |
 | `ServedTileset` | `slug: str \| None`, `collections: tuple[CollectionRef, ...]` |
 | `CollectionRef` | `dataset: str \| None`, `collection: str \| None` |
 | `CollectionAttribution` | `dataset`, `collection`, `release`, `source`, `attribution: str \| None`, `licenses: tuple[str, ...] \| None` |
 | `CollectionInfo` | the `CollectionAttribution` fields, plus `record_count: int \| None`, `location_formats`, `containment_types`, `attributes: tuple[str, ...] \| None`, `categories: tuple[CategoryCount, ...] \| None` |
 | `CategoryCount` | `value: str \| None`, `count: int \| None` |
-| `Tileset` | `slug`, `published_at: str \| None`, `extent: Extent \| None`, `collections: tuple[CollectionInfo, ...]`, `references: tuple[CollectionAttribution, ...] \| None` |
+| `Tileset` | `slug`, `published_at: str \| None`, `extent: Extent \| None`, `collections: tuple[CollectionInfo, ...]`, `references: tuple[CollectionAttribution, ...] \| None`, `overview: TilesetOverview \| None` |
+| `TilesetOverview` | `records: int \| None` |
 | `Extent` | `north`, `south`, `east`, `west: str \| None` |
 
-The result types compare by value but are not hashable, since a place is a dict. The dataclasses are keyword-only so that a field added later (the results will grow, as Kotlin's gained `location`, and the describe types mirror lexicons that gain fields) breaks no app that constructs one for its own tests. They are public and constructible for that reason; the client never trusts one it did not build.
+The result types compare by value but are not hashable, since a place is a mapping view, which is unhashable. The dataclasses are keyword-only so that a field added later (the results will grow, as Kotlin's gained `location`, and the describe types mirror lexicons that gain fields) breaks no app that constructs one for its own tests. They are public and constructible for that reason; the client never trusts one it did not build.
 
 Every response is read by hand from the parsed JSON (`_wire.py`), never by constructing a dataclass from a decoded dict with `**`, which would fail on an unknown key. A missing or wrong-typed field is `None`; a list the lexicon requires (`tilesets`, `collections` in both places) that is missing or not a list is empty, and an optional list is `None`; in a list of strings a non-string element is dropped, and in a list of objects a non-object element is dropped while an object with no readable field still maps, to an instance of `None`s; an `extent` that is not an object is `None`; unknown keys are ignored (contract §1). An `int` field (`record_count`, `count`) applies the importance rule (section 6) to the value. `published_at` and the extent's edges stay strings, as served.
 
@@ -262,9 +294,9 @@ Type checks in the readers use `type(v) is str` and `type(v) is int or type(v) i
 
 ### Place values
 
-A place is arbitrary JSON and must be surfaced untouched (contract §1). The client surfaces the `dict` that `json.loads` built: every key in served order, every nested value, integers exact (Python's `int` is unbounded, so a place's own integers keep digits the JavaScript client rounds away; only `importance` goes through a double, section 6). An app reads a field with `hit.place.get("cuisine")`. `name` and `location` are the accessors contract §8 and §9 require: `location` is built by the same `locate()` the ranker uses, so it cannot disagree with `distance`, and both are computed on access, so the dataclasses' fields do not change. `PlaceLocation` is not called `Location`, which collides with too many app models; its box keeps the lexicon's names.
+A place is arbitrary JSON and must be surfaced untouched (contract §1). The client surfaces what `json.loads` built, through a read-only view (`_ReadOnlyMapping`, in `types.py`): every key in served order, every nested value, integers exact (Python's `int` is unbounded, so a place's own integers keep digits the JavaScript client rounds away; only `importance` goes through a double, section 6). An app reads a field with `hit.place.get("cuisine")`. The view is not a `dict`: `isinstance(place, dict)` is false, item assignment and deletion raise `TypeError`, there is no `update`, `pop` or `setdefault`, and `json.dumps(place)` needs `place.copy()`. `==`, `get`, `in`, `len`, iteration in served order, `keys()`, `items()` and `values()` work as on a dict; `copy.deepcopy` gives a plain dict. Nested values are the cache's own and still mutable. `name` and `location` are the accessors contract §8 and §9 require: `location` is built by the same `locate()` the ranker uses, so it cannot disagree with `distance`, and both are computed on access, so the dataclasses' fields do not change. `PlaceLocation` is not called `Location`, which collides with too many app models; its box keeps the lexicon's names.
 
-The dict is shared, not copied. The client keeps the latest search's parsed tiles to make a repeat search cheap (section 6, Caches), and a hit's `place` is the dict in that memo, so mutating it would change what the next search over the same tiles returns. Every result type documents `place` as read-only, and annotates it `Mapping[str, Any]`, so that `mypy` flags a mutation in a typed app at no run-time cost. Copying instead was measured and rejected: `copy.deepcopy` of every place in the Philadelphia set takes 1.12 s, nearly three times as long as parsing the tiles (0.39 s in the same run), and a copier written for JSON trees still takes 0.67 s. An app that wants to change a place copies it first.
+The dict is shared, not copied; the view wraps it. The client keeps the latest search's parsed tiles to make a repeat search cheap (section 6, Caches), and a hit's `place` is a view over the dict in that memo, so mutating the dict would change what the next search over the same tiles returns. Every result type documents `place` as read-only and annotates it `Mapping[str, Any]`, so that `mypy` flags a mutation in a typed app, and the view raises `TypeError` on a top-level mutation at run time (atgeo-sdk-python#6); the cost is one small wrapper object per hit. Copying instead was measured and rejected: `copy.deepcopy` of every place in the Philadelphia set takes 1.12 s, nearly three times as long as parsing the tiles (0.39 s in the same run), and a copier written for JSON trees still takes 0.67 s. An app that wants to change a place copies it first (`place.copy()` for the top level, `copy.deepcopy(place)` for all of it).
 
 ### Errors
 
@@ -801,7 +833,7 @@ CI: GitHub Actions. A lint job runs `ruff check`, `ruff format --check` and `myp
 | Blocking deadline | `total_timeout` per call, clamped per hop, with a header watchdog | a blocking call has no other bound; redirects and trickled headers escaped a body-only deadline |
 | Credentials in URLs | refused: server, tile and redirect | the reference's `fetch` refuses them; the two transports disagreed |
 | CPU work (both clients) | every response parsed on daemon threads the client starts, with 8 MiB stacks | parsing and ranking on the loop stalled it for 1.3 s; a 1 MiB stack let deep JSON crash CPython 3.12 and 3.13; an app's `ProcessPoolExecutor` would have failed every tile silently |
-| Place representation | the `dict` from `json.loads`, shared and read-only by contract | untouched JSON; copying measured at three times the cost of parsing |
+| Place representation | a read-only view over the `json.loads` dict, shared | untouched JSON; copying measured at three times the cost of parsing |
 | Importance type | `int`, read through `float` | contract §1's precision rule; Python `int`s do not overflow |
 | Autocompleter | async client only; an `asyncio.Task` per call, cancelled by the next | superseded call raises `CancelledError`; a blocking call cannot be cancelled in flight |
 | Combined search's keyword region | required `keyword_region` | the disclosure is the developer's choice every time |

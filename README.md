@@ -137,7 +137,7 @@ interface Attribution {
   release?: string;
   source?: string;
   licenses?: string[];
-  attribution?: string;                // the credit line to show
+  attribution?: string;                // URL of the upstream's attribution or copyright page
 }
 
 interface NearbyHit {
