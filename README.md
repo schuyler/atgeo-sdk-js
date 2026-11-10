@@ -107,7 +107,7 @@ A collection-filtered search keeps only records whose `origin` starts with `urn:
 
 A bbox with `west > east` crosses the antimeridian. A place with a point location is kept if the point falls inside the region; a place with only a bounding box is kept if that box touches the region.
 
-**Expanding.** Tiles cover more ground than your region, and the search has already downloaded them. With `expand: true` and `text`, if no place in the region has a word match (the first ranking tier, below), `places` is instead what the whole set of tiles holds, filtered and ranked the same way, and `expanded` is `true`. `distance` still measures from the region's center, so it says how far out each hit is. A map that finds nothing in view can zoom out to the first hit. It costs no request and sends nothing more, so `disclosed` doesn't change. If the tiles hold no word match either, you get the region's answer and `expanded: false`. Places with no location are never returned, and on an overview answer the result is a sample, like any other.
+**Expanding.** Tiles cover more ground than your region, and the search has already downloaded them. With `expand: true` and `text` (after trimming, non-empty), if no place in the region has a word match (the first ranking tier, below), `places` is instead what the whole set of tiles holds, filtered and ranked the same way, and `expanded` is `true`. `distance` still measures from the region's center, so it says how far out each hit is. A map that finds nothing in view can zoom out to the first hit. It costs no request and sends nothing more, so `disclosed` doesn't change. If the tiles hold no word match either, you get the region's answer and `expanded: false`. Places with no location are never returned, and on an overview answer the result is a sample, like any other.
 
 The result:
 
@@ -249,6 +249,7 @@ Searches nearby first, and asks the server only if the nearby results have no so
 | Option | Meaning |
 |---|---|
 | `dataset`, `collection`, `region`, `sort`, `signal` | As for `searchNearby`. `region` may be a circle or a bbox. |
+| `expand` | Optional, default `true` (unlike `searchNearby`). As for `searchNearby`: with no word match in `region`, the nearby search answers with the whole tile coverage, so a nearby hit may lie well outside `region`, and `expanded` says so. A word match found there counts as a solid hit, so the keyword isn't sent. Pass `false` to look only inside `region`. |
 | `keyword` | Required. Used as the nearby search's `text` and, if it comes to that, as the keyword. |
 | `keywordRegion` | Required, with no default: `"degree"` to send the nearby region (a circle's enclosing box) snapped to whole degrees with the keyword, or `"none"` to send no region. |
 

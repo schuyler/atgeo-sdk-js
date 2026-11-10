@@ -42,7 +42,15 @@ describe("expand", () => {
     expect(result.expanded).toBe(true);
     expect(result.places[0].name).toBe("Alamo Square Park");
     expect(result.places[0].distance).toBeGreaterThan(1000);
-    expect(names(result.places)).not.toContain("Alamo Square Ghost");
+    // Points and bbox-only places both count; a place with no location does not.
+    expect(names(result.places)).toEqual(["Alamo Square Park", "Alamo Square Historic District"]);
+  });
+
+  it("does not expand to fuzzy-only places: the tiles must hold a word match", async () => {
+    const { client } = setup();
+    // "sqare" matches "Alamo Square Park" only fuzzily, so there is no word match anywhere.
+    const result = await client.searchNearby({ dataset, region: view, text: "alamo sqare park", expand: true });
+    expect(result).toMatchObject({ expanded: false, places: [] });
   });
 
   it("does not expand when the region has a word match", async () => {

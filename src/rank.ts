@@ -106,7 +106,7 @@ export function rank(
       collection: collectionOf(value, attribution),
       place: value,
       importance: record.importance ?? null,
-      // rank only receives records that passed inRegion, which requires a location.
+      // rank only receives records that have a location (inRegion requires one; expansion filters for one).
       distance: distanceTo(locations, middle.lat, middle.lon)!,
       score,
       ...describe(value, locations),
