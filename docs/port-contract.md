@@ -250,6 +250,8 @@ When the search has a collection, keep only records whose `value.origin` is a st
 
 Keep records for which `inRegion(locate(value), region)` holds (sections 5 and 6). A record with no usable location is dropped.
 
+With the `includeOutside` option (default false), also keep the records that have a usable location (a point or a bbox) and fail `inRegion`, as a second list, `outside`. It is ranked by 4.9 exactly as the first list is (same text filter, tiers, sort mode and overview rule; `distance` is from the region's centre), separately from it, so the two lists never share a record. Without the option `outside` is the empty list. It uses the tiles already loaded: no further request, and `disclosed` is unchanged.
+
 ### 4.9 Rank
 
 Section 8. The result is `{ places, complete, overview, tiles: { fetched, failed }, tileFailures: [{ url, kind, status?, error }], attribution, disclosed }` (4.11). Each port spells `tileFailures` and `kind`'s values in its language's style and says so in its spec.

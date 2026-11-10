@@ -1,6 +1,6 @@
 import { TileCache, TtlCache, type TileRecord } from "./cache.js";
 import { collectionOf, collectionPrefix, copyAttribution, inCollection, mergeAttribution } from "./attribution.js";
-import { dedupe, describe, inRegion, locate } from "./merge.js";
+import { dedupe, describe, inRegion, locate, type Locations } from "./merge.js";
 import { normalize } from "./normalize.js";
 import { matchTier, qualifies, rank } from "./rank.js";
 import { circleBox, keywordBbox, queryBboxes, validateRegion } from "./region.js";
@@ -203,16 +203,22 @@ export class AtgeoClient {
     // dedupe picks a winner before the region filter runs. If copies sharing an
     // origin differ in location (possible only in non-garganorn tilesets) and the
     // winner lies outside the region, the place is dropped though another copy is inside.
-    const items = dedupe(
+    const candidates = dedupe(
       used.flatMap((url) => {
         const tile = loaded.get(url)!;
         return tile.records.map((record) => ({ record, attribution: tile.attribution }));
       }),
     )
       .filter(({ record }) => prefix === undefined || inCollection(record.value, prefix))
-      .filter(({ record }) => inRegion(locate(record.value), region));
+      .map((item) => ({ ...item, locations: locate(item.record.value) }));
+    const located = ({ locations }: { locations: Locations }) => locations.point !== null || locations.bbox !== null;
+    const items = candidates.filter((c) => inRegion(c.locations, region));
+    // The tiles cover more than the region. What they hold beyond it is already in memory, so handing it over
+    // costs no request; a place with no location can't be placed on either side.
+    const beyond = options.includeOutside ? candidates.filter((c) => located(c) && !inRegion(c.locations, region)) : [];
     return {
       places: rank(items, region, query, sort, overview),
+      outside: rank(beyond, region, query, sort, overview),
       complete: failed === 0,
       overview,
       tiles: { fetched: loaded.size, failed },

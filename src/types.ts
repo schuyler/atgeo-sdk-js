@@ -88,6 +88,9 @@ export interface NearbySearchOptions {
   region: Region;
   text?: string;
   sort?: SortMode;
+  // Also return, in `outside`, the places in the tiles the search loaded that lie beyond `region`. The tiles cover
+  // more than the region and are already in hand, so this makes no request and sends nothing more. Default false.
+  includeOutside?: boolean;
   signal?: AbortSignal;
 }
 
@@ -160,6 +163,10 @@ export interface KeywordHit extends HitBase {
 
 export interface NearbySearchResult {
   places: NearbyHit[];
+  // With includeOutside: the places in the loaded tiles that lie beyond the region, filtered by `text` and ranked
+  // as `places` is (distance is still from the region's center). Empty otherwise. A search that found nothing in
+  // the region can zoom out to these. On an overview answer it is a sample, like `places`.
+  outside: NearbyHit[];
   complete: boolean;
   overview: boolean;
   tiles: { fetched: number; failed: number };
