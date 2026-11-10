@@ -1,6 +1,6 @@
 import { TileCache, TtlCache, type TileRecord } from "./cache.js";
 import { collectionOf, collectionPrefix, copyAttribution, inCollection, mergeAttribution } from "./attribution.js";
-import { dedupe, describe, inRegion, locate, type Locations } from "./merge.js";
+import { dedupe, describe, inRegion, locate } from "./merge.js";
 import { normalize } from "./normalize.js";
 import { matchTier, qualifies, rank } from "./rank.js";
 import { circleBox, keywordBbox, queryBboxes, validateRegion } from "./region.js";
@@ -85,7 +85,7 @@ export class AtgeoClient {
     if (options.keywordRegion !== "none" && options.keywordRegion !== "degree") {
       throw new TypeError("keywordRegion must be 'none' or 'degree'");
     }
-    return this.fallbackSearch(options, this.searchNearby({ ...options, text: options.keyword }));
+    return this.fallbackSearch(options, this.searchNearby({ ...options, expand: options.expand ?? true, text: options.keyword }));
   }
 
   private async fallbackSearch(options: FallbackSearchOptions, pending: Promise<NearbySearchResult>): Promise<FallbackSearchResult> {
@@ -208,17 +208,36 @@ export class AtgeoClient {
         const tile = loaded.get(url)!;
         return tile.records.map((record) => ({ record, attribution: tile.attribution }));
       }),
-    )
-      .filter(({ record }) => prefix === undefined || inCollection(record.value, prefix))
-      .map((item) => ({ ...item, locations: locate(item.record.value) }));
-    const located = ({ locations }: { locations: Locations }) => locations.point !== null || locations.bbox !== null;
-    const items = candidates.filter((c) => inRegion(c.locations, region));
-    // The tiles cover more than the region. What they hold beyond it is already in memory, so handing it over
-    // costs no request; a place with no location can't be placed on either side.
-    const beyond = options.includeOutside ? candidates.filter((c) => located(c) && !inRegion(c.locations, region)) : [];
+    ).filter(({ record }) => prefix === undefined || inCollection(record.value, prefix));
+    let places = rank(
+      candidates.filter(({ record }) => inRegion(locate(record.value), region)),
+      region,
+      query,
+      sort,
+      overview,
+    );
+    // The tiles cover more than the region, and they are already in hand. With no word match in the region, look
+    // at everything they hold that has a location; if that has one, it is the answer.
+    let expanded = false;
+    if (options.expand && query !== "" && !places.some((hit) => matchTier(query, hit.place) === 1)) {
+      const wider = rank(
+        candidates.filter(({ record }) => {
+          const { point, bbox } = locate(record.value);
+          return point !== null || bbox !== null;
+        }),
+        region,
+        query,
+        sort,
+        overview,
+      );
+      if (wider.some((hit) => matchTier(query, hit.place) === 1)) {
+        places = wider;
+        expanded = true;
+      }
+    }
     return {
-      places: rank(items, region, query, sort, overview),
-      outside: rank(beyond, region, query, sort, overview),
+      places,
+      expanded,
       complete: failed === 0,
       overview,
       tiles: { fetched: loaded.size, failed },

@@ -87,7 +87,7 @@ Four methods search. `searchNearby` downloads tiles and matches on the device. T
 | `dataset` | Required, with no default. The dataset to search, such as `openstreetmap.org` or `overturemaps.org`. |
 | `collection` | Optional. Restricts the search to one collection of the dataset, such as `way`. See below. |
 | `sort` | `"fused"` (default), `"distance"`, or `"similarity"`. |
-| `includeOutside` | Optional, default `false`. Also returns, in `outside`, the places in the tiles the search loaded that lie beyond `region`. See below. |
+| `expand` | Optional, default `false` here (`true` for `searchNearbyThenByKeyword`). With `text`, if no place in `region` has a word match, answers with the places in the whole tile coverage instead. See below. |
 | `signal` | Aborts the search. |
 
 Regions:
@@ -107,14 +107,14 @@ A collection-filtered search keeps only records whose `origin` starts with `urn:
 
 A bbox with `west > east` crosses the antimeridian. A place with a point location is kept if the point falls inside the region; a place with only a bounding box is kept if that box touches the region.
 
-**Outside the region.** Tiles cover more ground than your region, and the search has already downloaded them. `places` keeps only what lies inside the region; with `includeOutside: true`, `outside` holds the rest of what those tiles carried, filtered by `text` and ranked as `places` is (`distance` is still from the region's center). It costs no request and sends nothing more, so `disclosed` doesn't change. Use it when `places` comes back empty: a map can zoom out to the best `outside` hit. A place with no location is on neither side, and on an overview answer `outside` is a sample, like `places`. Without the option, `outside` is `[]`.
+**Expanding.** Tiles cover more ground than your region, and the search has already downloaded them. With `expand: true` and `text`, if no place in the region has a word match (the first ranking tier, below), `places` is instead what the whole set of tiles holds, filtered and ranked the same way, and `expanded` is `true`. `distance` still measures from the region's center, so it says how far out each hit is. A map that finds nothing in view can zoom out to the first hit. It costs no request and sends nothing more, so `disclosed` doesn't change. If the tiles hold no word match either, you get the region's answer and `expanded: false`. Places with no location are never returned, and on an overview answer the result is a sample, like any other.
 
 The result:
 
 ```ts
 interface NearbySearchResult {
   places: NearbyHit[];
-  outside: NearbyHit[];                       // with includeOutside: places in the loaded tiles beyond the region; else []
+  expanded: boolean;                          // true if `expand` replaced the region's places with the tile coverage's
   complete: boolean;                          // false if any tile failed to load
   overview: boolean;                          // true if the server answered with its coarse overview; see below
   tiles: { fetched: number; failed: number };

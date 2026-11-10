@@ -88,9 +88,11 @@ export interface NearbySearchOptions {
   region: Region;
   text?: string;
   sort?: SortMode;
-  // Also return, in `outside`, the places in the tiles the search loaded that lie beyond `region`. The tiles cover
-  // more than the region and are already in hand, so this makes no request and sends nothing more. Default false.
-  includeOutside?: boolean;
+  // With text: if no place in the region has a word match, look at everything the loaded tiles hold, which covers
+  // more than the region, and answer with that if it has one. The tiles are already in hand, so this makes no
+  // request and sends nothing more. `expanded` says it happened. Default false for searchNearby, true for
+  // searchNearbyThenByKeyword.
+  expand?: boolean;
   signal?: AbortSignal;
 }
 
@@ -110,6 +112,8 @@ export interface FallbackSearchOptions {
   keyword: string;
   // Whether the keyword request carries the nearby region, snapped to whole degrees.
   keywordRegion: "none" | "degree";
+  // As for searchNearby, but true unless you say otherwise.
+  expand?: boolean;
   sort?: SortMode;
   signal?: AbortSignal;
 }
@@ -163,10 +167,9 @@ export interface KeywordHit extends HitBase {
 
 export interface NearbySearchResult {
   places: NearbyHit[];
-  // With includeOutside: the places in the loaded tiles that lie beyond the region, filtered by `text` and ranked
-  // as `places` is (distance is still from the region's center). Empty otherwise. A search that found nothing in
-  // the region can zoom out to these. On an overview answer it is a sample, like `places`.
-  outside: NearbyHit[];
+  // True if `expand` replaced the region's places with those of the whole tile coverage; `distance` still measures
+  // from the region's center, so it says how far out they are.
+  expanded: boolean;
   complete: boolean;
   overview: boolean;
   tiles: { fetched: number; failed: number };

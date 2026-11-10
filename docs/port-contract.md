@@ -250,7 +250,7 @@ When the search has a collection, keep only records whose `value.origin` is a st
 
 Keep records for which `inRegion(locate(value), region)` holds (sections 5 and 6). A record with no usable location is dropped.
 
-With the `includeOutside` option (default false), also keep the records that have a usable location (a point or a bbox) and fail `inRegion`, as a second list, `outside`. It is ranked by 4.9 exactly as the first list is (same text filter, tiers, sort mode and overview rule; `distance` is from the region's centre), separately from it, so the two lists never share a record. Without the option `outside` is the empty list. It uses the tiles already loaded: no further request, and `disclosed` is unchanged.
+With the `expand` option (default false for `searchNearby`, true for `searchNearbyThenByKeyword` unless the caller passes it) and a non-empty query: rank the region's records as 4.9 says. If none of the ranked hits has `matchTier` 1 (section 7), rank again, the same way, every record that has a usable location (a point or a bbox) whatever `inRegion` says. If that ranking has a tier-1 hit, it replaces the result's `places` and `expanded` is true; otherwise the region's ranking stands and `expanded` is false. `distance` is from the region's centre either way. `expanded` is false without the option or without text. It uses the tiles already loaded: no further request, and `disclosed` is unchanged. In `searchNearbyThenByKeyword`, 4.9's result after expansion is what the solid-hit test (section 18) reads, so a tier-1 hit in the tile coverage sends no keyword.
 
 ### 4.9 Rank
 
