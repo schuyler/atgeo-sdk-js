@@ -88,6 +88,11 @@ export interface NearbySearchOptions {
   region: Region;
   text?: string;
   sort?: SortMode;
+  // With text: if no place in the region has a word match, look at everything the loaded tiles hold, which covers
+  // more than the region, and answer with that if it has one. The tiles are already in hand, so this makes no
+  // request and sends nothing more. `expanded` says it happened. Default false for searchNearby, true for
+  // searchNearbyThenByKeyword.
+  expand?: boolean;
   signal?: AbortSignal;
 }
 
@@ -107,6 +112,8 @@ export interface FallbackSearchOptions {
   keyword: string;
   // Whether the keyword request carries the nearby region, snapped to whole degrees.
   keywordRegion: "none" | "degree";
+  // As for searchNearby, but true unless you say otherwise.
+  expand?: boolean;
   sort?: SortMode;
   signal?: AbortSignal;
 }
@@ -160,6 +167,9 @@ export interface KeywordHit extends HitBase {
 
 export interface NearbySearchResult {
   places: NearbyHit[];
+  // True if `expand` replaced the region's places with those of the whole tile coverage; `distance` still measures
+  // from the region's center, so it says how far out they are.
+  expanded: boolean;
   complete: boolean;
   overview: boolean;
   tiles: { fetched: number; failed: number };

@@ -184,7 +184,7 @@ The snapped box must contain the caller's region. The precise coordinates must n
 
 ## 4. The search pipeline
 
-`searchNearby(region, dataset, text?, collection?, sort?)` runs these steps in order. The keyword methods, which can send text to the server, are sections 16 to 19. In the TypeScript options object, order doesn't matter.
+`searchNearby(region, dataset, text?, collection?, sort?, expand?)` runs these steps in order. The keyword methods, which can send text to the server, are sections 16 to 19. In the TypeScript options object, order doesn't matter.
 
 ### 4.1 Resolve dataset and collection
 
@@ -252,9 +252,15 @@ Keep records for which `inRegion(locate(value), region)` holds (sections 5 and 6
 
 ### 4.9 Rank
 
-Section 8. The result is `{ places, complete, overview, tiles: { fetched, failed }, tileFailures: [{ url, kind, status?, error }], attribution, disclosed }` (4.11). Each port spells `tileFailures` and `kind`'s values in its language's style and says so in its spec.
+Section 8. The result is `{ places, complete, overview, tiles: { fetched, failed }, tileFailures: [{ url, kind, status?, error }], attribution, disclosed, expanded }` (4.9.1, 4.11). Each port spells `tileFailures` and `kind`'s values in its language's style and says so in its spec.
 
 Warm searches: a repeat of the same region within the hour, with every tile still cached, makes no request at all. Changing only `text` or `sort` reuses everything.
+
+### 4.9.1 Expand
+
+`expand` is a boolean, false by default for `searchNearby` and true by default for `searchNearbyThenByKeyword` (section 18). It applies only when the query is non-empty after normalization (so `"   "` is no query). `expanded` is false in every other case.
+
+After 4.9 has ranked the region's records, if none of the ranked hits has `matchTier` 1 (section 7), rank a second time, in the same way (same query, sort mode and overview rule, `distance` from the region's centre), every record left after 4.6 (dedupe) and 4.7 (collection filter) that has a usable location (a point or a bbox), whatever `inRegion` says. If that second ranking has a tier-1 hit, it replaces `places` and `expanded` is true. Otherwise the region's ranking stands and `expanded` is false: a wider list of fuzzy-only places is not an answer. Expansion reads only the tiles already loaded, so it makes no request and `disclosed` is unchanged. Failed tiles are not retried: the decision is made on the tiles that loaded.
 
 ### 4.10 Attribution
 
@@ -549,7 +555,7 @@ Three things the fixtures do not pin:
 
 ### The keyword scenarios
 
-`keyword-fallback.json` holds scenarios of `{ name, description, dataset, collection?, region, keyword, keywordRegion, sort?, tiles: [{ url, body }], keywordAnswer, expect: { keywordRequested, bbox?, origins, disclosed } }`. `keywordAnswer` is a `searchPlaces` body. They cover a tier-1 nearby hit (no request), a tier-1 nearby hit with a low score (no request), tier-2 hits only (a request, the merge order, the dedupe), no nearby hits, an unqualified keyword (no request), `"none"` against `"degree"`, and a circle region's snapped box with a collection. The bodies need not validate against the lexicons, so the runner uses a raw request-capturing server, as the attribution scenarios do:
+`keyword-fallback.json` holds scenarios of `{ name, description, dataset, collection?, region, keyword, keywordRegion, sort?, tiles: [{ url, body }], keywordAnswer, expect: { keywordRequested, bbox?, origins, disclosed } }`. `keywordAnswer` is a `searchPlaces` body. The runner calls with `expand` left at its default, true; no scenario puts a tier-1 place beyond the region, so none pins expansion (the JavaScript port's `test/expand.test.ts` does, for now). They cover a tier-1 nearby hit (no request), a tier-1 nearby hit with a low score (no request), tier-2 hits only (a request, the merge order, the dedupe), no nearby hits, an unqualified keyword (no request), `"none"` against `"degree"`, and a circle region's snapped box with a collection. The bodies need not validate against the lexicons, so the runner uses a raw request-capturing server, as the attribution scenarios do:
 
 - A fresh client per scenario, for the reason given there.
 - The base server is `https://places.atgeo.org`. `getTiles` (any query) is answered with the scenario's tile URLs in listed order, each tile is served with its `body`, and `searchPlaces` (any query) is answered with `keywordAnswer`. Every request is recorded.
@@ -693,15 +699,15 @@ The predicate can still disagree with the server on compatibility characters tha
 
 ## 18. searchNearbyThenByKeyword
 
-`searchNearbyThenByKeyword(region, dataset, keyword, keywordRegion, collection?, sort?)` runs a `searchNearby` with `text = keyword` and, only if that finds nothing solid, a keyword request.
+`searchNearbyThenByKeyword(region, dataset, keyword, keywordRegion, collection?, sort?, expand?)` runs a `searchNearby` with `text = keyword` and, only if that finds nothing solid, a keyword request.
 
 1. Validate, in the order of section 3. `keywordRegion` is `"none"` or `"degree"` and has no default: the caller decides whether a region goes with the keyword.
-2. Run `searchNearby` with `text = keyword` and the call's other options.
-3. Solid hit: if some hit of the nearby result has match tier 1 (section 7), return the nearby result as it is, with its own `disclosed`. No keyword request is made.
+2. Run `searchNearby` with `text = keyword`, `expand` as the caller gave it (true if not given) and the call's other options.
+3. Solid hit: if some hit of the nearby result has match tier 1 (section 7), return the nearby result as it is, with its own `disclosed` and `expanded`. No keyword request is made. With `expand`, that includes a tier-1 hit found only in the tile coverage (4.9.1).
 4. If the keyword cannot qualify (section 17), return the nearby result likewise: the request would certainly fail with `KeywordRequired`.
 5. Otherwise call `searchByKeyword` (section 16) with the call's `dataset`, `collection` if any, the cancellation signal and `keyword` and, for `"degree"`, a region that is the nearby region as a box: a bbox region as given, a circle as its enclosing box (section 3), snapped as in section 16. For `"none"`, no region.
 6. Merge: the keyword hits in the server's order, then the nearby hits in nearby order, leaving out any nearby hit whose `origin` equals a keyword hit's. A hit with a null `origin` is never left out. Keyword hits lead because they match the tier-1 rule, and every nearby hit here is tier 2; tier 1 precedes tier 2 everywhere.
-7. The result is the nearby result with `places` replaced by the merged list (each hit keeping its `via`), `attribution` the union of the nearby and keyword attribution (deduplicated and sorted as in 4.10, the nearby entry winning a tie), and `disclosed = { keyword: true, region }` where `region` is the finest region sent during the call: `0.01` if the nearby search sent anything, else `1` for `"degree"`, else null. A cold `"degree"` fallback therefore reports `0.01` though the keyword travelled with a one-degree box. `complete`, `overview`, `tiles` and `tileFailures` are the nearby search's.
+7. The result is the nearby result with `places` replaced by the merged list (each hit keeping its `via`), `attribution` the union of the nearby and keyword attribution (deduplicated and sorted as in 4.10, the nearby entry winning a tie), and `disclosed = { keyword: true, region }` where `region` is the finest region sent during the call: `0.01` if the nearby search sent anything, else `1` for `"degree"`, else null. A cold `"degree"` fallback therefore reports `0.01` though the keyword travelled with a one-degree box. `complete`, `overview`, `tiles` and `tileFailures` are the nearby search's, and `expanded` is false: an expanded nearby result always holds a tier-1 hit, so it returned at step 3.
 8. A keyword request the server refuses with `KeywordRequired` (section 17's predicate let it through) does not fail the call: the result is the nearby result, as in step 4, except that `disclosed = { keyword: true, region }` with `region` as in step 7, since the keyword went out. Any other failed keyword request rejects the call, as a failed `getTiles` does, with the keyword request's own error, and the nearby results are lost. A cancelled keyword request does the same with the cancellation outcome. There is no result, so no `disclosed`, though the keyword may have gone out: a port's documentation says that a failure after the nearby half means the keyword may have reached the server. No port attaches `disclosed` to the error, so that the ports' error types stay alike (#58).
 
 A nearby search that had failed tiles (`complete = false`) and no tier-1 hit still falls back, though the missing tiles might have held one. A tier-1 place is always a hit (section 7), so a short keyword such as `qu` whose only tier-1 place scores low (`Bar & Grill at the Old Quarry`, about 0.41) finds it and does not fall back (#57). `fixtures/keyword-fallback.json` pins the decision and the merge.
