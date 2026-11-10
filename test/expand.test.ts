@@ -88,6 +88,9 @@ describe("expand", () => {
     const noText = await client.searchNearby({ dataset, region: view, expand: true });
     expect(noText.expanded).toBe(false);
     expect(names(noText.places)).toEqual(["Dolores Cafe"]);
+    // Nothing in view and no text: still nothing to be missing, so the tiles' places are not returned.
+    const empty = { bbox: [-122.405, 37.77, -122.4, 37.78] as [number, number, number, number] };
+    expect(await client.searchNearby({ dataset, region: empty, expand: true })).toMatchObject({ expanded: false, places: [] });
     const nothing = await client.searchNearby({ dataset, region: view, text: "zzzzqqqq", expand: true });
     expect(nothing).toMatchObject({ expanded: false, places: [] });
   });
